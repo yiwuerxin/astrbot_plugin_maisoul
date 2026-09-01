@@ -33,7 +33,7 @@ except ImportError:  # 兼容不同小版本
     from astrbot.core.message.message_event_result import MessageChain
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.12.0")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.12.1")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -48,7 +48,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.12.0 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.12.1 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -436,6 +436,35 @@ class MaiSoulPlugin(Star):
     # 生态注入桥（v6.11.0）：手动触发 on_llm_request/on_llm_response 钩子链，  #
     # 心弦好感/记忆/世界书等注入型插件在麦麦管线内同样生效                       #
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _normalize_extra_parts(parts: list) -> list:
+        """生态钩子写入的 extra_user_content_parts 归一化为 ContentPart 列表。
+
+        - ContentPart 子类：原样透传（保留 mark_as_temp 的 _no_save 语义）
+        - 裸字符串：包成 TextPart
+        - 其它对象（Plain 组件等）：取 .text 文本包成 TextPart，取不到则丢弃
+          ——绝不 str() 整个对象，repr 垃圾既进不了模型也不能进观察页。
+        """
+        from astrbot.core.agent.message import ContentPart, TextPart
+        normalized = []
+        for x in parts or []:
+            if isinstance(x, ContentPart):
+                normalized.append(x)
+            elif isinstance(x, str):
+                if x.strip():
+                    normalized.append(TextPart(text=x))
+            else:
+                text = str(getattr(x, "text", "") or "").strip()
+                if text:
+                    normalized.append(TextPart(text=text))
+        return normalized
+
+    @staticmethod
+    def _extra_part_text(part) -> str:
+        """观察页展示用：ContentPart/组件 → 纯文本（图片等无文本段以类名占位）。"""
+        text = getattr(part, "text", None)
+        return str(text) if text is not None else f"<{type(part).__name__}>"
+
     async def _eco_inject_block(self, event: AstrMessageEvent, text: str):
         """触发生态插件的 on_llm_request 钩子，收集两个注入通道的内容。
 
@@ -468,8 +497,8 @@ class MaiSoulPlugin(Star):
                     logger.error(f"maisoul: 生态注入 {handler.handler_name} 异常",
                                  exc_info=True)
             block = (req.system_prompt or "").strip()
-            extras = [str(x) for x in (getattr(req, "extra_user_content_parts", None) or [])
-                      if str(x).strip()]
+            extras = self._normalize_extra_parts(
+                getattr(req, "extra_user_content_parts", None) or [])
             logger.info(f"maisoul: 生态注入桥执行 {fired} 个钩子，system {len(block)} 字符"
                         f" + 用户内容附加 {len(extras)} 段"
                         f"（好感/记忆/世界书；私聊心弦不注入属正常）")
@@ -1030,7 +1059,8 @@ class MaiSoulPlugin(Star):
         if eco_block:
             system_prompt += f"\n\n{eco_block}"
         deps.st.planner_state().eco_injection = eco_block + (
-            "\n\n[用户内容附加]\n" + "\n".join(eco_extras) if eco_extras else "")
+            "\n\n[用户内容附加]\n"
+            + "\n".join(self._extra_part_text(x) for x in eco_extras) if eco_extras else "")
         keyword_block = learning.keyword_reaction_block(eff_cfg, trigger_text)
 
         reference = reply_reference or (f"当前思考：\n{reason}" if reason else "")
@@ -1227,7 +1257,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.12.0状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.12.1状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1342,4 +1372,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.12.0 已卸载")
+        logger.info("maisoul v6.12.1 已卸载")

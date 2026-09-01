@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.12.0：显示名「麦麦之魂」。含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
+> 当前版本 v6.12.1：显示名「麦麦之魂」。含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
 
 ---
 
@@ -566,6 +566,8 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 47. **生态注入桥必须直遍注册表，不走 `call_event_hook`**（v6.12.0 补：注入有**两个通道**——`req.system_prompt`（心弦/世界书）与 `req.extra_user_content_parts`（livingmemory 记忆召回特意走用户内容附加，它已废弃 system_prompt 方式保护前缀缓存）；桥返回 (block, extras)，extras 经 text_chat 的 extra_user_content_parts 传入（与识图同通道，二轮生成同传），只收 system_prompt 会静默丢记忆）——它逐 handler 检查 `event.is_stopped()`，而麦麦管线在 planner/independent 下早已 stop_event（静默闸门），第一个 handler 后就会中断。入口 `main._eco_inject_block`（收集 req.system_prompt 拼进 system_prompt，跳过自家 maisoul 模块防三件套重复）与 `_eco_fire_response`（LLMResponse(completion_text=全文) 触发记忆沉淀；先 `event.set_extra("maisoul_eco_resp", True)`，自家 on_llm_response 见此标记即返回，防回声重复记录）。接线点：_generate_and_send 与 _planner_execute_reply（replyer），planner 决策轮不注入——保持 maisaka 系统提示词纯净。单个插件注入异常只废它自己的注入（逐 handler 捕获，对齐框架行为）。
 
 48. **`_schedule_planner` 所有分支必须返回 awaitable**——调用方统一 `await self._schedule_planner(...)`；裸 `return`（退避/wait 不可恢复/不打断/群聊 create_task 后的隐式 None）会让调用方 `await None` 抛 TypeError：`stop_event()` 被跳过、事件漏进原生管线（outputpro 的报错拦截「呜哇，<bot名>死掉拉～」每次触发即此因），状态机也被打乱。fire-and-forget 分支一律 `return asyncio.sleep(0)`（v6.11.5 修复，群聊路径自 v6.6 起带病）。同修：表情双路径收敛——send_meme/search_meme 移出 planner deferred 池（`bridge.DEFERRED_EXCLUDE`，内置 send_emoji 已覆盖两步制，同轮两路各发一次=双发表情）；独立模式 chat_toolset 保留完整两步制对。
+
+49. **生态注入的 extra_user_content_parts 绝不能 `str()` 强转**（v6.12.1 修复）：生态插件往 `req.extra_user_content_parts` 写入的是 `ContentPart` 对象（TextPart/ImageURLPart）、裸 `str` 或消息组件（`Plain` 等），类型不统一；provider 侧（anthropic/openai source）逐块 `isinstance` 校验，只认 ContentPart 三类，**裸 str 直接 `ValueError: 不支持的额外内容块类型`**，replyer 请求在拼装阶段被打断 → planner 整轮循环异常 → 机器人沉默。旧代码 `[str(x) for x in parts if str(x).strip()]` 两重错：str 对象得到 pydantic repr（`type='text' text='…'`、`type=<ComponentType.Plain: 'Plain'>`），repr 非空能过 strip() 过滤，垃圾被当正文混进注入与观察页。**间歇性指纹**：livingmemory 召回是 RAG，命中才 append——附加 ≥1 段必崩、附加 0 段正常，表现"时好时坏"完全由该回合是否召回记忆决定。修法：`_normalize_extra_parts`（ContentPart 透传保留 `mark_as_temp` 的 _no_save 语义；裸 str 包 TextPart；其它对象取 `.text` 包 TextPart，取不到丢弃）+ 观察页 join 用 `_extra_part_text` 提取纯文本（无文本段以类名占位）。注意 `Plain` 与 ContentPart 不在同一棵类树上（isinstance 为 False），走 `.text` 提取分支。快捷指纹：日志出现 `不支持的额外内容块类型: <class 'str'>` 一定是调用方把本该传 ContentPart 对象的参数传成了字符串，grep 调用点的 `str(` 强转即可定位。
 
 ## 9. 打包与发布
 
