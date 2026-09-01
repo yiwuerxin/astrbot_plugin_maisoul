@@ -1,0 +1,1795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>麦麦之魂 · maisoul</title>
+<style>
+/* ===== 主题令牌：取自 MaiBot 部署版原版 dashboard（modern，index-gQUKboHR.css :root） ===== */
+:root{
+  --primary:28.9 94.8% 45.1%; --primary-foreground:210 40% 98%;
+  --background:0 0% 100%; --foreground:222.2 84% 4.9%;
+  --card:188.5 14% 98.6%; --card-foreground:222.2 84% 4.9%;
+  --secondary:188.5 35% 96%; --secondary-foreground:222.2 47.4% 11.2%;
+  --muted:188.5 12% 96%; --muted-foreground:188.5 20% 46.9%;
+  --accent:112.7 40.2% 47.8%; --accent-foreground:210 40% 98%;
+  --destructive:0 83.9% 44.9%; --destructive-foreground:210 40% 98%;
+  --border:188.5 20% 91.4%; --input:188.5 20% 91.4%; --ring:28.9 94.8% 45.1%;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Monaco,monospace;
+  --shadow-card:0 1px 3px rgb(0 0 0/.1),0 1px 2px rgb(0 0 0/.06);
+  --shadow-sm:0 1px 2px rgb(0 0 0/.05);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Microsoft YaHei",Arial,sans-serif;
+  background:hsl(var(--background));color:hsl(var(--foreground));font-size:16px;line-height:1.5;
+}
+/* ---------- 应用壳：侧栏（--layout-sidebar-width 13rem）+ 主列（顶栏 h-12 + 滚动内容） ---------- */
+#app{display:flex;height:100vh}
+.sidebar{width:208px;flex:none;display:flex;flex-direction:column;border-right:1px solid hsl(var(--border));background:hsl(var(--background));transition:width .2s}
+.sidebar.mini{width:64px}
+.sb-logo{height:80px;flex:none;display:flex;align-items:center;border-bottom:1px solid hsl(var(--border));padding:0 16px;overflow:hidden}
+.sidebar.mini .sb-logo{padding:0;justify-content:center}
+.sb-logo .lg{width:32px;height:32px;flex:none;display:flex;align-items:center;justify-content:center;color:hsl(var(--primary))}
+.sb-logo .tx{margin-left:10px;min-width:0;white-space:nowrap}
+.sidebar.mini .sb-logo .tx{display:none}
+.sb-logo b{display:block;font-size:14px;font-weight:800;letter-spacing:.1em}
+.sb-logo small{display:block;font-size:11px;color:hsl(var(--muted-foreground));font-weight:400}
+.sb-nav{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px;display:flex;flex-direction:column;gap:12px}
+.sb-group{display:flex;flex-direction:column;gap:4px}
+.sb-gtitle{min-height:20px;display:flex;align-items:center;padding:0 12px;margin-bottom:8px;color:hsl(var(--muted-foreground)/.6);font-size:14px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.sidebar.mini .sb-gtitle{display:none}
+.sb-item{position:relative;display:flex;height:40px;width:100%;align-items:center;gap:12px;border-radius:8px;padding:0 12px;border:none;background:none;color:hsl(var(--muted-foreground));text-decoration:none;font-size:16px;font-weight:500;font-family:inherit;text-align:left;cursor:pointer;transition:background .15s,color .15s;white-space:nowrap}
+.sidebar.mini .sb-item{justify-content:center;padding:0}
+.sb-item:hover{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+.sb-item.on{background:hsl(var(--accent));color:hsl(var(--foreground))}
+.sb-item .ic{display:flex;flex:none;color:inherit}
+.sb-item.on .ic{color:hsl(var(--primary))}
+.sidebar.mini .sb-item .lb{display:none}
+.sb-foot{flex:none;border-top:1px solid hsl(var(--border));padding:10px 16px;font-size:11px;color:hsl(var(--muted-foreground));line-height:1.7;white-space:nowrap}
+.sidebar.mini .sb-foot{display:none}
+/* ---------- 顶栏：sticky h-12 border-b ---------- */
+.maincol{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{height:48px;flex:none;display:flex;align-items:center;gap:8px;border-bottom:1px solid hsl(var(--border));padding:0 16px;background:hsl(var(--background))}
+.tb-title{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-spacer{flex:1}
+@media(max-width:640px){.tb-title{display:none}}
+/* ---------- 内容区：space-y + p-4 sm:p-6 ---------- */
+.pagescroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
+.page{padding:16px;display:flex;flex-direction:column;gap:16px;max-width:1080px}
+@media(min-width:640px){.page{padding:24px;gap:24px}}
+.page-head{display:flex;flex-direction:column;gap:12px}
+@media(min-width:640px){.page-head{flex-direction:row;align-items:center;justify-content:space-between}}
+.page-head h1{font-size:20px;font-weight:700;letter-spacing:-.02em}
+@media(min-width:640px){.page-head h1{font-size:24px}}
+@media(min-width:768px){.page-head h1{font-size:30px}}
+/* ---------- 配置分区：rounded-lg border bg-card p-4 sm:p-6 space-y-3 ---------- */
+.panel{background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:8px;box-shadow:var(--shadow-card);padding:16px;display:flex;flex-direction:column;gap:12px}
+@media(min-width:640px){.panel{padding:24px}}
+.panel>h3{font-size:16px;font-weight:600}
+.panel .pdesc{font-size:14px;color:hsl(var(--muted-foreground));line-height:1.6;white-space:pre-line}
+.panel .pdesc p{margin:0}
+/* ---------- 表单行：label+desc 左，控件右 ---------- */
+.frow{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-bottom:1px solid hsl(var(--border))}
+.frow:last-child{border-bottom-color:transparent}
+.frow .fmeta{min-width:0}
+.frow .flab{font-size:14px;font-weight:500;line-height:1.4}
+.frow .flab .fcnt{font-size:12px;font-weight:400;color:hsl(var(--muted-foreground));margin-left:4px}
+.frow .fdesc{font-size:12px;color:hsl(var(--muted-foreground));line-height:1.5;margin-top:2px}
+.frow .fctl{min-width:0}
+@media(min-width:640px){
+  .frow{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 24px}
+  .frow .fmeta{flex:1 1 240px}
+  .frow .fctl{width:320px;flex:none}
+  /* 整行控件（textarea/chips/规则列表）：标签与说明在上方通栏，不与 100% 宽控件同排互相挤宽 */
+  .frow.wide{flex-direction:column;align-items:stretch;gap:6px}
+  .frow.wide .fmeta{flex:1 1 auto}
+  .frow.wide .fctl{width:100%}
+  .frow .fctl.free{width:auto}
+}
+/* ---------- 基础控件（对齐部署版 Input/Textarea/Select） ---------- */
+input[type=text],input[type=number],select{width:100%;height:36px;border:1px solid hsl(var(--input));border-radius:6px;background:transparent;padding:0 12px;font-size:14px;font-family:inherit;color:inherit;box-shadow:var(--shadow-sm);transition:border-color .15s,box-shadow .15s}
+textarea{width:100%;min-height:64px;border:1px solid hsl(var(--input));border-radius:6px;background:transparent;padding:8px 12px;font-size:14px;font-family:inherit;color:inherit;line-height:1.6;resize:vertical;box-shadow:var(--shadow-sm)}
+input:focus,textarea:focus,select:focus{outline:none;border-color:hsl(var(--ring));box-shadow:0 0 0 1px hsl(var(--ring))}
+input:disabled,textarea:disabled,select:disabled{opacity:.5;cursor:not-allowed}
+select{cursor:pointer}
+input[type=checkbox]{accent-color:hsl(var(--primary))}
+/* ---------- 按钮（对齐部署版 Button cva） ---------- */
+.ui-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:6px;border:none;background:transparent;font-size:14px;font-weight:500;font-family:inherit;height:36px;padding:0 16px;cursor:pointer;color:inherit;white-space:nowrap;transition:background .15s,color .15s,opacity .15s}
+.ui-btn.default{background:hsl(var(--primary));color:hsl(var(--primary-foreground));box-shadow:0 1px 3px rgb(0 0 0/.12)}
+.ui-btn.default:hover{background:hsl(var(--primary)/.9)}
+.ui-btn.secondary{background:hsl(var(--secondary));color:hsl(var(--secondary-foreground));box-shadow:var(--shadow-sm)}
+.ui-btn.secondary:hover{background:hsl(var(--secondary)/.8)}
+.ui-btn.outline{border:1px solid hsl(var(--input));background:hsl(var(--background));box-shadow:var(--shadow-sm)}
+.ui-btn.outline:hover{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+.ui-btn.ghost:hover{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+.ui-btn.destructive{background:hsl(var(--destructive));color:hsl(var(--destructive-foreground));box-shadow:var(--shadow-sm)}
+.ui-btn.destructive:hover{background:hsl(var(--destructive)/.9)}
+.ui-btn.sm{height:32px;padding:0 12px;font-size:12px}
+.ui-btn.icon{width:36px;padding:0}
+.ui-btn.icon.sm{width:32px}
+.ui-btn:disabled{opacity:.5;cursor:not-allowed;pointer-events:none}
+.ui-btn svg{flex:none}
+/* ---------- 开关（对齐部署版 Switch h-5 w-9） ---------- */
+label.ui-switch{position:relative;display:inline-flex;height:20px;width:36px;flex:none;align-items:center;border-radius:99px;border:2px solid transparent;background:hsl(var(--input));box-shadow:var(--shadow-sm);cursor:pointer;transition:background .2s}
+.ui-switch input{position:absolute;opacity:0;width:0;height:0}
+.ui-switch .th{display:block;height:16px;width:16px;border-radius:99px;background:hsl(var(--background));box-shadow:0 1px 3px rgb(0 0 0/.25);transition:transform .2s;pointer-events:none}
+.ui-switch input:checked+.th{transform:translateX(16px)}
+.ui-switch:has(input:checked){background:hsl(var(--primary))}
+.ui-switch:has(input:disabled){opacity:.5;cursor:not-allowed}
+/* ---------- 选项卡（对齐部署版 TabsList bg-muted rounded-lg p-1） ---------- */
+.ui-tabs{display:inline-flex;height:36px;align-items:center;justify-center;background:hsl(var(--muted));border-radius:8px;padding:4px;gap:2px}
+.ui-tabs button{border:none;background:transparent;color:hsl(var(--muted-foreground));border-radius:6px;padding:5px 12px;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;transition:all .15s}
+.ui-tabs button.on{background:hsl(var(--background));color:hsl(var(--foreground));box-shadow:var(--shadow-sm)}
+.ui-tabs.full{display:grid;width:100%}
+/* ---------- 徽章（对齐部署版 Badge rounded-md px-2.5 text-xs font-semibold） ---------- */
+.ui-badge{display:inline-flex;align-items:center;gap:4px;border-radius:6px;border:1px solid hsl(var(--border));padding:2px 10px;font-size:12px;font-weight:600;line-height:1.5;white-space:nowrap;color:hsl(var(--foreground));background:transparent}
+.ui-badge.default{background:hsl(var(--primary));color:hsl(var(--primary-foreground));border-color:transparent}
+.ui-badge.secondary{background:hsl(var(--secondary));color:hsl(var(--secondary-foreground));border-color:transparent}
+.ui-badge.destructive{background:hsl(var(--destructive));color:hsl(var(--destructive-foreground));border-color:transparent}
+.ui-badge.soft{background:hsl(var(--muted));color:hsl(var(--muted-foreground));border-color:transparent}
+/* ---------- 统计卡（对齐首页 stat：text-xs label + text-lg font-semibold tabular-nums） ---------- */
+.statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(min-width:1024px){.statgrid{grid-template-columns:repeat(4,1fr)}}
+.statc{background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:8px;box-shadow:var(--shadow-card);padding:12px 16px}
+.statc small{font-size:12px;color:hsl(var(--muted-foreground))}
+.statc b{display:block;margin-top:4px;font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.statc b.big{font-size:24px;font-weight:700;letter-spacing:-.02em;color:hsl(var(--primary))}
+/* ---------- 表格（对齐部署版 Table） ---------- */
+table.ui-tbl{width:100%;border-collapse:collapse;font-size:14px}
+.ui-tbl th{text-align:left;font-weight:500;color:hsl(var(--muted-foreground));font-size:12px;padding:8px 12px;border-bottom:1px solid hsl(var(--border));white-space:nowrap}
+.ui-tbl td{padding:8px 12px;border-bottom:1px solid hsl(var(--border));vertical-align:middle}
+.ui-tbl tbody tr:hover td{background:hsl(var(--muted)/.5)}
+.ui-tbl tr:last-child td{border-bottom:none}
+.ui-tbl .empty-cell{padding:22px;text-align:center;color:hsl(var(--muted-foreground));font-size:13px}
+.tbl-check{width:16px;height:16px;cursor:pointer}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:720px){.row{grid-template-columns:1fr}}
+/* ---------- chips 输入 ---------- */
+.chips{display:flex;flex-wrap:wrap;gap:6px;border:1px solid hsl(var(--input));border-radius:6px;padding:6px;background:transparent;box-shadow:var(--shadow-sm)}
+.chips:focus-within{border-color:hsl(var(--ring));box-shadow:0 0 0 1px hsl(var(--ring))}
+.chips input{border:none;box-shadow:none;background:transparent;min-width:100px;flex:1;height:28px;padding:0 6px}
+.chips input:focus{box-shadow:none;border:none}
+.chip-tag{display:inline-flex;align-items:center;gap:5px;background:hsl(var(--secondary));color:hsl(var(--secondary-foreground));border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600}
+.chip-tag i{cursor:pointer;font-style:normal;opacity:.6;font-weight:400;font-family:inherit}
+.chip-tag i:hover{opacity:1}
+/* ---------- 模式选择卡（radio cards） ---------- */
+.modes{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:640px){.modes{grid-template-columns:repeat(3,1fr)}}
+.mode{border:1px solid hsl(var(--border));border-radius:8px;padding:12px 16px;cursor:pointer;transition:all .15s;background:transparent}
+.mode:hover{background:hsl(var(--muted)/.5)}
+.mode.on{border-color:hsl(var(--primary));background:hsl(var(--primary)/.05);box-shadow:0 0 0 1px hsl(var(--primary))}
+.mode b{font-size:14px;font-weight:600;display:block}
+.mode.on b{color:hsl(var(--primary))}
+.mode p{font-size:12px;color:hsl(var(--muted-foreground));margin-top:4px;line-height:1.5}
+/* ---------- 滑杆 ---------- */
+.fslider{display:flex;align-items:center;gap:12px;width:100%}
+.fslider input[type=range]{flex:1;accent-color:hsl(var(--primary));height:20px}
+.slider-val{font-size:12px;font-weight:600;color:hsl(var(--secondary-foreground));background:hsl(var(--secondary));border-radius:6px;padding:2px 8px;font-variant-numeric:tabular-nums;flex:none}
+.sunit{color:hsl(var(--muted-foreground));font-size:12px;flex:none}
+/* ---------- 列表行（规则/绑定行） ---------- */
+.cp-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid hsl(var(--border))}
+.cp-row:last-child{border-bottom-color:transparent}
+.cp-row input,.cp-row select{width:auto;flex:none}
+.style-item{display:flex;gap:8px;margin-bottom:8px;align-items:flex-start}
+.style-item textarea{min-height:52px;flex:1}
+.lr-toggle{display:flex;flex-direction:column;align-items:center;gap:4px;flex:none}
+.lr-toggle small{font-size:11px;color:hsl(var(--muted-foreground))}
+.icon-del{width:32px;height:32px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid hsl(var(--input));border-radius:6px;background:hsl(var(--background));color:hsl(var(--muted-foreground));cursor:pointer;transition:all .15s;box-shadow:var(--shadow-sm)}
+.icon-del:hover{color:hsl(var(--destructive));border-color:hsl(var(--destructive)/.5)}
+/* ---------- 工具栏与搜索 ---------- */
+.tbl-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.tbl-toolbar .search{position:relative;flex:1;min-width:200px;max-width:340px}
+.tbl-toolbar .search input{padding-left:34px}
+.tbl-toolbar .search .sic{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:hsl(var(--muted-foreground));display:flex;pointer-events:none}
+.lab{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.lab>span{font-size:13px;font-weight:600;flex:none}
+.lab select{width:auto}
+/* ---------- 弹窗（对齐部署版 Dialog：mask + rounded-lg border shadow） ---------- */
+.modal-mask{position:fixed;inset:0;background:rgb(0 0 0/.5);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:48px 16px;overflow-y:auto}
+.modal{background:hsl(var(--background));border:1px solid hsl(var(--border));border-radius:8px;box-shadow:0 10px 15px -3px rgb(0 0 0/.1),0 4px 6px -4px rgb(0 0 0/.1);width:100%;max-width:640px;animation:pop .15s ease-out}
+@keyframes pop{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 24px 0}
+.modal-head b{font-size:16px;font-weight:600}
+.modal-head .desc{font-size:13px;color:hsl(var(--muted-foreground));margin-top:4px;line-height:1.5}
+.modal-x{border:none;background:none;cursor:pointer;color:hsl(var(--muted-foreground));padding:4px;border-radius:6px;display:flex}
+.modal-x:hover{color:hsl(var(--foreground));background:hsl(var(--muted))}
+.modal-body{padding:16px 24px}
+.modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:0 24px 20px}
+/* ---------- 暴露工具/技能 弹窗列表 ---------- */
+.tp-list{max-height:46vh;overflow-y:auto;border:1px solid hsl(var(--border));border-radius:8px;background:hsl(var(--background));display:flex;flex-direction:column}
+.tp-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid hsl(var(--border));transition:background .1s}
+.tp-item:last-child{border-bottom:none}
+.tp-item:hover{background:hsl(var(--muted)/.5)}
+.tp-item.on{background:hsl(var(--primary)/.06)}
+.tp-check{flex:none;width:16px;height:16px;margin-top:3px;border:1px solid hsl(var(--input));border-radius:4px;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;color:hsl(var(--primary-foreground))}
+.tp-item.on .tp-check{background:hsl(var(--primary));border-color:hsl(var(--primary))}
+.tp-info{min-width:0;flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.tp-info b{font-family:var(--mono);font-size:13px;font-weight:600}
+.tp-info small{width:100%;font-size:12px;color:hsl(var(--muted-foreground));line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tp-empty{padding:26px;text-align:center;color:hsl(var(--muted-foreground));font-size:13px}
+.tp-foot small{color:hsl(var(--muted-foreground));font-size:12px}
+/* ---------- 其他 ---------- */
+#toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(80px);background:hsl(var(--foreground));color:hsl(var(--background));padding:10px 22px;border-radius:8px;font-size:14px;opacity:0;transition:.25s;z-index:99;box-shadow:0 4px 12px rgb(0 0 0/.2)}
+#toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.loading{padding:60px;text-align:center;color:hsl(var(--muted-foreground));font-size:14px}
+code{font-family:var(--mono);font-size:.9em;background:hsl(var(--muted));border-radius:4px;padding:1px 5px;color:hsl(var(--secondary-foreground))}
+/* ===== 麦麦观察页（像素对齐 MaiBot 部署版原版 dashboard /planner-monitor：颜色/字号/圆角/类名均取自部署 chunk 实测值） ===== */
+:root{
+  --mo-primary:#e06f06; --mo-primary-fg:#f8fafc;
+  --mo-bg:#ffffff; --mo-fg:#020817;
+  --mo-card:#fbfcfc; --mo-card-fg:#020817;
+  --mo-secondary:#f1f7f8; --mo-secondary-fg:#0f172a;
+  --mo-muted:#f4f6f6; --mo-muted-fg:#608990;
+  --mo-accent:#55ab49; --mo-accent-fg:#f8fafc;
+  --mo-border:#e5eced; --mo-destructive:#d31212;
+  --mo-emerald:#10b981; --mo-blue:#3b82f6; --mo-amber:#f59e0b;
+  --mo-teal:#14b8a6; --mo-purple:#a855f7; --mo-red:#ef4444;
+  --mo-mono:"JetBrains Mono",ui-monospace,monospace;
+  --mo-shadow:0 1px 3px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.06);
+}
+/* 布局根：flex min-w-0 flex-col gap-4 lg:h-[calc(100vh-116px)] lg:flex-row */
+/* ---------- 模型管理（仿 MaiBot /config/model） ---------- */
+.md-grid{display:grid;gap:16px}
+@media(min-width:1024px){.md-grid{grid-template-columns:1fr 3fr;align-items:start}}
+.md-aside{background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:8px;overflow:hidden;box-shadow:var(--shadow-card)}
+.md-ahead{display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid hsl(var(--border));padding:10px 12px}
+.md-ahead h2{font-size:14px;font-weight:600;margin:0}
+.md-alist{display:flex;flex-direction:column;gap:4px;padding:8px}
+.md-item{display:flex;width:100%;min-width:0;align-items:justify;justify-content:space-between;gap:12px;border:none;background:none;border-radius:6px;padding:8px 12px;font-size:14px;font-family:inherit;text-align:left;cursor:pointer;transition:background .15s;color:inherit}
+.md-item:hover{background:hsl(var(--accent))}
+.md-item.on{background:hsl(var(--primary));color:hsl(var(--primary-foreground))}
+.md-item .l2{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.md-item .lbl{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.md-item .sub{font-size:11px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.md-item .cnt{flex:none;font-size:12px;opacity:.8}
+.md-item .cnt.ok{color:var(--mo-ok,#16a34a);opacity:1}
+.md-item.on .cnt.ok{color:inherit;opacity:.9}
+.md-item.off .lbl{opacity:.5}
+.md-main{background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:8px;padding:16px;box-shadow:var(--shadow-card);min-width:0}
+.md-bar{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+@media(min-width:640px){.md-bar{flex-direction:row;align-items:center;justify-content:space-between}}
+.md-search{position:relative;width:100%;max-width:384px}
+.md-search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:.5}
+.md-search input{padding-left:32px}
+.md-found{font-size:14px;color:hsl(var(--muted-foreground));margin:0;white-space:nowrap}
+.md-provbar{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid hsl(var(--border));border-radius:8px;padding:12px 16px;margin-bottom:12px}
+.md-provbar h3{font-size:15px;font-weight:600;margin:0 0 4px}
+.md-provbar p{font-size:12px;color:hsl(var(--muted-foreground));margin:0}
+.md-dotcell{text-align:center;width:56px}
+.md-dot{display:inline-block;width:12px;height:12px;border-radius:999px;border:1px solid rgba(21,128,61,.4);background:rgba(21,128,61,.12)}
+.md-dot.on{border-color:#22c55e;background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+.md-alert{border:1px solid rgba(234,179,8,.5);background:rgba(234,179,8,.1);border-radius:8px;padding:12px 16px;font-size:14px}
+.md-alert strong{color:#ca8a04;display:flex;align-items:center;gap:6px}
+.md-alert-body{margin-top:8px;font-size:14px}
+.md-thead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:1px solid hsl(var(--border));padding-bottom:10px;margin-bottom:14px}
+.md-thead h3{font-size:17px;font-weight:600;margin:0;white-space:nowrap}
+.md-thead p{font-size:13px;color:hsl(var(--muted-foreground));margin:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.md-fld{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.md-fld>label{font-size:14px;font-weight:500}
+.md-hint{font-size:12px;color:hsl(var(--muted-foreground));margin:0}
+.md-caps{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.md-cap{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:hsl(var(--muted-foreground));line-height:1.5}
+.md-cap>span:last-child{min-width:0}
+.md-note{font-size:12px;color:hsl(var(--muted-foreground));border-top:1px solid hsl(var(--border));margin:14px 0 0;padding-top:10px}
+.md-savest{display:flex;justify-content:flex-end;font-size:12px;color:hsl(var(--muted-foreground));margin-top:6px;min-height:16px}
+.md-ms{position:relative}
+.md-ms-trig{display:flex;width:100%;min-height:36px;align-items:center;justify-content:space-between;gap:8px;border:1px solid hsl(var(--input));border-radius:6px;background:transparent;padding:4px 12px;font-family:inherit;cursor:pointer;box-shadow:var(--shadow-sm)}
+.md-ms-trig:hover{background:hsl(var(--accent))}
+.md-ms-badges{display:flex;flex:1;flex-wrap:wrap;gap:4px;min-width:0}
+.md-ms-ph{color:hsl(var(--muted-foreground));font-size:14px}
+.md-tag{gap:4px;padding:1px 6px;font-size:11px;line-height:1.4;max-width:100%}
+.md-tag>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.md-tag i{display:inline-flex;cursor:pointer;border-radius:4px;font-style:normal}
+.md-tag i:hover{background:rgba(220,38,38,.2)}
+.md-ms-pop{position:absolute;z-index:30;top:calc(100% + 4px);left:0;right:0;background:hsl(var(--card));color:hsl(var(--foreground));border:1px solid hsl(var(--border));border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);overflow:hidden}
+.md-ms-search{display:flex;align-items:center;gap:6px;border-bottom:1px solid hsl(var(--border));padding:8px 12px}
+.md-ms-search svg{opacity:.5;flex:none}
+.md-ms-search input{border:none;box-shadow:none;padding:0;background:transparent;height:24px}
+.md-ms-search input:focus{box-shadow:none;border:none}
+.md-ms-list{max-height:300px;overflow-y:auto;padding:4px}
+.md-ms-item{display:flex;align-items:center;gap:8px;border-radius:6px;padding:6px 8px;font-size:14px;cursor:pointer}
+.md-ms-item:hover{background:hsl(var(--accent))}
+.md-ms-item.on{background:hsl(var(--accent))}
+.md-check{display:inline-flex;width:16px;flex:none;color:var(--mo-ok,#16a34a)}
+.md-ms-empty{padding:20px 0;text-align:center;font-size:14px;color:hsl(var(--muted-foreground))}
+.mo-root{display:flex;flex-direction:column;gap:16px;min-width:0;font-family:inherit;color:var(--mo-fg);height:calc(100vh - 120px);min-height:420px}
+@media(min-width:1024px){.mo-root{flex-direction:row}}
+/* 侧栏：border bg-background/45 flex shrink-0 flex-col overflow-hidden；w-52/w-16 */
+.mo-aside{flex:none;min-width:0;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--mo-border);background:rgba(255,255,255,.45);transition:width .2s;width:208px}
+.mo-aside.collapsed{width:64px}
+.mo-aside-head{padding:8px 12px}
+.mo-aside.collapsed .mo-aside-head{padding:8px}
+.mo-aside-title{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:500;margin:0;color:var(--mo-fg)}
+.mo-aside.collapsed .mo-aside-title{justify-content:center;font-size:0}
+.mo-aside-title .mo-ticon{flex:none;display:flex}
+.mo-aside.collapsed .mo-ticon{display:none}
+.mo-conn{display:flex;width:8px;height:8px;border-radius:99px;background:var(--mo-emerald);margin-left:auto;flex:none}
+.mo-aside.collapsed .mo-conn{margin-left:0}
+.mo-sep{height:1px;background:var(--mo-border);flex:none}
+/* ghost 按钮（折叠钮/回到底部/清空）：hover:bg-accent hover:text-accent-foreground */
+.mo-gbtn{display:inline-flex;align-items:center;justify-content:center;gap:4px;border:none;background:none;border-radius:6px;color:inherit;font-weight:500;cursor:pointer;transition:background .15s,color .15s;height:24px;padding:0 8px;font-size:11px;flex:none}
+.mo-gbtn:hover{background:var(--mo-accent);color:var(--mo-accent-fg)}
+.mo-gbtn.icon{width:24px;padding:0}
+/* 会话列表：flex flex-col gap-1 p-2；ScrollArea max-h-40 lg:max-h-none */
+.mo-sessions{overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:4px;padding:8px;max-height:160px}
+@media(min-width:1024px){.mo-sessions{max-height:none}}
+.mo-aside.collapsed .mo-sessions{align-items:center}
+/* 会话项：rounded-lg text-left text-sm hover:bg-accent/50；选中 bg-accent text-accent-foreground */
+.mo-sess{border:none;background:none;max-width:100%;overflow:hidden;border-radius:8px;text-align:left;font-size:14px;transition:background .15s;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 10px;width:100%;min-width:0;color:inherit}
+.mo-sess:hover{background:rgba(85,171,73,.5)}
+.mo-sess.on{background:var(--mo-accent);color:var(--mo-accent-fg)}
+.mo-aside.collapsed .mo-sess{display:flex;height:40px;width:40px;align-items:center;justify-content:center;padding:0;flex:none}
+.mo-sess .r1{display:flex;width:100%;min-width:0;align-items:center;justify-content:space-between;gap:8px}
+.mo-aside.collapsed .mo-sess .r1{justify-content:center}
+.mo-sess .r1 .lft{display:flex;min-width:0;align-items:center;gap:8px;overflow:hidden;flex:1}
+.mo-aside.collapsed .mo-sess .r1 .lft{flex:none}
+.mo-sname{display:block;min-width:0;flex:1;overflow:hidden;font-weight:500;text-overflow:ellipsis;white-space:nowrap}
+.mo-aside.collapsed .mo-sname,.mo-aside.collapsed .r2{display:none}
+/* 会话头像：relative h-7 w-7；rounded-md bg-primary/10 text-primary + 状态点 h-2.5 ring-2 */
+.mo-sava{position:relative;display:flex;height:28px;width:28px;flex:none}
+.mo-sava .img{height:28px;width:28px;border-radius:6px;background:rgba(224,111,6,.1);color:var(--mo-primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
+.mo-sdot{position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:99px;box-shadow:0 0 0 2px var(--mo-bg);background:var(--mo-emerald)}
+.mo-sdot.wait{background:var(--mo-blue)}
+.mo-sess .r2{display:flex;width:100%;min-width:0;align-items:center;justify-content:space-between;gap:8px;overflow:hidden;font-size:12px;color:var(--mo-muted-fg)}
+.mo-sess .r2 .tm{flex:none}
+.mo-sess .r2 .stg{color:var(--mo-primary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mo-sess.on .r2,.mo-sess.on .r2 .stg{color:var(--mo-accent-fg)}
+.mo-sess-empty{color:var(--mo-muted-fg);display:flex;height:100%;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:16px}
+.mo-sess-empty p{font-size:14px;text-align:center;margin:0}
+/* 主列：flex min-w-0 flex-1 flex-col */
+.mo-main{display:flex;min-width:0;flex:1;flex-direction:column}
+/* 阶段条：mb-1.5 flex items-center gap-2 overflow-x-auto rounded-md border px-2 py-1（有状态 bg-background / 无 bg-muted/30） */
+.mo-stagebar{background:var(--mo-bg);margin-bottom:6px;display:flex;min-width:0;align-items:center;gap:8px;overflow-x:auto;border:1px solid var(--mo-border);border-radius:6px;padding:4px 8px;flex:none}
+.mo-stagebar.empty{background:rgba(244,246,246,.3)}
+.mo-stagegrp{display:flex;flex:none;align-items:center;gap:6px}
+.mo-emptytxt{color:var(--mo-muted-fg);flex:none;font-size:12px;white-space:nowrap}
+.mo-upd{color:var(--mo-muted-fg);margin-left:auto;font-size:11px;white-space:nowrap;flex:none}
+.mo-sdetail{color:var(--mo-muted-fg);flex:none;font-size:12px;white-space:nowrap;margin:0}
+/* 统计 chip：bg-background/60 h-6 rounded-md border px-1.5 + activity h-3 w-3 + 统计 text-[10px] font-medium */
+.mo-stats{background:rgba(255,255,255,.6);color:var(--mo-muted-fg);display:flex;height:24px;flex:none;align-items:center;gap:4px;border-radius:6px;border:1px solid var(--mo-border);padding:0 6px;cursor:default;white-space:nowrap}
+.mo-stats .lbl{font-size:10px;font-weight:500}
+.mo-act{margin-left:auto;display:flex;flex:none;align-items:center;gap:6px}
+.mo-act .mo-gbtn .chev.on{color:var(--mo-primary)}
+/* Badge 基类：inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold */
+.mo-badge{display:inline-flex;align-items:center;border-radius:6px;border:1px solid var(--mo-border);padding:2px 10px;font-size:12px;font-weight:600;line-height:1.5;white-space:nowrap;flex:none;color:var(--mo-fg);background:transparent}
+.mo-badge.default{background:var(--mo-primary);color:var(--mo-primary-fg);border-color:transparent}
+.mo-badge.secondary{background:var(--mo-secondary);color:var(--mo-secondary-fg);border-color:transparent}
+.mo-badge.destructive{background:var(--mo-destructive);color:#fff;border-color:transparent}
+.mo-badge.outline{background:transparent;color:var(--mo-fg)}
+/* monitor 内覆盖：text-[10px] / px-1.5 text-[10px] / h-5 px-1.5 / h-4 px-1 / text-xs font-normal / gap-1 */
+.mo-badge.t10{font-size:10px}
+.mo-badge.p6{padding-left:6px;padding-right:6px}
+.mo-badge.h20{height:20px;padding-left:6px;padding-right:6px;font-size:10px}
+.mo-badge.h16{height:16px;padding-left:4px;padding-right:4px;font-size:10px}
+.mo-badge.fnorm{font-weight:400}
+.mo-badge.g1{gap:4px}
+.mo-badge.g05{gap:2px}
+/* 时间线 Card：min-h-[420px] min-w-0 flex-1 overflow-hidden lg:min-h-0 + Card bg-card rounded-lg border shadow */
+.mo-tlcard{background:var(--mo-card);border-radius:8px;border:1px solid var(--mo-border);box-shadow:var(--mo-shadow);min-width:0;flex:1;overflow:hidden}
+.mo-tl{height:100%;overflow-y:auto}
+.mo-tlin{min-width:0;padding:16px}
+.mo-empty{color:var(--mo-muted-fg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:80px 0}
+.mo-empty p{font-size:14px;margin:0}
+.mo-empty small{font-size:12px;opacity:.6}
+/* 事件行：外层 pb-3；内层 rounded-md fade-in-0 slide-in-from-bottom-2 duration-300 */
+.mo-e{padding-bottom:12px}
+.mo-ein{border-radius:6px;animation:moIn .3s ease-out}
+@keyframes moIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.mo-row{display:flex;align-items:flex-start;gap:12px}
+/* 圆头像：mt-1 h-7 w-7 rounded-full */
+.mo-ava{margin-top:4px;display:flex;height:28px;width:28px;flex:none;align-items:center;justify-content:center;border-radius:99px;font-size:12px;font-weight:600}
+.mo-ava.in{background:rgba(59,130,246,.15);color:var(--mo-blue)}
+.mo-ava.out{background:rgba(16,185,129,.15);color:var(--mo-emerald)}
+.mo-ava.amber{background:rgba(245,158,11,.15);color:var(--mo-amber)}
+.mo-ecol{min-width:0;flex:1}
+.mo-ehead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.mo-ehead.wrap{flex-wrap:wrap}
+.mo-ename{font-size:14px;font-weight:500;color:var(--mo-fg)}
+.mo-ets{color:var(--mo-muted-fg);font-size:12px;white-space:nowrap}
+.mo-ets.md{font-weight:500}
+.mo-cpt{color:rgba(2,8,23,.8);font-size:14px;line-height:1.625;white-space:pre-wrap;word-break:break-word;margin:0}
+.mo-cpt.f90{color:rgba(2,8,23,.9)}
+.mo-cpt.mut{color:var(--mo-muted-fg)}
+.mo-cpt2{color:var(--mo-muted-fg);font-size:14px;margin:4px 0 0}
+/* 发送卡：rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 */
+.mo-card-sent{display:flex;align-items:flex-start;gap:12px;border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.05);border-radius:6px;padding:8px 12px}
+/* 反应卡：bg-background rounded-md border px-3 py-2 shadow-sm */
+.mo-card-gate{background:var(--mo-bg);display:flex;align-items:flex-start;gap:12px;border-radius:6px;border:1px solid var(--mo-border);padding:8px 12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+/* 打断卡：rounded-md border border-amber-500/35 bg-amber-500/5 px-3 py-2 */
+.mo-card-warn{border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.05);border-radius:6px;padding:8px 12px}
+.mo-card-warn .hd{display:flex;align-items:center;gap:8px;font-size:14px}
+.mo-card-warn b{font-weight:500}
+/* 结束卡：rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 */
+.mo-card-done{border-radius:6px;border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.05);padding:8px 12px;display:flex;align-items:center;gap:8px;font-size:14px}
+.mo-card-done b{font-weight:500}
+.mo-card-done .m{color:var(--mo-muted-fg)}
+/* 工具卡内的结束条：px-2.5 py-1.5 text-xs */
+.mo-done-strip{display:flex;align-items:center;gap:8px;border-radius:6px;border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.05);padding:6px 10px;font-size:12px}
+.mo-done-strip b{font-weight:500}
+.mo-done-strip .m{color:var(--mo-muted-fg)}
+/* 左边框 Card：bg-card rounded-lg border shadow + border-l-4（emerald/teal/purple 60%） */
+.mo-card{background:var(--mo-card);border-radius:8px;border:1px solid var(--mo-border);border-left-width:4px;box-shadow:var(--mo-shadow)}
+.mo-card.plan{border-left-color:rgba(16,185,129,.6)}
+.mo-card.tools{border-left-color:rgba(20,184,166,.6)}
+.mo-card.replier{border-left-color:rgba(168,85,247,.6)}
+.mo-cbody{display:flex;flex-direction:column;gap:12px;padding:12px 16px}
+.mo-cbody.g8{gap:8px}
+.mo-cbody.rp{gap:8px;padding:10px 16px}
+.mo-chead{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.mo-chead.nowrap{flex-wrap:nowrap}
+.mo-ctitle{font-size:14px;font-weight:500;line-height:1;margin:0}
+.mo-ic{display:flex;flex:none;align-items:center}
+.mo-okc{color:var(--mo-emerald)}
+.mo-badc{color:var(--mo-red)}
+.mo-tealc{color:var(--mo-teal)}
+.mo-purplec{color:var(--mo-purple)}
+.mo-amberc{color:var(--mo-amber)}
+/* 折叠文本：text-sm leading-relaxed；按钮 text-primary mt-1 text-xs hover:underline */
+.mo-cbtn{color:var(--mo-primary);margin-top:4px;display:flex;align-items:center;gap:2px;font-size:12px;border:none;background:none;cursor:pointer;padding:0}
+.mo-cbtn:hover{text-decoration:underline}
+/* planner.response 工具 chip：badge secondary gap-1 text-[10px] + wrench h-2.5 */
+.mo-chips{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
+/* 工具行 */
+.mo-trow{display:flex;flex-direction:column;gap:6px}
+.mo-thead{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.mo-tname{color:var(--mo-fg);font-family:var(--mo-mono);font-size:14px;font-weight:600}
+.mo-tidx{color:var(--mo-muted-fg);margin-left:auto;font-size:10px;flex:none}
+.mo-args{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.mo-arg{background:rgba(255,255,255,.6);display:flex;height:24px;max-width:100%;min-width:0;align-items:center;gap:6px;border-radius:6px;border:1px solid var(--mo-border);padding:0 8px;font-size:12px}
+.mo-arg b{color:var(--mo-fg);flex:none;font-family:var(--mo-mono);font-weight:600}
+.mo-arg .eq{color:var(--mo-muted-fg);flex:none}
+.mo-arg i{font-style:normal;color:var(--mo-muted-fg);max-width:288px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mo-mono);font-size:11px}
+.mo-result{background:rgba(244,246,246,.2);display:flex;align-items:flex-start;gap:6px;border-radius:6px;border:1px solid var(--mo-border);padding:4px 10px}
+.mo-result span{color:var(--mo-muted-fg);flex:none;font-size:10px;line-height:16px;font-weight:500}
+.mo-result p{color:rgba(2,8,23,.8);min-width:0;flex:1;font-size:12px;line-height:16px;word-break:break-word;white-space:pre-wrap;margin:0}
+.mo-resc{flex:1;min-width:0}
+.mo-rbtn{border:none;background:none;cursor:pointer;color:hsl(var(--primary));height:24px;padding:0 8px;border-radius:6px;font-size:10px;font-weight:500;display:inline-flex;align-items:center;gap:4px;flex:none}
+.mo-rbtn:hover{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+.mo-result .mo-resp{color:rgba(2,8,23,.8);font-size:12px;line-height:16px}
+.mo-result .mo-resp:empty::before{content:'未返回结果摘要。';color:var(--mo-muted-fg)}
+/* 完整调用 JSON：details group contents；summary 虚线框 h-6 */
+.mo-json{display:contents;font-size:12px}
+.mo-json summary{background:rgba(255,255,255,.4);color:var(--mo-muted-fg);margin-left:auto;display:flex;height:24px;cursor:pointer;list-style:none;align-items:center;gap:4px;border-radius:4px;border:1px dashed var(--mo-border);padding:0 6px;font-size:10px;flex:none}
+.mo-json summary::-webkit-details-marker{display:none}
+.mo-json summary svg{transition:transform .15s}
+.mo-json[open] summary svg{transform:rotate(90deg)}
+.mo-json pre{background:rgba(255,255,255,.6);color:var(--mo-muted-fg);flex-basis:100%;border-radius:6px;border:1px solid var(--mo-border);padding:6px 10px;font-family:var(--mo-mono);font-size:11px;line-height:16px;word-break:break-word;white-space:pre-wrap;margin:0}
+/* 思考过程 details */
+.mo-details{margin-top:4px}
+.mo-details summary{color:var(--mo-muted-fg);cursor:pointer;font-size:12px}
+.mo-details summary:hover{color:var(--mo-fg)}
+</style>
+</head>
+
+<body>
+<div id="app">
+  <aside class="sidebar" id="sb">
+    <div class="sb-logo">
+      <span class="lg" id="sb_logo_ic"></span>
+      <span class="tx"><b>麦麦之魂</b><small>MAISOUL · 深度复刻</small></span>
+    </div>
+    <nav class="sb-nav" id="nav"></nav>
+    <div class="sb-foot">复刻自 MaiBot 发言流水线<br>触发门控 · 表达/黑话学习 · 打字延迟</div>
+  </aside>
+
+  <div class="maincol">
+    <header class="topbar">
+      <button class="ui-btn ghost icon" id="tb_sb" onclick="toggleSidebar()" title="收起侧边栏"></button>
+      <span class="tb-title" id="ptitle">概览</span>
+      <span class="tb-spacer"></span>
+      <span class="ui-badge secondary" id="tb_ver">maisoul</span>
+      <button class="ui-btn default sm" id="saveBtn" onclick="save()"><span id="saveBtn_t">保存全部配置</span></button>
+    </header>
+    <div class="pagescroll">
+      <div class="page" id="pagebox"><div id="body"><div class="loading">正在加载配置…</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* AstrBot 在 body 结束处注入 bridge SDK（晚于本脚本执行）；且资源令牌 60s 过期，
+   浏览器缓存旧 HTML 时 SDK 可能 401 永不出现 —— 因此内置协议兼容的备用桥。
+   注意：脚本内不要出现 body 或 script 的闭合标签字面量，避免被注入逻辑误伤。 */
+let S = null;
+let FB = null;
+let maisoulTab = 'core';
+function setMsTab(t){maisoulTab=t;render('maisoul')}
+const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理'};
+const PAGE_VERSION = 'v6.12.0';
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function makeFallbackBridge(){
+  const CHANNEL = 'astrbot-plugin-page';
+  const pending = new Map();
+  let counter = 0;
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent) return;
+    const m = event.data;
+    if (!m || m.channel !== CHANNEL || m.kind !== 'response') return;
+    const p = pending.get(m.requestId);
+    if (!p) return;
+    pending.delete(m.requestId);
+    if (m.ok) p.resolve(m.data); else p.reject(new Error(m.error || 'bridge request failed'));
+  });
+  window.parent.postMessage({channel: CHANNEL, kind: 'ready'}, '*');
+  const request = (action, payload) => new Promise((resolve, reject) => {
+    const requestId = 'maisoul_fb_' + (++counter);
+    pending.set(requestId, {resolve, reject});
+    window.parent.postMessage({channel: CHANNEL, kind: 'request', requestId, action, ...payload}, '*');
+    setTimeout(() => { if (pending.has(requestId)) { pending.delete(requestId); reject(new Error('请求超时')); } }, 15000);
+  });
+  return {
+    apiGet: (endpoint, params) => request('api:get', {endpoint, params: params || {}}),
+    apiPost: (endpoint, body) => request('api:post', {endpoint, body: body || {}}),
+  };
+}
+
+function getBridge(){ return window.AstrBotPluginPage || FB }
+async function ensureBridge(timeout=2500){
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
+    await sleep(120);
+  }
+  FB = makeFallbackBridge();
+  return FB;
+}
+
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
+async function apiGet(name,params){ const b=getBridge(); if(!b) throw new Error('WebUI 桥未就绪，请从 AstrBot WebUI 插件页进入'); const r=await b.apiGet(name,params||{}); if(r&&r.success===false) throw new Error(r.error||'读取失败'); return r?.data??r }
+async function apiPost(name,body){ const b=getBridge(); if(!b) throw new Error('WebUI 桥未就绪'); const r=await b.apiPost(name,body); if(r&&r.success===false) throw new Error(r.error||'保存失败'); return r }
+
+/* ---------------- 页面切换 ---------------- */
+/* ---------------- 渲染辅助（对齐部署版动态配置表单：分区 panel + 表单行 frow） ---------------- */
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+/* 配置分区：rounded-lg border bg-card p-4 sm:p-6 space-y-3 + h3 + 描述（部署版 bot 配置分区样式） */
+function panel(id,title,desc,inner){
+  return `<section class="panel" id="card_${id}">${title?`<h3>${title}</h3>`:''}${desc?`<div class="pdesc">${desc}</div>`:''}<div>${inner}</div></section>`
+}
+function card(id,title,desc,inner){ return panel(id,title,desc,inner) }
+/* 表单行：label+说明左侧，控件右侧（sm 起两栏）；wide=true 控件整行 */
+function field(label,desc,inner,cnt,wide){
+  return `<div class="frow ${wide?'wide':''}"><div class="fmeta"><div class="flab"><span>${label}</span>${cnt?`<span class="fcnt">${cnt}</span>`:''}</div>${desc?`<div class="fdesc">${desc}</div>`:''}</div><div class="fctl">${inner}</div></div>`
+}
+function textarea(id,v,ph){return `<textarea id="${id}" placeholder="${esc(ph||'')}">${esc(v)}</textarea>`}
+function chips(id,arr,ph){return `<div class="chips" data-chips="${id}">${(arr||[]).map((t,i)=>`<span class="chip-tag">${esc(t)}<i onclick="delChip('${id}',${i})">×</i></span>`).join('')}<input placeholder="${esc(ph||'输入后回车添加')}" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${id}',this)}"></div>`}
+function slider(id,v,min,max,step,unit){return `<div class="fslider"><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${v}" oninput="onFreqSlide(this)"><span class="slider-val" id="${id}v">${v}</span>${unit?`<small class="sunit">${unit}</small>`:''}</div>`}
+/* 开关行：部署版 Switch h-5 w-9（选中 primary），标题+副文案在左 */
+function switchRow(id,v,title,sub){return `<div class="frow"><div class="fmeta"><div class="flab">${title}</div>${sub?`<div class="fdesc">${sub}</div>`:''}</div><div class="fctl free"><label class="ui-switch"><input type="checkbox" id="${id}" ${v?'checked':''}><span class="th"></span></label></div></div>`}
+/* 小按钮（部署版 Button size=sm）带 lucide 图标 */
+function smBtn(cls,icon,txt,attrs){return `<button class="ui-btn sm ${cls||'outline'}" ${attrs||''}>${icon?moIcon(icon,14):''}<span>${txt}</span></button>`}
+function iconBtn(icon,title,attrs,danger){return `<button class="ui-btn ghost icon sm" title="${esc(title)}" ${attrs||''} style="${danger?'color:hsl(var(--destructive))':''}">${moIcon(icon,14)}</button>`}
+
+function onFreqSlide(el){
+  document.getElementById(el.id+'v').textContent=el.value;
+  if(el.id!=='talk_value')return;
+  const f=parseFloat(el.value);
+  const mode=document.getElementById('reply_trigger_mode')?.value||S.reply_trigger_mode||'frequency';
+  const th=f>0?Math.ceil(mode==='reply_necessity'?1/(f*f):1/f):0;
+  const tip=document.getElementById('freq_tip');
+  if(tip)tip.textContent=`触发阈值 = ceil(1/${mode==='reply_necessity'?'f²':'f'}) = ${th} 条积压消息${f<=0?'（频率 0 = 静默接收，不发言）':''}`;
+}
+
+/* ---------------- 侧栏导航（分组/图标/字号对齐部署版侧栏） ---------------- */
+const NAV=[
+  {group:'概览',items:[{p:'overview',icon:'house',label:'首页'},{p:'observe',icon:'activity',label:'麦麦观察'}]},
+  {group:'麦麦配置编辑',items:[{p:'maisoul',icon:'settings',label:'麦麦设置'},{p:'rhythm',icon:'clock',label:'发言节奏'},{p:'models',icon:'cpu',label:'模型管理'}]},
+  {group:'麦麦资源管理',items:[{p:'personamgr',icon:'user',label:'人格管理'},{p:'learn',icon:'book-open',label:'学习'}]},
+  {group:'扩展与集成',items:[{p:'bridge',icon:'wrench',label:'管家桥'}]}
+];
+function navHTML(){return NAV.map(g=>`<div class="sb-group"><div class="sb-gtitle">${g.group}</div>${g.items.map(it=>`<button class="sb-item ${curPage===it.p?'on':''}" onclick="render('${it.p}')"><span class="ic">${moIcon(it.icon,20)}</span><span class="lb">${it.label}</span></button>`).join('')}</div>`).join('')}
+function toggleSidebar(){
+  const sb=document.getElementById('sb');if(!sb)return;
+  sb.classList.toggle('mini');
+  const btn=document.getElementById('tb_sb');
+  if(btn)btn.innerHTML=moIcon(sb.classList.contains('mini')?'chevron-right':'chevron-left',16);
+}
+function render(p){
+  curPage=p;
+  const nav=document.getElementById('nav');if(nav)nav.innerHTML=navHTML();
+  document.getElementById('ptitle').textContent=TITLES[p]||'';
+  const sv=document.getElementById('saveBtn');if(sv)sv.style.display=(p==='observe'||p==='overview'||p==='models')?'none':'';
+  const sc=document.querySelector('.pagescroll');if(sc)sc.scrollTop=0;
+  const b=document.getElementById('body');
+  if(p==='overview'){b.innerHTML=overviewHTML();loadStatus();return}
+  if(p==='observe'){b.innerHTML=observeHTML();startMonitor();return}
+  if(!S){b.innerHTML='<div class="loading">配置未加载</div>';return}
+  const map={
+    maisoul: ()=>{
+      const core = [
+        panel('ident','人格配置','她是谁、什么性格——对应 bot_config.toml 的 [personality].personality 与 bot 名字/别名。',
+          field('机器人昵称（bot_name）','麦麦显示和自称时使用的名字',`<input type="text" id="bot_name" value="${esc(S.bot_name)}">`)+
+          field('别名（aliases）','别人可能用来称呼麦麦的名字，用于辅助识别提及——身份行与提及检测共用这一份',chips('aliases',S.aliases,'小麦'),'',true)+
+          field('人格设定（personality）','麦麦的人格和身份设定，建议简短描述她是谁、是什么性格',textarea('personality',S.personality,'她是谁、什么性格…'),`${String(S.personality||'').length} 字`,true)
+        ),
+        panel('express','表达方式','对应 [personality].reply_style —— 篇幅、语气、用词、格式规范。',
+          field('表达风格（reply_style）','麦麦平时说话的风格，例如简短、温和、吐槽或正式',textarea('reply_style',S.reply_style,''),`${String(S.reply_style||'').length} 字`,true)
+        ),
+        panel('behave','行为风格','对应 [personality].behavior_style —— 何时参与、如何观察、何时安静（MaiBot 中由 Planner 使用）。',
+          field('行为风格（behavior_style）','Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静',textarea('behavior_style',S.behavior_style,''),`${String(S.behavior_style||'').length} 字`,true)
+        ),
+        panel('attn','群聊注意事项','对应 [chat.reply_style].group_chat_prompt。',
+          field('群聊提示词（group_chat_prompt）','群聊通用提示词，告诉麦麦群聊中该怎么说话',textarea('group_chat_prompt',S.group_chat_prompt,''),`${String(S.group_chat_prompt||'').length} 字`,true)
+        ),
+        panel('pattn','私聊提示词','对应 [chat.reply_style].private_chat_prompts —— 私聊通用提示词（maisoul 已接管私聊，与群聊同一条管线）。',
+          field('私聊提示词（private_chat_prompts）','私聊通用提示词，告诉麦麦私聊中该怎么说话',textarea('private_chat_prompts',S.private_chat_prompts||'',''),`${String(S.private_chat_prompts||'').length} 字`,true)
+        ),
+      ].join('');
+      const detail = [
+        panel('lottery','随机风格彩票','对应 multiple_reply_style / multiple_probability —— 概率触发后仅影响本次回复。',
+          `<div id="mrs">${(S.multiple_reply_style||[]).map((t,i)=>styleItem(i,t)).join('')}</div>
+           ${smBtn('outline','plus','添加备用风格','onclick="addStyle()"')}`+
+          field('触发概率（multiple_probability）','0 表示不随机切换',slider('multiple_probability',S.multiple_probability??0,0,100,1,'%'))
+        ),
+        panel('kwr','关键词反应','对应 <code>[keyword_reaction]</code>——最新消息命中关键词/正则后，给麦麦追加一段固定反应提示（不会直接发送）。正则用命名捕获组，reaction 里 <code>[名字]</code> 会被替换为匹配内容。',
+          `<div class="lab"><span>关键词规则（keyword_rules）</span></div>
+           <div id="kwrs">${(S.keyword_rules||[]).map((r,i)=>kwRow(i,r)).join('')}</div>
+           ${smBtn('outline','plus','添加关键词规则','onclick="addKwRow()"')}
+           <div class="lab" style="margin-top:14px"><span>正则规则（regex_rules）</span></div>
+           <div id="rxrs">${(S.regex_rules||[]).map((r,i)=>rxRow(i,r)).join('')}</div>
+           ${smBtn('outline','plus','添加正则规则','onclick="addRxRow()"')}`
+        ),
+        panel('chatp','额外 Prompt','对应 chat.reply_style.chat_prompts —— 命中的群会在注意事项块追加"当前聊天额外注意事项"。平台+群号精确匹配（平台填适配器名如 qq），同一群可配多条自动拼接。',
+          `<div id="cps">${(S.chat_prompts||[]).map((c,i)=>cpItem(i,c)).join('')}</div>
+           ${smBtn('outline','plus','添加规则','onclick="addCp()"')}`
+        ),
+        panel('ctools','聊天工具暴露','把工具/技能直接暴露给聊天 LLM。工具只加 <b>MaiBot 原生工具的 AstrBot 等价物</b>（如 send_meme ≈ MaiBot 的 send_emoji 表情包）——MaiBot 没有的能力不要加，那些通过 call_maid 管家交给 AstrBot 的 agent 模型执行。技能经 AstrBot 原生 build_skills_prompt 注入系统提示词。',
+          smBtn('outline','search','从 AstrBot 选取工具 / 技能','onclick="openToolPicker()"')+
+          field('暴露的工具（chat_tools）','从 AstrBot 已注册的 llm_tool 中选取（插件/MCP/核心），需与注册名一致',chips('chat_tools',S.chat_tools,'如 send_meme'),'',true)+
+          field('暴露的技能（chat_skills）','从 AstrBot 技能库选取（SKILL.md），注入后模型可按技能说明执行',chips('chat_skills',S.chat_skills,'技能名'),'',true)+
+          `<div class="fdesc" style="margin-top:8px">管家 <code>call_maid</code>：<span id="ct_maid_state">${maidStateHTML()}</span>，随管家桥开关自动加入/移出聊天工具集。等价关系：MaiBot send_emoji ↔ stealer 的 send_meme；记忆查询类暂无等价物。</div>`
+        ),
+      ].join('');
+      return `<div class="ui-tabs full" style="grid-template-columns:1fr 1fr">
+          <button class="${maisoulTab==='core'?'on':''}" onclick="setMsTab('core')">核心设置</button>
+          <button class="${maisoulTab==='detail'?'on':''}" onclick="setMsTab('detail')">详细设置</button>
+        </div>${maisoulTab==='core'?core:detail}`;
+    },
+    personamgr: ()=>{
+      const names = (S.personas||[]).map(p=>str(p.name||'').trim()).filter(Boolean);
+      const opt = (sel)=>['',...names].map(n=>`<option value="${esc(n)}" ${sel===n?'selected':''}>${n||'主配置（兜底）'}</option>`).join('');
+      const bound = new Set((S.group_persona||[]).map(g=>str(g.name||'').trim()).filter(Boolean));
+      const q = (peSearch||'').toLowerCase();
+      const mainName = str(S.bot_name||'麦麦').trim()||'麦麦';
+      const mainHit = !q || mainName.toLowerCase().includes(q) || str(S.personality||'').toLowerCase().includes(q);
+      const mainRow = mainHit ? `<tr>
+          <td style="color:hsl(var(--muted-foreground));text-align:center">—</td>
+          <td><b>${esc(mainName)}</b></td>
+          <td>${esc(mainName)}</td>
+          <td><span class="ui-badge soft">${esc(str(S.personality||'').slice(0,14))||'未设定'}</span></td>
+          <td>
+            <span class="ui-badge secondary">主配置</span>
+            ${!str(S.default_persona||'').trim()?'<span class="ui-badge default">默认</span>':''}
+          </td>
+          <td style="text-align:right">
+            <button class="ui-btn ghost sm" onclick="openPersona('main')" title="编辑">${moIcon('pencil',14)}</button>
+          </td>
+        </tr>` : '';
+      const rows = (S.personas||[])
+        .map((p,i)=>({p,i}))
+        .filter(({p})=>!q || str(p.name||'').toLowerCase().includes(q) || str(p.personality||'').toLowerCase().includes(q))
+        .map(({p,i})=>`<tr>
+          <td><input type="checkbox" class="tbl-check pe-ck" data-idx="${i}"></td>
+          <td><b>${esc(p.name||'未命名')}</b></td>
+          <td>${esc(p.bot_name||'-')}</td>
+          <td><span class="ui-badge soft">${esc(str(p.personality||'').slice(0,14))||'未设定'}</span></td>
+          <td>
+            ${str(S.default_persona||'').trim()===str(p.name||'').trim()?'<span class="ui-badge default">默认</span> ':''}
+            ${bound.has(str(p.name||'').trim())?'<span class="ui-badge outline">已绑定群</span>':''}
+          </td>
+          <td style="text-align:right">
+            <button class="ui-btn ghost sm" onclick="openPersona(${i})" title="编辑">${moIcon('pencil',14)}</button>
+            <button class="ui-btn ghost sm" onclick="askDelPersona(${i})" title="删除" style="color:hsl(var(--destructive))">${moIcon('trash-2',14)}</button>
+          </td>
+        </tr>`).join('');
+      const stats = [
+        {l:'人格总数（含主配置）', v:(S.personas||[]).length+1, big:false},
+        {l:'默认人格', v:S.default_persona||(mainName+'·主配置'), big:false},
+        {l:'已绑定群', v:(S.group_persona||[]).filter(g=>g.chat&&g.name).length, big:false},
+      ].map(s=>`<div class="statc"><small>${s.l}</small><b>${esc(str(s.v))}</b></div>`).join('');
+      return `
+        <div class="statgrid">${stats}</div>
+        ${panel('compat','兼容 astrbot_plugin_persona_switch','管理员在群里发 <code>/persona 人格名</code> 切换会话人格后，maisoul 读取同一会话状态——若存在<b>同名</b> maisoul 人格则立即生效（最高优先级）。',
+          switchRow('follow_persona_switch',S.follow_persona_switch??true,'跟随 /persona 切换','会话人格命中同名 maisoul 人格时自动切换三件套'))}
+        ${panel('lib','人格库','生效优先级：<b>/persona 实时切换 &gt; 群绑定 &gt; 默认人格 &gt; 主配置</b>。首行为主配置人格（固定、不可删除），其后为库内人格，勾选后可批量删除。',
+          `<div class="tbl-toolbar">
+             <div class="search">
+               <span class="sic">${moIcon('search',15)}</span>
+               <input type="text" id="pe_search" placeholder="搜索人格名或设定…" value="${esc(peSearch)}" oninput="peSearch=this.value;render('personamgr');setTimeout(()=>{const e=document.getElementById('pe_search');e.focus();e.setSelectionRange(e.value.length,e.value.length)},0)">
+             </div>
+             <div style="display:flex;gap:8px">
+               ${smBtn('outline','trash-2','批量删除','onclick="batchDelPersona()"')}
+               ${smBtn('default','plus','新建人格','onclick="openPersona(null)"')}
+             </div>
+           </div>
+           <table class="ui-tbl" style="margin-top:14px">
+             <tr><th style="width:34px"></th><th>人格名</th><th>机器人昵称</th><th>人格设定</th><th>标签</th><th style="text-align:right">操作</th></tr>
+             ${mainRow}${rows || `<tr><td colspan="6" class="empty-cell">${mainRow?'暂无库内人格，点右上角「新建人格」创建':'没有匹配的人格'}</td></tr>`}
+           </table>`)}
+        ${panel('bind','生效规则','默认人格与按群静态绑定（群号支持后缀匹配与 * 通配）。',
+          field('默认人格（default_persona）','所有未绑定群的兜底',`<select id="default_persona">${opt(S.default_persona||'')}</select>`)+
+          `<div id="gps">${(S.group_persona||[]).map((g,i)=>gpRow(i,g,names)).join('')}</div>
+           ${smBtn('outline','plus','添加群绑定','onclick="addGp()"')}`)}
+        <div id="pe_modal_host"></div>`;
+    },
+    rhythm: ()=>[
+      panel('mode','发言模式','<code>planner</code> = 完全对标 maisaka 决策层：触发后进入 LLM Planner 循环（reply/wait/send_emoji/fetch_history 工具，由它决定回不回/等多久/发表情）；<code>independent</code> = 触发后单轮生成；<code>native</code> = 触发后交给原生 agent。',
+        `<div class="modes">
+          <div class="mode ${S.mode==='planner'?'on':''}" onclick="setMode('planner')"><b>决策模式</b><p>MaiBot 原版：Planner agent 循环决策，wait 可再等等</p></div>
+          <div class="mode ${S.mode==='independent'?'on':''}" onclick="setMode('independent')"><b>独立模式</b><p>触发后单轮生成：三件套 prompt → LLM → 后处理拟人发送</p></div>
+          <div class="mode ${S.mode==='native'?'on':''}" onclick="setMode('native')"><b>协作模式</b><p>麦麦只做门控与三件套注入，生成走原生 agent</p></div>
+        </div>`+
+        switchRow('enable',S.enable,'总开关','关闭后群聊回到 AstrBot 原生路径')+
+        switchRow('escape_at_wake',S.escape_at_wake===true,'逃生舱（@/唤醒放行原生）','默认关=聊天全面接管：@/唤醒前缀也进麦麦管线（at 级强制点名）；开启后恢复旧行为，@/唤醒交给原生 agent 回答。/指令恒放行不受影响')+
+        switchRow('eco_injection',S.eco_injection!==false,'生态注入桥','心弦好感/记忆/世界书等注入型插件在麦麦管线内生效：生成前收集 on_llm_request 注入、发言后触发 on_llm_response 回写（记忆沉淀）')
+      ),
+      panel('plannercfg','Planner 决策设置','对应 <code>[chat.reply_timing]</code> 的规划器参数（决策模式生效）——wait 状态机、思考打断、空闲退避。',
+        field('连续 wait 上限（max_consecutive_wait_count）','Planner 最多连续调用 wait 多少次；达到上限后视为对话进入休息',`<input type="number" id="max_consecutive_wait_count" min="1" max="10" value="${S.max_consecutive_wait_count??3}">`)+
+        field('规划器连续打断上限（planner_interrupt_max_consecutive_count）','思考时来了新消息，最多重新思考多少次；0 表示不打断',`<input type="number" id="planner_interrupt_max_consecutive_count" min="0" max="10" value="${S.planner_interrupt_max_consecutive_count??0}">`)+
+        field('空闲退避基准（no_action_backoff_base_seconds）','连续决定不回复后，下一次检查前先等多久',`<input type="number" id="no_action_backoff_base_seconds" min="0" max="600" step="1" value="${S.no_action_backoff_base_seconds??15}">`)+
+        field('空闲退避上限（no_action_backoff_cap_seconds）','不回复退避等待的最长时间',`<input type="number" id="no_action_backoff_cap_seconds" min="0" max="3600" value="${S.no_action_backoff_cap_seconds??300}">`)+
+        field('空闲退避起点（no_action_backoff_start_count）','连续几次不回复后开始放慢检查',`<input type="number" id="no_action_backoff_start_count" min="1" max="10" value="${S.no_action_backoff_start_count??2}">`)+
+        field('空闲退避绕过消息数（no_action_backoff_bypass_pending_count）','等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断',`<input type="number" id="no_action_backoff_bypass_pending_count" min="0" max="50" value="${S.no_action_backoff_bypass_pending_count??6}">`)+
+        switchRow('enable_reply_quote',S.enable_reply_quote??true,'启用引用回复','对应 chat.reply_style.enable_reply_quote（本版本 AstrBot 无引用组件，暂存开关语义）')
+      ),
+      panel('timing','什么时候发言','对应 MaiBot <code>[chat.reply_timing]</code>——决定新消息何时进入生成。',
+        field('回复触发模式（reply_trigger_mode）','frequency=频率触发：按新消息数量（ceil(1/f) 条 + 空窗补偿）决定；reply_necessity=必要性触发：综合数量、内容、过往发言评分（≥80）',
+          `<select id="reply_trigger_mode">${['frequency','reply_necessity'].map(m=>`<option value="${m}" ${S.reply_trigger_mode===m?'selected':''}>${m==='frequency'?'频率触发':'必要性触发'}</option>`).join('')}</select>`)+
+        field('群聊频率（talk_value）','群聊里麦麦主动说话的频率；越小越安静，0 为静默接收',slider('talk_value',S.talk_value??1,0,1,0.01,'')+`<div class="fdesc" id="freq_tip" style="margin-top:6px"></div>`)+
+        field('私聊频率（private_talk_value）','私聊里麦麦主动说话的频率；越小越安静，0 为静默接收（私聊 wait 期间新消息会立即唤醒）',slider('private_talk_value',S.private_talk_value??1,0,1,0.01,''))+
+        switchRow('inevitable_at_reply',S.inevitable_at_reply??true,'At 必回复','被 @ 时会尽量回复（强制触发）')+
+        switchRow('mentioned_bot_reply',S.mentioned_bot_reply??false,'提及必回复','只要消息提到麦麦名字就更容易回复（强制触发）')+
+        field('群聊上下文（max_context_size）','群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型',`<input type="number" id="max_context_size" min="5" max="200" value="${S.max_context_size??40}">`)+
+        field('私聊上下文（max_private_context_size）','私聊回复时参考的最近消息数量',`<input type="number" id="max_private_context_size" min="5" max="300" value="${S.max_private_context_size??60}">`)+
+        switchRow('enable_context_optimization',S.enable_context_optimization??true,'优化上下文','压缩部分上下文——自己的旧发言只保留最近 3 条；一般建议开启')
+      ),
+      panel('rules','动态发言频率规则','对应 <code>talk_value_rules</code>——按群或时段单独调整频率；精确匹配优先于通配，时段命中优先于留空。',
+        switchRow('enable_talk_value_rules',S.enable_talk_value_rules??false,'启用动态发言频率规则','开启后按聊天/时间段调整发言频率')+
+        `<div id="tvrs">${(S.talk_value_rules||[]).map((r,i)=>tvrRow(i,r)).join('')}</div>
+         ${smBtn('outline','plus','添加规则','onclick="addTvr()"')}`),
+      panel('pp','回复后处理','对应 MaiBot <code>[response_post_process] + chinese_typo + response_splitter</code>——错别字、分段、打字节奏。',
+        switchRow('enable_response_post_process',S.enable_response_post_process??true,'启用回复后处理','开启后会对回复做错别字、分段等后处理')+
+        field('打字速度（typing_speed）','模拟打字等待时间；0 最快（不等待），1 默认，2 更慢',slider('typing_speed',S.typing_speed??1,0,2,0.1,'倍'))
+      ),
+      panel('typo','错别字','基于拼音+字频的同音字引擎（源码级移植 MaiBot typo_generator）：声调错误、同音字、整词替换，50% 概率补发纠正。',
+        switchRow('typo_enable',S.typo_enable??true,'启用错别字','让麦麦偶尔打错字，更像真人聊天')+
+        switchRow('typo_enable_correction_quote',S.typo_enable_correction_quote??true,'纠正时引用原消息','AstrBot 引用原语暂未接，当前仅记录标记')+
+        field('纠正引用概率（typo_correction_quote_probability）','',slider('typo_correction_quote_probability',S.typo_correction_quote_probability??1,0,1,0.05,''))+
+        field('单字错字概率（typo_error_rate）','单个字被替换成错字的概率',slider('typo_error_rate',S.typo_error_rate??0.01,0,0.2,0.005,''))+
+        field('最小字频（typo_min_freq）','只对常见程度达到该值的字尝试制造错字',`<input type="number" id="typo_min_freq" min="0" max="100" value="${S.typo_min_freq??9}">`)+
+        field('声调错字概率（typo_tone_error_rate）','按相近声调制造错字的概率',slider('typo_tone_error_rate',S.typo_tone_error_rate??0.1,0,1,0.05,''))+
+        field('整词替换概率（typo_word_replace_rate）','整词被替换成错词的概率',slider('typo_word_replace_rate',S.typo_word_replace_rate??0.006,0,0.1,0.002,''))
+      ),
+      panel('split','回复分割','对应 <code>[response_splitter]</code>——分句（引号/冒号保护+概率合并）→ 错字 → 条数上限 → 合并。',
+        switchRow('splitter_enable',S.splitter_enable??true,'启用回复分割','把过长回复拆成多条发送')+
+        field('单条最大长度（splitter_max_length）','基本全中文且超过 2 倍该值时返回默认回复',`<input type="number" id="splitter_max_length" min="50" max="2000" value="${S.splitter_max_length??512}">`)+
+        field('单条最大句数（splitter_max_sentence_num）','分割后超过该条数触发超限策略',`<input type="number" id="splitter_max_sentence_num" min="1" max="30" value="${S.splitter_max_sentence_num??8}">`)+
+        field('最多分割条数（splitter_max_split_num）','最终合并到最多几条消息发出',`<input type="number" id="splitter_max_split_num" min="1" max="10" value="${S.splitter_max_split_num??3}">`)+
+        switchRow('splitter_enable_kaomoji_protection',S.splitter_enable_kaomoji_protection??false,'保护颜文字','分割前把颜文字替换为占位符，分割后恢复')+
+        switchRow('splitter_enable_overflow_return_all',S.splitter_enable_overflow_return_all??false,'超限保留全文','消息数量过多时直接返回原文而非默认回复')
+      ),
+    ].join(''),
+    learn: ()=>{
+      const lrRow=(i,r)=>`<div class="cp-row" data-elr="${i}">
+        <input type="text" class="elr-platform" placeholder="平台(空=全部)" style="width:100px" value="${esc(r.platform||'')}">
+        <input type="text" class="elr-item" placeholder="群号(空=全部)" style="width:110px" value="${esc(r.item_id||'')}">
+        <div class="lr-toggle"><small>使用</small><label class="ui-switch"><input type="checkbox" class="elr-use" ${r.use!==false?'checked':''}><span class="th"></span></label></div>
+        <div class="lr-toggle"><small>学习</small><label class="ui-switch"><input type="checkbox" class="elr-learn" ${r.learn!==false?'checked':''}><span class="th"></span></label></div>
+        ${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`;
+      const elRows=(S.expression_learning_list||[]).map((r,i)=>lrRow(i,r)).join('');
+      const jlRows=(S.jargon_learning_list||[]).map((r,i)=>lrRow(i,r)).join('');
+      const grpRow=(i,g)=>`<div class="cp-row" data-egr="${i}">
+        <input type="text" class="egr-targets" placeholder="qq:群号, qq:群号2（逗号分隔）" style="flex:1" value="${esc((g.targets||[]).map(t=>`${t.platform||''}:${t.item_id||''}`).join(', '))}">
+        ${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`;
+      const egr=(S.expression_groups||[]).map((g,i)=>grpRow(i,g)).join('');
+      const jgr=(S.jargon_groups||[]).map((g,i)=>grpRow(i,g)).join('');
+      const keyOpts=Object.keys(L||{}).map(k=>`<option value="${esc(k)}" ${LKey===k?'selected':''}>${k==='global'?'全局库':esc(k)}</option>`).join('');
+      const eCount=((L&&L[LKey])?L[LKey].expressions:[]).length, jCount=((L&&L[LKey])?L[LKey].jargons:[]).length;
+      return [
+        `<div class="statgrid">
+          <div class="statc"><small>表达数量（${LKey==='global'?'全局库':esc(LKey)}）</small><b>${eCount}</b></div>
+          <div class="statc"><small>黑话数量</small><b>${jCount}</b></div>
+          <div class="statc"><small>表达学习范围</small><b>${(S.expression_learning_list||[]).length} 条规则</b></div>
+          <div class="statc"><small>黑话学习范围</small><b>${(S.jargon_learning_list||[]).length} 条规则</b></div>
+        </div>`,
+        panel('expr','表达学习','对应 MaiBot <code>[expression]</code>——发言后从群聊学习"当 X 时可以用 Y 表达"的语言风格（learn_style 原文 prompt + AI 自查），回复时按 legacy 随手抽候选注入【表达习惯参考】；学习库满 10 条后启用。',
+          switchRow('expression_checked_only',S.expression_checked_only??true,'使用精选表达','仅使用通过 AI 检查的表达')+
+          switchRow('expression_self_reflect',S.expression_self_reflect??true,'优化表达方式学习','写入表达方式前先让 AI 检查，减少学到奇怪内容')+
+          field('表达使用方式（expression_selection_mode）','legacy=随手抽取候选；vector_intent 需嵌入模型，未配置自动回落 legacy',
+            `<select id="expression_selection_mode">${['legacy','vector_intent'].map(m=>`<option value="${m}" ${S.expression_selection_mode===m?'selected':''}>${m==='legacy'?'随手':'超级精细'}</option>`).join('')}</select>`)+
+          field('学习配置（expression_learning_list）','哪些聊天使用/学习表达方式；平台与群号都留空表示全局默认',
+            `<div id="elrs">${elRows}</div>${smBtn('outline','plus','添加规则','onclick="addLrRow(\'elrs\')"')}`,null,true)+
+          field('表达共享组（expression_groups）','组内聊天共享学到的表达方式',
+            `<div id="egrs">${egr}</div>${smBtn('outline','plus','添加共享组','onclick="addGrpRow(\'egrs\')"')}`,null,true)+
+          `<div class="lab" style="margin-top:14px"><span>表达库</span>
+            <select id="lib_key" onchange="LKey=this.value;render('learn')">${keyOpts||'<option value="global">全局库</option>'}</select>
+            ${smBtn('outline','plus','手动添加','onclick="addExprLib()"')}
+            ${smBtn('outline','save','保存学习库','onclick="saveLearningLib()"')}</div>
+           <table class="ui-tbl" id="lib_expr"><tr><th>情境 situation</th><th>表达 style</th><th style="width:56px">次数</th><th style="width:70px">精选</th><th style="width:44px"></th></tr>
+            ${((L&&L[LKey])?L[LKey].expressions:[]).map((e,i)=>`<tr>
+              <td><input type="text" class="le-sit" value="${esc(e.situation||'')}"></td>
+              <td><input type="text" class="le-sty" value="${esc(e.style||'')}"></td>
+              <td style="text-align:center" class="le-count">${e.count||1}</td>
+              <td style="text-align:center"><input type="checkbox" class="le-ck" ${e.checked?'checked':''}></td>
+              <td>${iconBtn('trash-2','删除','onclick="delLib(\'expressions\','+i+')"')}</td></tr>`).join('')||'<tr><td colspan="5" class="empty-cell">暂无学到的表达（发言后自动学习，满 10 条启用注入）</td></tr>'}
+           </table>`
+        ),
+        panel('jargon','黑话学习','对应 MaiBot <code>[jargon]</code>——学习群内黑话/缩写/梗词及含义（learn_jargon + 含义推断原文 prompt），上下文命中词条时注入【黑话参考】帮助理解语境。',
+          field('学习配置（jargon_learning_list）','哪些聊天使用/学习黑话；平台与群号都留空表示全局默认',
+            `<div id="jlrs">${jlRows}</div>${smBtn('outline','plus','添加规则','onclick="addLrRow(\'jlrs\')"')}`,null,true)+
+          field('黑话共享组（jargon_groups）','组内聊天共享学到的黑话',
+            `<div id="jgrs">${jgr}</div>${smBtn('outline','plus','添加共享组','onclick="addGrpRow(\'jgrs\')"')}`,null,true)+
+          `<div class="lab" style="margin-top:14px"><span>黑话库</span>
+            <select onchange="LKey=this.value;render('learn')">${keyOpts||'<option value="global">全局库</option>'}</select>
+            ${smBtn('outline','plus','手动添加','onclick="addJargonLib()"')}
+            ${smBtn('outline','save','保存学习库','onclick="saveLearningLib()"')}</div>
+           <table class="ui-tbl" id="lib_jargon"><tr><th>词条 content</th><th>含义 meaning</th><th style="width:56px">次数</th><th style="width:44px"></th></tr>
+            ${((L&&L[LKey])?L[LKey].jargons:[]).map((j,i)=>`<tr>
+              <td><input type="text" class="lj-con" value="${esc(j.content||'')}"></td>
+              <td><input type="text" class="lj-mea" value="${esc(j.meaning||'')}"></td>
+              <td style="text-align:center">${j.count||1}</td>
+              <td>${iconBtn('trash-2','删除','onclick="delLib(\'jargons\','+i+')"')}</td></tr>`).join('')||'<tr><td colspan="4" class="empty-cell">暂无学到的黑话（发言后自动学习）</td></tr>'}
+           </table>`
+        ),
+      ].join('');
+    },
+    models: ()=> modelsHTML(),
+    bridge: ()=>[
+      panel('maid','管家桥（maid_agent 联动）','聊天模型可召唤 maid_agent 的 <code>call_maid</code> 管家执行任务（查资料/跑任务），拿到结果后用麦麦口吻转达。需要已安装 astrbot_plugin_maid_agent。',
+        switchRow('maid_bridge',S.maid_bridge,'启用管家桥','群里"帮我查/帮我做"类请求会派给管家 subagent')
+      ),
+      panel('arch','架构备忘','',
+        `<table class="ui-tbl">
+          <tr><th>层</th><th>归属</th></tr>
+          <tr><td>闲聊人格</td><td>maisoul 麦麦流水线（档位评分/压力插话/打字延迟）</td></tr>
+          <tr><td>任务执行</td><td>maid_agent 管家桥</td></tr>
+          <tr><td>重度 agent / 全插件</td><td>唤醒词逃生舱 → 原生路径</td></tr>
+        </table>`
+      ),
+    ].join('')
+  };
+  b.innerHTML=(map[p]||'')();
+  if(document.getElementById('talk_value')) onFreqSlide(document.getElementById('talk_value'));
+  if(p==='learn'&&L===null) loadLearning();
+  if(p==='models') initModelsPage();
+}
+let curPage='overview';
+let L = null;      // 学习库数据 {key: {expressions:[], jargons:[]}}
+let LKey = 'global';
+async function loadLearning(){
+  try{
+    L=await apiGet('learning');
+    if(!L||typeof L!=='object')L={};
+    if(!L[LKey])LKey='global';
+    if(curPage==='learn')render('learn');
+  }catch(e){L={};if(curPage==='learn')render('learn')}
+}
+async function saveLearningLib(){
+  try{
+    collectLibEdits();
+    await apiPost('learning',L);
+    toast('✓ 学习库已保存');render('learn');
+  }catch(e){toast('保存学习库失败：'+e.message)}
+}
+function collectLibEdits(){
+  if(!L||!L[LKey])return;
+  const t=document.getElementById('lib_expr');
+  if(t)L[LKey].expressions=[...t.querySelectorAll('tr')].slice(1).filter(r=>r.querySelector('.le-sit')).map(r=>({
+    situation:r.querySelector('.le-sit').value.trim(),
+    style:r.querySelector('.le-sty').value.trim(),
+    count:parseInt(r.querySelector('.le-count')?.textContent)||1,
+    checked:r.querySelector('.le-ck').checked
+  })).filter(e=>e.situation&&e.style);
+  const j=document.getElementById('lib_jargon');
+  if(j)L[LKey].jargons=[...j.querySelectorAll('tr')].slice(1).filter(r=>r.querySelector('.lj-con')).map(r=>({
+    content:r.querySelector('.lj-con').value.trim(),
+    meaning:r.querySelector('.lj-mea').value.trim(),
+    count:1
+  })).filter(x=>x.content&&x.meaning);
+}
+function ensureLibBucket(){if(!L)L={};if(!L[LKey])L[LKey]={expressions:[],jargons:[]};return L[LKey]}
+function addExprLib(){ensureLibBucket().expressions.push({situation:'',style:'',count:1,checked:true});render('learn');setTimeout(()=>{const rows=document.querySelectorAll('#lib_expr tr');const last=rows[rows.length-1];if(last&&last.querySelector('.le-sit'))last.querySelector('.le-sit').focus()},0)}
+function addJargonLib(){ensureLibBucket().jargons.push({content:'',meaning:'',count:1});render('learn');setTimeout(()=>{const rows=document.querySelectorAll('#lib_jargon tr');const last=rows[rows.length-1];if(last&&last.querySelector('.lj-con'))last.querySelector('.lj-con').focus()},0)}
+function delLib(kind,i){collectLibEdits();ensureLibBucket()[kind].splice(i,1);render('learn')}
+function addLrRow(hostId){document.getElementById(hostId).insertAdjacentHTML('beforeend',
+  `<div class="cp-row" data-elr="x">
+    <input type="text" class="elr-platform" placeholder="平台(空=全部)" style="width:100px" value="">
+    <input type="text" class="elr-item" placeholder="群号(空=全部)" style="width:110px" value="">
+    <div class="lr-toggle"><small>使用</small><label class="ui-switch"><input type="checkbox" class="elr-use" checked><span class="th"></span></label></div>
+    <div class="lr-toggle"><small>学习</small><label class="ui-switch"><input type="checkbox" class="elr-learn" checked><span class="th"></span></label></div>
+    ${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`)}
+function addGrpRow(hostId){document.getElementById(hostId).insertAdjacentHTML('beforeend',
+  `<div class="cp-row" data-egr="x"><input type="text" class="egr-targets" placeholder="qq:群号, qq:群号2（逗号分隔）" style="flex:1" value="">${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`)}
+
+function overviewHTML(){
+  return `<div class="page-head"><h1>概览</h1></div>
+    <div class="statgrid" id="stats"><div class="loading" style="padding:20px;grid-column:1/-1">读取运行状态…</div></div>
+    ${panel('tips','使用提示','',`· 保存后立即生效，无需重启<br>
+     · 与 Heartflow 插件同为意愿门控，建议只启用一个<br>
+     · <code>/maisoul</code> 在聊天里查看状态；<code>/maisoul on|off</code> 快捷开关<br>
+     · 触发模式：频率触发=攒 ceil(1/f) 条消息（或空窗补偿）说话｜必要性触发=@直通、提及 80 分、普通消息靠"内容+积压压力"攒分`)}
+    ${panel('gtable','活跃群','各群的消息缓冲、积压压力与发言情况','<div id="gtable"><div class="loading" style="padding:16px">…</div></div>')}`;
+}
+async function loadStatus(){
+  try{
+    const d=await apiGet('status');
+    const st=document.getElementById('stats');
+    if(st)st.innerHTML=`
+      <div class="statc"><small>运行状态</small><b class="big">${d.enable?'运行中':'已停用'}</b></div>
+      <div class="statc"><small>发言模式</small><b>${d.mode==='native'?'协作':d.mode==='planner'?'决策':'独立'}</b></div>
+      <div class="statc"><small>触发模式</small><b>${d.reply_trigger_mode==='reply_necessity'?'必要性':'频率'}</b></div>
+      <div class="statc"><small>群聊频率</small><b>${d.talk_value!=null?d.talk_value:'—'}</b><small style="margin-top:2px">阈值 ${d.trigger_threshold??'—'} 条</small></div>
+      <div class="statc"><small>管家桥</small><b>${d.maid_bridge?'已接通':'关闭'}</b></div>
+      <div class="statc"><small>人格</small><b>${esc(d.bot_name)}</b></div>`;
+    const gt=document.getElementById('gtable');
+    const g=Object.entries(d.groups||{});
+    if(gt)gt.innerHTML=g.length?`<table class="ui-tbl"><tr><th>群</th><th>缓冲</th><th>积压</th><th>5min自发</th><th>上次发言</th></tr>${
+      g.map(([k,v])=>`<tr><td>${esc(k.slice(0,22))}</td><td>${v.buffer}</td><td>${v.pending} 条</td><td>${v.recent_self}</td><td>${v.last_fire_ago!=null?v.last_fire_ago+' 秒前':'—'}</td></tr>`).join('')}</table>`
+      :'<div class="fdesc" style="padding:8px 0">暂无活跃群（收到群消息后出现）</div>';
+  }catch(e){const st=document.getElementById('stats');if(st)st.innerHTML=`<div class="panel" style="grid-column:1/-1">状态读取失败：${esc(e.message)}</div>`}
+}
+
+/* ---------------- 备用风格列表 ---------------- */
+function styleItem(i,t){return `<div class="style-item"><textarea data-style="${i}">${esc(t)}</textarea>${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
+function str(v){return String(v??'')}
+let pe = null;        // 正在编辑的人格 {idx: number|null, data: {...}}
+let peSearch = '';    // 人格库搜索词
+let delTarget = null; // 待删除确认的人格 idx
+
+function openPersona(idx){
+  if(idx==='main'){
+    pe = {idx:'main', data:{name:'主配置', bot_name:str(S.bot_name||''), aliases:[...(S.aliases||[])],
+      personality:str(S.personality||''), behavior_style:str(S.behavior_style||''),
+      reply_style:str(S.reply_style||''), group_chat_prompt:str(S.group_chat_prompt||'')}};
+  } else {
+    pe = idx==null
+      ? {idx:null, data:{name:'',bot_name:'',aliases:[],personality:'',behavior_style:'',reply_style:'',group_chat_prompt:''}}
+      : {idx, data:JSON.parse(JSON.stringify(S.personas[idx]))};
+    if(!Array.isArray(pe.data.aliases)) pe.data.aliases=pe.data.nicknames||[]; // 兼容旧数据
+  }
+  S.pe_nick = [...(pe.data.aliases||[])];
+  showPeModal(true);
+}
+function showPeModal(open){
+  const host = document.getElementById('pe_modal_host');
+  if(!host) return;
+  if(!open || !pe){ host.innerHTML=''; return; }
+  const p = pe.data, isNew = pe.idx==null, isMain = pe.idx==='main';
+  const suf = isMain ? '' : '。留空沿用主配置';
+  const nameRow = isMain
+    ? field('人格名 = 机器人昵称（bot_name）','主配置人格的人格名就是机器人昵称——群里发 <code>/persona '+esc(S.bot_name||'麦麦')+'</code> 即可切到它；修改会同步主配置 bot_name',`<input type="text" id="pe_botname" value="${esc(p.bot_name||'')}" placeholder="麦麦">`)
+    : `<div class="row">
+        ${field('人格名（name）','人格库唯一标识；/persona 切换与按群绑定都用这个名字匹配',`<input type="text" id="pe_name" value="${esc(p.name||'')}" placeholder="如：傲娇">`)}
+        ${field('机器人昵称（bot_name）','麦麦显示和自称时使用的名字'+suf,`<input type="text" id="pe_botname" value="${esc(p.bot_name||'')}" placeholder="${isMain?'麦麦':'留空沿用主配置'}">`)}
+      </div>`;
+  host.innerHTML = `<div class="modal-mask" onclick="if(event.target===this)closePersona()">
+    <div class="modal">
+      <div class="modal-head">
+        <div><b>${isMain?'编辑主配置人格：'+esc(S.bot_name||'麦麦'):(isNew?'新建人格':'编辑人格'+(isNew?'':'：'+esc(p.name||'')))}${isMain?' <span class="ui-badge secondary">兜底</span>':''}</b>
+          <div class="desc">${isMain
+            ? '主配置人格：未命中 /persona 切换、群绑定与默认人格时的兜底。修改直接写回主配置，与「麦麦设置」同步。'
+            : '非空字段覆盖主配置同名项，留空即沿用。修改需点「保存人格」写回人格库。'}</div></div>
+        <button class="modal-x" onclick="closePersona()" title="关闭">${moIcon('x',16)}</button>
+      </div>
+      <div class="modal-body">
+        ${nameRow}
+        ${field('别名（aliases）','别人可能用来称呼麦麦的名字，用于辅助识别提及'+suf,chips('pe_nick',p.aliases||[],'小麦'),'',true)}
+        ${field('人格设定（personality）','麦麦的人格和身份设定，建议简短描述她是谁、是什么性格'+suf,textarea('pe_personality',p.personality||'',''),'',true)}
+        ${field('表达风格（reply_style）','麦麦平时说话的风格，例如简短、温和、吐槽或正式'+suf,textarea('pe_reply',p.reply_style||'',''),'',true)}
+        ${field('行为风格（behavior_style）','Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静'+suf,textarea('pe_behavior',p.behavior_style||'',''),'',true)}
+        ${field('群聊提示词（group_chat_prompt）','群聊通用提示词，告诉麦麦群聊中该怎么说话'+suf,textarea('pe_gcp',p.group_chat_prompt||'',''),'',true)}
+      </div>
+      <div class="modal-foot">
+        <button class="ui-btn outline" onclick="closePersona()">取消</button>
+        <button class="ui-btn default" onclick="commitPersona()">${isMain?'保存主配置':'保存人格'}</button>
+      </div>
+    </div></div>`;
+}
+function closePersona(){ pe=null; showPeModal(false); }
+function commitPersona(){
+  const g=id=>{const el=document.getElementById(id);return el?el.value.trim():''};
+  if(pe.idx==='main'){
+    if(g('pe_botname')) S.bot_name=g('pe_botname');
+    S.aliases=S.pe_nick||[];
+    S.personality=g('pe_personality');
+    S.behavior_style=g('pe_behavior');
+    S.reply_style=g('pe_reply');
+    S.group_chat_prompt=g('pe_gcp');
+    pe=null; showPeModal(false); render('personamgr'); return;
+  }
+  pe.data.name=g('pe_name');
+  pe.data.bot_name=g('pe_botname');
+  pe.data.aliases=S.pe_nick||[];
+  pe.data.personality=g('pe_personality');
+  pe.data.behavior_style=g('pe_behavior');
+  pe.data.reply_style=g('pe_reply');
+  pe.data.group_chat_prompt=g('pe_gcp');
+  if(!pe.data.name){toast('人格名不能为空');return}
+  if(pe.idx==null)S.personas.push(pe.data); else S.personas[pe.idx]=pe.data;
+  pe=null; showPeModal(false); render('personamgr');
+}
+function askDelPersona(idx){ delTarget = idx; renderDelConfirm(); }
+function renderDelConfirm(){
+  let host = document.getElementById('del_modal_host');
+  if(!host){ host=document.createElement('div'); host.id='del_modal_host'; document.body.appendChild(host); }
+  if(delTarget==null){ host.innerHTML=''; return; }
+  const name = str((S.personas||[])[delTarget]?.name||'');
+  host.innerHTML = `<div class="modal-mask" onclick="if(event.target===this){delTarget=null;renderDelConfirm()}">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head"><div><b>确认删除</b>
+        <div class="desc">确定要删除人格 "${esc(name)}" 吗？此操作不可撤销（保存全部配置后生效）。</div></div></div>
+      <div class="modal-foot">
+        <button class="ui-btn outline" onclick="delTarget=null;renderDelConfirm()">取消</button>
+        <button class="ui-btn destructive" onclick="S.personas.splice(delTarget,1);delTarget=null;renderDelConfirm();render('personamgr')">删除</button>
+      </div>
+    </div></div>`;
+}
+function batchDelPersona(){
+  const idxs=[...document.querySelectorAll('.pe-ck:checked')].map(c=>+c.dataset.idx);
+  if(!idxs.length){toast('先勾选要删除的人格');return}
+  S.personas=S.personas.filter((_,i)=>!idxs.includes(i));
+  render('personamgr');
+}
+function gpRow(i,g,names){
+  const opt=['',...names].map(n=>`<option value="${esc(n)}" ${(g.name||'')===n?'selected':''}>${n||'— 选择人格 —'}</option>`).join('');
+  return `<div class="cp-row" data-gp="${i}"><input type="text" class="gp-chat" placeholder="群号或*" value="${esc(g.chat||'')}"><select class="gp-name">${opt}</select>${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`;
+}
+function cpItem(i,c){return `<div class="cp-row" data-cp="${i}" style="flex-wrap:wrap"><input type="text" class="cp-platform" placeholder="平台(如qq)" style="width:90px" value="${esc(c.platform||'qq')}"><input type="text" class="cp-chat" placeholder="群号" style="width:110px" value="${esc(c.item_id||'')}"><textarea class="cp-prompt" placeholder="给这个聊天额外补充的要求">${esc(c.prompt||'')}</textarea>${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
+function addCp(){document.getElementById('cps').insertAdjacentHTML('beforeend',cpItem((document.querySelectorAll('[data-cp]').length)||0,{}))}
+function tvrRow(i,r){return `<div class="cp-row" data-tvr="${i}"><input type="text" class="tvr-platform" placeholder="平台(空=全部)" style="width:100px" value="${esc(r.platform||'')}"><input type="text" class="tvr-item" placeholder="群号(空=全部 *" style="width:110px" value="${esc(r.item_id||'')}"><input type="text" class="tvr-time" placeholder="00:00-08:59 或 *" style="width:120px" value="${esc(r.time||'')}"><input type="number" class="tvr-value" placeholder="0-1" style="width:70px" step="0.05" min="0" max="1" value="${r.value!=null?r.value:1}">${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
+function addTvr(){document.getElementById('tvrs').insertAdjacentHTML('beforeend',tvrRow((document.querySelectorAll('[data-tvr]').length)||0,{}))}
+function kwRow(i,r){return `<div class="cp-row" data-kwr="${i}"><input type="text" class="kwr-keys" placeholder="关键词，逗号分隔" style="width:180px" value="${esc((r.keywords||[]).join(', '))}"><textarea class="kwr-reaction" placeholder="命中后给麦麦看的提示内容（不会直接发送）" style="flex:1">${esc(r.reaction||'')}</textarea>${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
+function addKwRow(){document.getElementById('kwrs').insertAdjacentHTML('beforeend',kwRow((document.querySelectorAll('[data-kwr]').length)||0,{}))}
+function rxRow(i,r){return `<div class="cp-row" data-rxr="${i}"><textarea class="rxr-pattern" placeholder="正则（每行一个，用命名捕获组 (?P&lt;名字&gt;…)）" style="width:240px;height:44px">${esc((r.regex||[]).join('\n'))}</textarea><textarea class="rxr-reaction" placeholder="提示内容，[名字] 会被替换为捕获组内容" style="flex:1;height:44px">${esc(r.reaction||'')}</textarea>${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
+function addRxRow(){document.getElementById('rxrs').insertAdjacentHTML('beforeend',rxRow((document.querySelectorAll('[data-rxr]').length)||0,{}))}
+function addStyle(){document.getElementById('mrs').insertAdjacentHTML('beforeend',styleItem((document.querySelectorAll('[data-style]').length)||0,''))}
+
+/* ---------------- chips ---------------- */
+function addChip(id,input){const v=input.value.trim();if(!v)return;S[id]=[...(S[id]||[]),v];input.value='';refreshChips(id)}
+function delChip(id,i){S[id]=S[id].filter((_,j)=>j!==i);refreshChips(id)}
+function refreshChips(id){const el=document.querySelector(`[data-chips="${id}"]`);if(!el)return;const keep=el.querySelector('input').value;const next=document.createElement('div');next.innerHTML=chips(id,S[id]);el.replaceWith(next.firstElementChild);const inp=document.querySelector(`[data-chips="${id}"] input`);if(inp){inp.value=keep;inp.focus()}}
+
+/* ---------------- 暴露工具/技能弹窗：列表读 AstrBot 原生注册表（/astrbot_plugin_maisoul/tools） ---------------- */
+let tpRegistry=null, tpTab='tools';
+function jsq(s){return String(s??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'")}
+async function openToolPicker(){
+  if(!tpRegistry){
+    try{const d=await apiGet('tools');tpRegistry={tools:d.tools||[],skills:d.skills||[]}}
+    catch(e){toast('读取 AstrBot 工具/技能失败：'+e.message);return}
+  }
+  tpTab='tools';renderToolPicker();
+}
+function closeToolPicker(){const h=document.getElementById('tp_modal_host');if(h)h.innerHTML=''}
+function renderToolPicker(){
+  let host=document.getElementById('tp_modal_host');
+  if(!host){host=document.createElement('div');host.id='tp_modal_host';document.body.appendChild(host)}
+  const isTool=tpTab==='tools';
+  const list=isTool?tpRegistry.tools:tpRegistry.skills;
+  const selKey=isTool?'chat_tools':'chat_skills';
+  const sel=new Set(S[selKey]||[]);
+  const maidOn=isTool&&S.maid_bridge!==false&&!sel.has('call_maid');  // 管家由开关默认加入，不在 chat_tools 数组里
+  const rows=list.length?list.map(it=>{
+    const viaBridge=isTool&&it.name==='call_maid'&&maidOn;
+    const on=sel.has(it.name)||viaBridge;
+    const badge=isTool
+      ?`<span class="ui-badge ${it.origin==='builtin'?'default':it.origin==='plugin'?'secondary':'soft'}">${esc(it.origin==='builtin'?'AstrBot 核心':it.origin==='plugin'?'插件 · '+it.origin_name:it.origin==='mcp'?'MCP · '+it.origin_name:'未注册来源')}</span>${viaBridge?'<span class="ui-badge secondary">管家桥 · 默认</span>':''}`
+      :`<span class="ui-badge ${it.source_type==='plugin'?'secondary':'soft'}">${esc(it.source_type==='plugin'?'插件 · '+(it.plugin_name||''):it.source_type==='sandbox_only'?'沙盒':'本地')}${it.active?'':' · 已停用'}</span>`;
+    return `<div class="tp-item ${on?'on':''}" onclick="toggleExpose('${selKey}','${jsq(it.name)}')">
+      <span class="tp-check">${on?moIcon('circle-check',12):''}</span>
+      <div class="tp-info"><b>${esc(it.name)}</b>${badge}<small>${esc(str(it.description||'').slice(0,90))||'（无描述）'}</small></div>
+    </div>`}).join('')
+    :`<div class="tp-empty">AstrBot 中暂未${isTool?'注册任何 llm_tool':'安装任何技能'}</div>`;
+  host.innerHTML=`<div class="modal-mask" onclick="if(event.target===this)closeToolPicker()">
+    <div class="modal">
+      <div class="modal-head">
+        <div><b>暴露工具与技能</b>
+          <div class="desc">列表实时读取 AstrBot 原生注册表：TOOLS = llm_tool 管理器（插件/MCP/核心工具），SKILL = 技能库（SKILL.md）。勾选即加入暴露列表；管家 call_maid 由「管家桥」开关默认加入，在此勾选/取消即切换该开关。</div></div>
+        <button class="modal-x" onclick="closeToolPicker()" title="关闭">${moIcon('x',16)}</button>
+      </div>
+      <div class="modal-body">
+        <div class="ui-tabs" style="margin-bottom:12px">
+          <button class="${isTool?'on':''}" onclick="tpTab='tools';renderToolPicker()">${moIcon('wrench',14)} TOOLS <span class="fcnt">${tpRegistry.tools.length}</span></button>
+          <button class="${!isTool?'on':''}" onclick="tpTab='skills';renderToolPicker()">${moIcon('book-open',14)} SKILL <span class="fcnt">${tpRegistry.skills.length}</span></button>
+        </div>
+        <div class="tp-list">${rows}</div>
+      </div>
+      <div class="modal-foot" style="justify-content:space-between;align-items:center">
+        <small class="tp-foot">已选 工具 ${(S.chat_tools||[]).length+(maidOn?1:0)} · 技能 ${(S.chat_skills||[]).length}，应用后仍需「保存全部配置」</small>
+        <div style="display:flex;gap:8px">
+          <button class="ui-btn outline" onclick="closeToolPicker()">取消</button>
+          <button class="ui-btn default" onclick="applyToolPicker()">应用</button>
+        </div>
+      </div>
+    </div></div>`;
+}
+function toggleExpose(key,name){
+  const arr=S[key]||[];
+  if(name==='call_maid'&&!arr.includes(name)){
+    S.maid_bridge=S.maid_bridge===false;  // 不在 chat_tools 里 → 勾/取消就是切管家桥开关
+    renderToolPicker();return;
+  }
+  S[key]=arr.includes(name)?arr.filter(n=>n!==name):[...arr,name];
+  renderToolPicker();
+}
+function maidStateHTML(){return S.maid_bridge!==false?'<b style="color:hsl(var(--primary))">已默认暴露</b>（「管家桥」开关开）':'未暴露（「管家桥」开关关）'}
+function applyToolPicker(){
+  refreshChips('chat_tools');refreshChips('chat_skills');
+  const st=document.getElementById('ct_maid_state');if(st)st.innerHTML=maidStateHTML();
+  closeToolPicker();toast('✓ 已更新暴露列表，记得保存配置')
+}
+
+/* ---------------- 麦麦观察：实时事件流（像素对齐 MaiBot 部署版 /planner-monitor 部署 chunk） ---------------- */
+/* lucide 图标 path 数据（取自部署版 icons chunk，viewBox 24 / stroke 2 / round） */
+const MO_ICONS={"activity":[["path",{"d":"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"}]],"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"brain":[["path",{"d":"M12 18V5"}],["path",{"d":"M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"}],["path",{"d":"M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"}],["path",{"d":"M17.997 5.125a4 4 0 0 1 2.526 5.77"}],["path",{"d":"M18 18a4 4 0 0 0 2-7.464"}],["path",{"d":"M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"}],["path",{"d":"M6 18a4 4 0 0 1-2-7.464"}],["path",{"d":"M6.003 5.125a4 4 0 0 0-2.526 5.77"}]],"timer":[["line",{"x1":"10","x2":"14","y1":"2","y2":"2"}],["line",{"x1":"12","x2":"15","y1":"14","y2":"11"}],["circle",{"cx":"12","cy":"14","r":"8"}]],"wrench":[["path",{"d":"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"}]],"circle-alert":[["circle",{"cx":"12","cy":"12","r":"10"}],["line",{"x1":"12","x2":"12","y1":"8","y2":"12"}],["line",{"x1":"12","x2":"12.01","y1":"16","y2":"16"}]],"circle-check":[["circle",{"cx":"12","cy":"12","r":"10"}],["path",{"d":"m9 12 2 2 4-4"}]],"clock":[["path",{"d":"M12 6v6l4 2"}],["circle",{"cx":"12","cy":"12","r":"10"}]],"chevron-down":[["path",{"d":"m6 9 6 6 6-6"}]],"chevron-right":[["path",{"d":"m9 18 6-6-6-6"}]],"chevron-left":[["path",{"d":"m15 18-6-6 6-6"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"arrow-right":[["path",{"d":"M5 12h14"}],["path",{"d":"m12 5 7 7-7 7"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"circle-pause":[["circle",{"cx":"12","cy":"12","r":"10"}],["line",{"x1":"10","x2":"10","y1":"15","y2":"9"}],["line",{"x1":"14","x2":"14","y1":"15","y2":"9"}]],"house":[["path",{"d":"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"}],["path",{"d":"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"}]],"settings":[["path",{"d":"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"}],["circle",{"cx":"12","cy":"12","r":"3"}]],"book-open":[["path",{"d":"M12 7v14"}],["path",{"d":"M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"}]],"sliders-horizontal":[["path",{"d":"M10 5H3"}],["path",{"d":"M12 19H3"}],["path",{"d":"M14 3v4"}],["path",{"d":"M16 17v4"}],["path",{"d":"M21 12h-9"}],["path",{"d":"M21 19h-5"}],["path",{"d":"M21 5h-7"}],["path",{"d":"M8 10v4"}],["path",{"d":"M8 12H3"}]],"save":[["path",{"d":"M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"}],["path",{"d":"M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"}],["path",{"d":"M7 3v4a1 1 0 0 0 1 1h7"}]],"refresh-cw":[["path",{"d":"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"}],["path",{"d":"M21 3v5h-5"}],["path",{"d":"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"}],["path",{"d":"M8 16H3v5"}]],"plus":[["path",{"d":"M5 12h14"}],["path",{"d":"M12 5v14"}]],"trash-2":[["path",{"d":"M10 11v6"}],["path",{"d":"M14 11v6"}],["path",{"d":"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{"d":"M3 6h18"}],["path",{"d":"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],"search":[["path",{"d":"m21 21-4.34-4.34"}],["circle",{"cx":"11","cy":"11","r":"8"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]],"pencil":[["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}],["path",{"d":"m15 5 4 4"}]],"square-pen":[["path",{"d":"M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"}],["path",{"d":"M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"}]],"database":[["ellipse",{"cx":"12","cy":"5","rx":"9","ry":"3"}],["path",{"d":"M3 5V19A9 3 0 0 0 21 19V5"}],["path",{"d":"M3 12A9 3 0 0 0 21 12"}]],"sparkles":[["path",{"d":"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"}],["path",{"d":"M20 2v4"}],["path",{"d":"M22 4h-4"}],["circle",{"cx":"4","cy":"20","r":"2"}]],"link":[["path",{"d":"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"}],["path",{"d":"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"}]],"users":[["path",{"d":"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"}],["path",{"d":"M16 3.128a4 4 0 0 1 0 7.744"}],["path",{"d":"M22 21v-2a4 4 0 0 0-3-3.87"}],["circle",{"cx":"9","cy":"7","r":"4"}]],"layout-dashboard":[["rect",{"width":"7","height":"9","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"5","x":"14","y":"3","rx":"1"}],["rect",{"width":"7","height":"9","x":"14","y":"12","rx":"1"}],["rect",{"width":"7","height":"5","x":"3","y":"16","rx":"1"}]],"store":[["path",{"d":"M15 21v-5a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v5"}],["path",{"d":"M17.774 10.31a1.12 1.12 0 0 0-1.549 0 2.5 2.5 0 0 1-3.451 0 1.12 1.12 0 0 0-1.548 0 2.5 2.5 0 0 1-3.452 0 1.12 1.12 0 0 0-1.549 0 2.5 2.5 0 0 1-3.77-3.248l2.889-4.184A2 2 0 0 1 7 2h10a2 2 0 0 1 1.653.873l2.895 4.192a2.5 2.5 0 0 1-3.774 3.244"}],["path",{"d":"M4 10.95V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8.05"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"file-text":[["path",{"d":"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"}],["path",{"d":"M14 2v5a1 1 0 0 0 1 1h5"}],["path",{"d":"M10 9H8"}],["path",{"d":"M16 13H8"}],["path",{"d":"M16 17H8"}]],"rotate-cw":[["path",{"d":"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"}],["path",{"d":"M21 3v5h-5"}]],"wand-sparkles":[["path",{"d":"m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"}],["path",{"d":"m14 7 3 3"}],["path",{"d":"M5 6v4"}],["path",{"d":"M19 14v4"}],["path",{"d":"M10 2v2"}],["path",{"d":"M7 8H3"}],["path",{"d":"M21 16h-4"}],["path",{"d":"M11 3H9"}]],"key-round":[["path",{"d":"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"}],["circle",{"cx":"16.5","cy":"7.5","r":".5","fill":"currentColor"}]],"earth":[["path",{"d":"M21.54 15H17a2 2 0 0 0-2 2v4.54"}],["path",{"d":"M7 3.34V5a3 3 0 0 0 3 3a2 2 0 0 1 2 2c0 1.1.9 2 2 2a2 2 0 0 0 2-2c0-1.1.9-2 2-2h3.17"}],["path",{"d":"M11 21.95V18a2 2 0 0 0-2-2a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"}],["circle",{"cx":"12","cy":"12","r":"10"}]],"cpu":[["path",{"d":"M2 17h2"}],["path",{"d":"M2 7h2"}],["path",{"d":"M20 12h2"}],["path",{"d":"M20 17h2"}],["path",{"d":"M20 7h2"}],["path",{"d":"M7 20v2"}],["path",{"d":"M7 2v2"}],["rect",{"x":"4","y":"4","width":"16","height":"16","rx":"2"}],["rect",{"x":"8","y":"8","width":"8","height":"8","rx":"1"}]],"chevrons-up-down":[["path",{"d":"m7 15 5 5 5-5"}],["path",{"d":"m7 9 5-5 5 5"}]]};
+function moIcon(name,size){
+  const arr=MO_ICONS[name]||[];
+  let inner='';
+  for(let i=0;i<arr.length;i++){
+    const sh=arr[i];let at='';
+    for(const k in sh[1]){at+=' '+k+'="'+sh[1][k]+'"'}
+    inner+='<'+sh[0]+at+'/>';
+  }
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:'+size+'px;height:'+size+'px" aria-hidden="true">'+inner+'</svg>';
+}
+let MO={events:[],sessions:{},stages:{},sel:null,connTxt:'',sseId:null,pollTimer:null,started:false,lastEventId:0,renderTimer:null,expanded:{},gotOpen:false,autoScroll:true,reasoning:null,
+        collapsed:(function(){try{return localStorage.getItem('maisaka-monitor-sidebar-collapsed')!=='false'}catch(e){return false}})()};
+/* ---- 工具函数：照抄部署 chunk（Pe/fe/P/zt/Dt/Le/Ot） ---- */
+function moFmtMs(ms){ms=ms||0;return ms<1000?Math.round(ms)+'ms':(ms/1000).toFixed(2)+'s'}
+function moFmtTs(ts){const d=new Date((ts||0)*1000);const z=n=>String(n).padStart(2,'0');return z(d.getHours())+':'+z(d.getMinutes())+':'+z(d.getSeconds())}
+function moRelTime(ts){const diff=Date.now()/1000-(ts||0);if(diff<10)return '刚刚';if(diff<60)return Math.round(diff)+'秒前';if(diff<3600)return Math.round(diff/60)+'分钟前';return Math.round(diff/3600)+'小时前'}
+function moAgentLabel(s){const v=String(s==null?'':s).trim();const lv=v.toLowerCase();if(!lv||lv==='stop')return null;if(lv==='running')return '运行中';if(lv==='wait')return '等待中';return v}
+function moIsWaiting(st){return st&&(st.stage==='等待消息'||String(st.detail||'').indexOf('等待消息')>=0||st.agent_state==='wait')}
+function moInitial(name,fallback){const v=String(name==null?'':name).trim();return v?v.slice(0,1):fallback}
+/* ---- 事件入口 ---- */
+function moTouchSession(sid,ts){
+  const s=MO.sessions[sid];
+  if(s){s.last=ts||s.last||Date.now()/1000}
+}
+function moIngest(ev){
+  if(!ev||!ev.event)return;
+  const d=ev.data||{};
+  const sid=d.session_id,ts=d.timestamp||Date.now()/1000;
+  if(ev.event==='stream.open'){MO.gotOpen=true;MO.connTxt='已连接';moRenderConn();return}
+  if(ev.event==='stage.status'){MO.stages[sid]=d;moTouchSession(sid,ts);moSchedule();return}
+  if(ev.event==='stage.removed'){delete MO.stages[sid];moTouchSession(sid,ts);moSchedule();return}
+  if(ev.event==='session.start'){
+    MO.sessions[sid]={name:d.session_name,platform:d.platform,is_group:d.is_group_chat,count:0,last:ts};
+    if(MO.sel===null)MO.sel=sid;  // 部署版：首个出现的会话自动选中
+    moSchedule();return;
+  }
+  if(!MO.sessions[sid])MO.sessions[sid]={name:sid,platform:'',is_group:false,count:0,last:ts};
+  const s=MO.sessions[sid];
+  /* 按 event_id 去重（SSE 与轮询双通道可能重复投递同一事件） */
+  if(d.event_id){
+    MO.seenIds=MO.seenIds||new Set();
+    if(MO.seenIds.has(d.event_id))return;
+    MO.seenIds.add(d.event_id);
+  }
+  s.count=(s.count||0)+1;s.last=ts;
+  MO.events.push({id:d.event_id||('t'+Date.now()+Math.random()),type:ev.event,data:d,ts:ts,sid:sid});
+  if(MO.events.length>2000)MO.events=MO.events.slice(-1500);
+  if(d.event_id)MO.lastEventId=Math.max(MO.lastEventId,d.event_id);
+  moSchedule();
+}
+function moSchedule(){
+  if(MO.renderTimer)return;
+  MO.renderTimer=setTimeout(()=>{MO.renderTimer=null;moRenderAll()},150);
+}
+/* ---- 页面骨架（部署版主布局：aside 聊天流 + 主列 阶段条+时间线 Card） ---- */
+function moAsideHeadHTML(){
+  const conn=MO.gotOpen||MO.pollTimer;
+  return `<h2 class="mo-aside-title">
+    <span class="mo-ticon">${moIcon('activity',16)}</span>聊天流
+    ${conn?`<span class="mo-conn" title="${esc(MO.connTxt||'已连接')}"></span>`:''}
+    <button class="mo-gbtn icon" onclick="MO.collapsed=!MO.collapsed;try{localStorage.setItem('maisaka-monitor-sidebar-collapsed',String(MO.collapsed))}catch(e){};moRefreshAside()" title="${MO.collapsed?'展开侧边栏':'折叠侧边栏'}">${moIcon(MO.collapsed?'chevron-right':'chevron-left',14)}</button>
+  </h2>`;
+}
+function observeHTML(){
+  return `<div class="mo-root">
+    <aside class="mo-aside ${MO.collapsed?'collapsed':''}" id="mo_aside">
+      <div class="mo-aside-head">${moAsideHeadHTML()}</div>
+      <div class="mo-sep"></div>
+      <div class="mo-sessions" id="mo_sessions"></div>
+    </aside>
+    <div class="mo-main">
+      <div id="mo_stagebar"></div>
+      <div class="mo-tlcard"><div class="mo-tl" id="mo_tl" onscroll="moOnScroll(this)"><div class="mo-tlin" id="mo_tlin"></div></div></div>
+    </div>
+  </div>`
+}
+function moRefreshAside(){
+  const a=document.getElementById('mo_aside');if(!a)return;
+  a.classList.toggle('collapsed',MO.collapsed);
+  const h=a.querySelector('.mo-aside-head');if(h)h.innerHTML=moAsideHeadHTML();
+  moRenderSide();
+}
+function moRenderConn(){
+  const a=document.getElementById('mo_aside');
+  if(!a)return;
+  const h=a.querySelector('.mo-aside-head');
+  if(h&&((MO.gotOpen||MO.pollTimer)!==MO._connDrawn)){h.innerHTML=moAsideHeadHTML();MO._connDrawn=(MO.gotOpen||MO.pollTimer)}
+}
+/* ---- 会话侧栏（部署版 SessionSidebar：rounded-md 头像+状态点+事件数+相对时间+当前阶段） ---- */
+function moRenderSide(){
+  const host=document.getElementById('mo_sessions');if(!host)return;
+  const ids=Object.keys(MO.sessions).sort((a,b)=>(MO.sessions[b].last||0)-(MO.sessions[a].last||0));
+  if(!ids.length){host.innerHTML=`<div class="mo-sess-empty"><span style="opacity:.4;display:flex">${moIcon('bot',32)}</span><p>等待 MaiSaka 会话…</p></div>`;return}
+  host.innerHTML=ids.map(sid=>{
+    const s=MO.sessions[sid],st=MO.stages[sid];
+    const dot=st?`<span class="mo-sdot ${moIsWaiting(st)?'wait':''}"></span>`:'';
+    return `<button class="mo-sess ${MO.sel===sid?'on':''}" onclick="moSel('${jsq(sid)}')" title="${esc(s.name||sid)}">
+      <div class="r1"><div class="lft">
+        <span class="mo-sava"><span class="img">${esc(moInitial(s.name,s.is_group?'群':'私'))}</span>${dot}</span>
+        <span class="mo-sname">${esc(s.name||sid)}</span>
+      </div><span class="mo-badge secondary h16">${s.count||0}</span></div>
+      <div class="r2"><span class="tm">${moRelTime(s.last)}</span>${st?`<span class="stg">${esc(st.stage||'')}</span>`:''}</div>
+    </button>`}).join('');
+}
+function moSel(sid){MO.sel=sid;moRenderAll()}
+/* ---- 统计（部署版 reducer：ingested+sent→消息；finalized→循环+工具数；只统计当前选中会话） ---- */
+function moCurEvents(){return MO.sel===null?MO.events:MO.events.filter(e=>e.sid===MO.sel)}
+function moStats(){
+  let messages=0,cycles=0,toolCalls=0;
+  moCurEvents().forEach(e=>{
+    if(e.type==='message.ingested'||e.type==='message.sent')messages++;
+    else if(e.type==='planner.finalized'){cycles++;toolCalls+=(e.data.tools||[]).length}
+  });
+  return {messages,cycles,toolCalls};
+}
+/* ---- 阶段状态条（部署版 StageStatusPanel：统计chip+回到底部/清空 居中，阶段徽章组，更新于 ml-auto） ---- */
+function moRenderStagebar(){
+  const host=document.getElementById('mo_stagebar');if(!host)return;
+  const st=MO.sel!==null?MO.stages[MO.sel]:null;
+  const s=moStats();
+  const bar=`<div class="mo-stats" title="消息：${s.messages}&#10;循环：${s.cycles}&#10;工具调用：${s.toolCalls}">${moIcon('activity',12)}<span class="lbl">统计</span></div>
+    <div class="mo-act">
+      <button class="mo-gbtn" onclick="moToBottom()" title="回到底部"><span class="chev ${MO.autoScroll?'on':''}" style="display:flex;margin-right:4px">${moIcon('chevron-down',12)}</span>回到底部</button>
+      <button class="mo-gbtn icon" onclick="moClear()" title="清空" aria-label="清空">${moIcon('eraser',12)}</button>
+    </div>`;
+  if(!st){
+    host.innerHTML=`<div class="mo-stagebar empty">${bar}<span class="mo-emptytxt">当前聊天流暂无阶段状态</span></div>`;
+    return;
+  }
+  const ag=moAgentLabel(st.agent_state);
+  host.innerHTML=`<div class="mo-stagebar">
+    ${bar}
+    <div class="mo-stagegrp">
+      <span class="mo-badge default g05 p6 t10">${moIcon('activity',10)}${esc(st.stage||'未知阶段')}</span>
+      ${st.round_text?`<span class="mo-badge secondary p6 t10">${esc(st.round_text)}</span>`:''}
+      ${ag?`<span class="mo-badge ${String(st.agent_state||'').toLowerCase()==='running'?'default':'outline'} p6 t10">${esc(ag)}</span>`:''}
+      <span class="mo-upd">更新于 ${moRelTime(st.updated_at||st.timestamp)}</span>
+    </div>
+    ${st.detail?`<p class="mo-sdetail">${esc(st.detail)}</p>`:''}
+  </div>`;
+}
+/* ---- 折叠文本（部署版 CollapsibleText：超 N 行折叠为空格拼接，chevron 图标，文字色 primary） ---- */
+function moCollapsible(text,maxLines,key,cls){
+  if(!text)return '';
+  const t=String(text);
+  const lines=t.split('\n');
+  if(lines.length<=maxLines)return `<p class="mo-cpt ${cls||''}">${esc(t)}</p>`;
+  if(MO.expanded[key])return `<div><p class="mo-cpt ${cls||''}">${esc(t)}</p>
+    <button class="mo-cbtn" onclick="MO.expanded['${key}']=false;moRenderTimeline()">${moIcon('chevron-down',12)} 收起</button></div>`;
+  return `<div><p class="mo-cpt ${cls||''}">${esc(lines.slice(0,maxLines).join(' '))}</p>
+    <button class="mo-cbtn" onclick="MO.expanded['${key}']=true;moRenderTimeline()">${moIcon('chevron-right',12)} 展开全部 (${lines.length} 行)</button></div>`;
+}
+/* ---- 参数 chip（部署版 ToolArgumentBlock：h-6 圆角6 border，mono name = value） ---- */
+function moArgChips(args){
+  const entries=Object.entries(args||{});
+  if(!entries.length)return '';
+  return entries.map(([k,v])=>{
+    const raw=typeof v==='string'?v:(v===undefined?'undefined':JSON.stringify(v,null,2));
+    const tp=Array.isArray(v)?'array('+v.length+')':(v===null?'null':typeof v);
+    const inline=String(raw).replace(/\s+/g,' ');
+    return `<span class="mo-arg" title="${esc(k+' ('+tp+'): '+raw)}"><b>${esc(k)}</b><span class="eq">=</span><i>${esc(inline)}</i></span>`;
+  }).join('');
+}
+function moTypeOf(v){return Array.isArray(v)?'array('+v.length+')':(v===null?'null':typeof v)}
+/* ---- 单行工具摘要：默认时间线只显示结果概况，明细收进「推理过程」弹窗 ---- */
+function moToolMini(x,i){
+  const ok=x.success===true;
+  return `<div class="mo-trow">
+    <div class="mo-thead">
+      <span class="mo-tname">${esc(x.tool_name||'unknown')}</span>
+      <span class="mo-ic ${ok?'mo-okc':'mo-badc'}">${moIcon(ok?'circle-check':'user',14)}</span>
+      <span class="mo-badge ${ok?'secondary':'destructive'} h20">${ok?'执行成功':'执行失败'}</span>
+      ${(x.duration_ms||0)>0?`<span class="mo-ets md">${moFmtMs(x.duration_ms)}</span>`:''}
+      <span class="mo-tidx">#${i+1}</span>
+    </div>
+  </div>`;}
+/* ---- 时间线卡片（部署版 TimelineEventRenderer switch，未列事件不渲染） ---- */
+function moToolRow(x,i){
+  const ok=x.success===true;
+  return `<div class="mo-trow">
+    <div class="mo-thead">
+      <span class="mo-tname">${esc(x.tool_name||'unknown')}</span>
+      <span class="mo-ic ${ok?'mo-okc':'mo-badc'}">${moIcon(ok?'circle-check':'user',14)}</span>
+      <span class="mo-badge ${ok?'secondary':'destructive'} h20">${ok?'执行成功':'执行失败'}</span>
+      ${(x.duration_ms||0)>0?`<span class="mo-ets md">${moFmtMs(x.duration_ms)}</span>`:''}
+      <span class="mo-tidx">#${i+1}</span>
+    </div>
+    <div class="mo-args">${moArgChips(x.tool_args)}
+      <details class="mo-json"><summary title="完整调用 JSON">${moIcon('chevron-right',10)}<span>JSON</span></summary>
+        <pre>${esc(JSON.stringify({tool_call_id:x.tool_call_id,tool_name:x.tool_name,tool_args:x.tool_args||{},success:x.success,duration_ms:x.duration_ms,summary:x.summary,tool_call_source:x.tool_call_source,tool_call_source_label:x.tool_call_source_label},null,2))}</pre></details>
+    </div>
+    <div class="mo-result"><span>执行结果</span><div class="mo-resc">${moCollapsible(x.summary||'',6,'res_'+x.tool_call_id,'mo-resp')}</div></div>
+  </div>`;
+}
+function moDoneStrip(){
+  return `<div class="mo-done-strip"><span class="mo-ic mo-okc">${moIcon('circle-check',14)}</span><b>本轮思考暂时结束</b><span class="m">等待新的消息。</span></div>`;
+}
+function moCard(e){
+  const d=e.data,ts=`<span class="mo-ets">${moFmtTs(e.ts)}</span>`;
+  if(e.type==='message.ingested')
+    return `<div class="mo-e"><div class="mo-ein"><div class="mo-row">
+      <span class="mo-ava in">${esc(moInitial(d.speaker_name,'人'))}</span>
+      <div class="mo-ecol"><div class="mo-ehead"><span class="mo-ename">${esc(d.speaker_name||'')}</span>${ts}</div>
+      <p class="mo-cpt">${esc(d.content||'[空消息]')}</p></div></div></div></div>`;
+  if(e.type==='message.sent')
+    return `<div class="mo-e"><div class="mo-ein"><div class="mo-card-sent">
+      <span class="mo-ava out">${moIcon('bot',14)}</span>
+      <div class="mo-ecol"><div class="mo-ehead"><span class="mo-ename">${esc(d.speaker_name||'麦麦')}</span><span class="mo-badge outline t10">已发送</span>${ts}</div>
+      <p class="mo-cpt">${esc(d.content||'[非文本消息]')}</p></div></div></div></div>`;
+  if(e.type==='timing_gate.result'){
+    const cfgs={continue:{label:'继续执行',variant:'default',icon:'arrow-right'},wait:{label:'等待',variant:'secondary',icon:'circle-pause'},no_action:{label:'不回复',variant:'destructive',icon:'user'}};
+    const cfg=cfgs[d.action]||cfgs.continue;
+    return `<div class="mo-e"><div class="mo-ein"><div class="mo-card-gate">
+      <span class="mo-ava amber">${moIcon('timer',14)}</span>
+      <div class="mo-ecol"><div class="mo-ehead wrap"><span class="mo-ename">反应</span><span class="mo-badge outline t10">react</span>
+        <span class="mo-badge ${cfg.variant} g05 t10">${moIcon(cfg.icon,10)}${cfg.label}</span><span class="mo-ets">${moFmtMs(d.duration_ms)}</span></div>
+      ${d.content?moCollapsible(d.content,3,'tg'+e.id):''}</div></div></div></div>`;
+  }
+  if(e.type==='planner.response'){
+    const chips=(d.tool_calls||[]).map(c=>`<span class="mo-badge secondary g1 t10">${moIcon('wrench',10)}${esc(c.name)}</span>`).join('');
+    return `<div class="mo-e"><div class="mo-ein"><div class="mo-row">
+      <span class="mo-ava out">${moIcon('brain',14)}</span>
+      <div class="mo-ecol"><div class="mo-ehead wrap"><span class="mo-ename">规划器思考</span>
+        <span class="mo-ets">${moFmtMs(d.duration_ms)}</span></div>
+      ${d.content?moCollapsible(d.content,6,'pr'+e.id):''}${chips?`<div class="mo-chips">${chips}</div>`:''}</div></div></div></div>`;
+  }
+  if(e.type==='planner.finalized'){
+    const p=d.planner||{},r=d.request||{},tools=d.tools||[];
+    /* 部署版 Fe：interrupted===true 即打断卡 */
+    if(d.interrupted===true){
+      return `<div class="mo-e"><div class="mo-ein"><div class="mo-card-warn">
+        <div class="hd"><span class="mo-ic mo-amberc">${moIcon('circle-alert',16)}</span><b>Planner 被新消息打断</b>
+          <span class="mo-badge outline t10" style="margin-left:auto">#${d.cycle_id==null?'':d.cycle_id}</span>
+          ${(p.duration_ms||0)>0?`<span class="mo-ets">${moFmtMs(p.duration_ms)}</span>`:''}</div>
+        <p class="mo-cpt2">${esc(p.content||'收到新消息，已停止当前思考并准备重新决策。')}</p>
+      </div></div></div>`;
+    }
+    /* 部署版：timing_gate.result.action==='no_action' 时 finalized 不渲染 */
+    if(d.timing_gate&&d.timing_gate.result&&d.timing_gate.result.action==='no_action')return '';
+    const hasReq=r&&(r.selected_history_count!=null||r.tool_count!=null);
+    /* 部署版：token>0 时 outline 徽章「输入+输出 tokens」（planner.prompt_tokens/completion_tokens） */
+    const hasTok=p&&((p.prompt_tokens||0)>0||(p.completion_tokens||0)>0);
+    const planCard=`<div class="mo-card plan"><div class="mo-cbody">
+      <div class="mo-chead"><span class="mo-ic mo-okc">${moIcon('brain',16)}</span><span class="mo-ctitle">Planner</span>
+        ${tools.length?`<button class="mo-rbtn" title="查看本轮完整工作流（推理过程）" onclick="MO.reasoning=${e.id};moRenderTimeline()">${moIcon('file-text',12)} 推理过程</button>`:''}
+        <span class="mo-badge outline fnorm" style="margin-left:auto">${moFmtMs(p.duration_ms)}</span>
+        ${hasReq?`<span class="mo-badge secondary t10">上下文 ${r.selected_history_count==null?0:r.selected_history_count} 条 / 可用工具 ${r.tool_count==null?0:r.tool_count}</span>`:''}
+        ${hasTok?`<span class="mo-badge outline t10">${p.prompt_tokens||0}+${p.completion_tokens||0} tokens</span>`:''}
+      </div>
+      ${p.content?moCollapsible(p.content,6,'pf'+e.id,'f90'):'<p class="mo-cpt2">planner 本轮没有文本内容</p>'}
+    </div></div>`;
+    /* 部署版 rs：finish 工具单独渲染为结束条（maisoul 的 wait 决策即 finish 语义） */
+    const isFinish=x=>String(x.tool_name||'').trim().toLowerCase()==='finish'||String(x.tool_name||'').trim().toLowerCase()==='wait';
+    const finishLike=tools.filter(isFinish),normal=tools.filter(x=>!isFinish(x));
+    let toolsBlock='';
+    if(!normal.length&&finishLike.length){
+      toolsBlock=`<div class="mo-card-done"><span class="mo-ic mo-okc">${moIcon('circle-check',16)}</span><b>本轮思考暂时结束</b><span class="m">等待新的消息。</span></div>`;
+    }else if(normal.length){
+      toolsBlock=`<div class="mo-card tools"><div class="mo-cbody g8">
+        <div class="mo-chead nowrap"><span class="mo-ic mo-tealc">${moIcon('wrench',16)}</span><span class="mo-ctitle">使用工具</span>
+          <span class="mo-badge secondary t10" style="margin-left:auto">${normal.length} 个</span></div>
+        ${normal.map((x,i)=>moToolMini(x,i)).join('')}
+        ${finishLike.length?moDoneStrip():''}
+      </div></div>`;
+    }
+    return `<div class="mo-e"><div class="mo-ein" style="display:flex;flex-direction:column;gap:8px">${planCard}${toolsBlock}</div></div>`;
+  }
+  if(e.type==='replier.response'){
+    return `<div class="mo-e"><div class="mo-ein"><div class="mo-card replier"><div class="mo-cbody rp">
+      <div class="mo-chead nowrap"><span class="mo-ic mo-purplec">${moIcon('bot',16)}</span><span class="mo-ctitle">回复器响应</span>
+        <span class="mo-badge outline fnorm" style="margin-left:auto">${moFmtMs(d.duration_ms)}</span>
+        ${d.success?`<span class="mo-badge secondary g1">${moIcon('circle-check',12)} 成功</span>`:`<span class="mo-badge destructive g1">${moIcon('user',12)} 失败</span>`}
+        <span class="mo-ets">${moFmtTs(d.timestamp||e.ts)}</span></div>
+      ${d.content?moCollapsible(d.content,6,'rr'+e.id,'f90'):''}
+      ${d.reasoning?`<details class="mo-details"><summary>思考过程</summary>${moCollapsible(d.reasoning,8,'rrr'+e.id,'mut')}</details>`:''}
+    </div></div></div></div>`;
+  }
+  /* 部署版 default: return null —— 其余事件类型不渲染 */
+  return '';
+}
+function moRenderTimeline(){
+  const tl=document.getElementById('mo_tlin');if(!tl)return;
+  /* 时间线只显示当前选中会话的事件（部署版语义：点哪个聊天流看哪个） */
+  const list=moCurEvents().slice(-400);
+  tl.innerHTML=(list.length?list.map(moCard).join('')
+    :`<div class="mo-empty"><span style="opacity:.3;display:flex">${moIcon('clock',40)}</span><p>等待 MaiSaka 推理事件…</p><small>当 MaiSaka 处理新消息时，推理过程会实时展示在这里</small></div>`)+moReasoningModal(list);
+  if(MO.autoScroll){const box=document.getElementById('mo_tl');if(box)box.scrollTop=box.scrollHeight}
+}
+function moReasoningModal(list){
+  if(MO.reasoning==null)return '';
+  const ev=(list||[]).find(x=>x.id===MO.reasoning);
+  if(!ev||ev.type!=='planner.finalized'){MO.reasoning=null;return ''}
+  const d=ev.data||{},p=d.planner||{},tools=d.tools||[];
+  const eco=(d.final_state&&d.final_state.eco_injection)||'';
+  const isFinish=x=>String(x.tool_name||'').trim().toLowerCase()==='finish'||String(x.tool_name||'').trim().toLowerCase()==='wait';
+  const normal=tools.filter(x=>!isFinish(x)),finishLike=tools.filter(isFinish);
+  return `<div class="modal-mask" onclick="if(event.target===this){MO.reasoning=null;moRenderTimeline()}">
+    <div class="modal">
+      <div class="modal-head"><div><b>推理过程</b><div class="desc">循环 #${d.cycle_id==null?'-':d.cycle_id} · 工具 ${normal.length} 个${(p.duration_ms||0)>0?' · '+moFmtMs(p.duration_ms):''}</div></div>
+        <button class="modal-x" onclick="MO.reasoning=null;moRenderTimeline()" title="关闭">${moIcon('x',16)}</button></div>
+      <div style="padding:16px 24px 24px;display:flex;flex-direction:column;gap:12px;max-height:70vh;overflow-y:auto">
+        <div>
+          <p class="mo-cpt2" style="margin:0 0 6px">Planner 思考</p>
+          ${p.content?moCollapsible(p.content,6,'pfm'+ev.id,'f90'):'<p class="mo-cpt2">planner 本轮没有文本内容</p>'}
+        </div>
+        ${eco?`<div>
+          <p class="mo-cpt2" style="margin:0 0 6px">生态注入（心弦好感 / 记忆 / 世界书 · ${eco.length} 字）</p>
+          ${moCollapsible(eco,6,'ecom'+ev.id,'mut')}
+        </div>`:''}
+        ${normal.length?`<div><p class="mo-cpt2" style="margin:0 0 6px">工具工作流（${normal.length} 个）</p>
+          <div style="display:flex;flex-direction:column;gap:8px">${normal.map((x,i)=>moToolRow(x,i)).join('')}</div>
+          ${finishLike.length?moDoneStrip():''}</div>`:''}
+      </div>
+    </div>
+  </div>`;}
+function moOnScroll(el){MO.autoScroll=el.scrollHeight-el.scrollTop-el.clientHeight<80;moRenderStagebar()}
+function moToBottom(){const tl=document.getElementById('mo_tl');if(tl)tl.scrollTop=tl.scrollHeight;MO.autoScroll=true;moRenderStagebar()}
+function moClear(){MO.events=[];MO.seenIds=new Set();MO.renderTimer=null;moRenderAll()}
+function moRenderAll(){moRenderSide();moRenderStagebar();moRenderTimeline()}
+/* ---- 数据通道：轮询保底常开；SSE 可用（真正收到帧）才接管停轮询 ---- */
+function moStopPoll(){
+  if(MO.pollTimer){clearInterval(MO.pollTimer);MO.pollTimer=null}
+}
+async function startMonitor(){
+  if(MO.started){moRenderAll();return}
+  MO.started=true;
+  try{
+    const r=await apiGet('monitor/replay',{since:0,limit:300});
+    const arr=(r&&r.data)||r||[];
+    arr.forEach(x=>moIngest(x));
+    MO.connTxt=`已载入 ${arr.length} 条历史`;
+  }catch(e){MO.connTxt='历史载入失败：'+e.message}
+  moRenderAll();
+  moStartPoll();  // 保底通道先跑起来——SSE 被扩展层缓冲/悬死时页面依然实时
+  const b=getBridge();
+  if(b&&b.subscribeSSE){
+    try{
+      MO.sseId=await b.subscribeSSE('monitor/stream',
+        {onmessage:m=>{
+           try{
+             moIngest(JSON.parse(m));
+             /* 收到真实帧 = SSE 通道活着 → 停轮询 */
+             if(MO.gotOpen&&MO.pollTimer){moStopPoll();MO.connTxt='已连接';moRenderConn()}
+           }catch(err){}
+         },
+         onstate:s=>{if(s!=='open'&&!MO.gotOpen)moStartPoll()}},{});
+      MO.connTxt='实时连接…';
+      // 看门狗：8s 内没有任何帧（含 stream.open）→ 退回并保持轮询
+      setTimeout(()=>{
+        if(!MO.gotOpen&&MO.sseId){
+          try{if(b.unsubscribeSSE)asyncBridgeUnsub(b)}catch(e){}
+          MO.sseId=null;
+        }
+      },8000);
+      moRenderConn();
+    }catch(e){MO.sseId=null;moRenderConn()}
+  }
+}
+async function asyncBridgeUnsub(b){
+  try{if(MO.sseId&&b.unsubscribeSSE)await b.unsubscribeSSE(MO.sseId)}catch(e){}
+  MO.connTxt='轮询模式（2.5s）';moRenderConn();
+}
+function moStartPoll(){
+  if(MO.pollTimer)return;
+  if(!MO.gotOpen)MO.connTxt='轮询中（2.5s）';
+  moRenderConn();
+  MO.pollTimer=setInterval(async()=>{
+    try{
+      const r=await apiGet('monitor/replay',{since:MO.lastEventId,limit:200});
+      const arr=(r&&r.data)||r||[];
+      if(arr.length)arr.forEach(x=>moIngest(x));
+    }catch(e){}
+  },2500);
+}
+
+/* ---------------- 模型管理（仿 MaiBot /config/model：厂商浏览只读 + 任务分配） ---------------- */
+const MD_TASKS=[
+  {key:'planner',title:'规划模型 (planner)',short:'规划模型',desc:'负责决定麦麦什么时候回复、如何行动（reply / wait / 表情 / 工具调用）。',
+   caps:[{t:'必须',d:'支持函数调用（Function Calling / Tool Use）——reply、wait、send_emoji、fetch_history、tool_search 全靠它调用'},
+         {t:'必须',d:'指令遵循强——严格遵守 wait 纪律与工具参数格式，否则会出现连环发言或参数错误'},
+         {t:'建议',d:'带思考的推理模型——何时开口、如何行动这类决策直接吃推理质量'},
+         {t:'建议',d:'长上下文（≥64K）——planner 上下文为稳定窗的 2 倍，群聊场景消息量大'},
+         {t:'加分',d:'中文语境理解好——群聊斗图/玩梗/阴阳怪气的判断全靠语感'}]},
+  {key:'replyer',title:'回复模型 (replyer)',short:'回复模型',desc:'用于生成麦麦的可见回复，文风任务而非推理任务。',
+   caps:[{t:'必须',d:'指令遵循强——输出指令要求只产出发言内容本身，不写旁白/解释/角色名'},
+         {t:'必须',d:'中文口语自然——拟人文风、颜文字、语气词是它的本职'},
+         {t:'建议',d:'非思考模型——回复意图已由规划模型确定，思考只增加发言延迟，且思考型模型正文留空时本轮会放弃发言'},
+         {t:'建议',d:'响应快（首 token 快）——发送侧还要叠加拟人打字延迟，模型慢会显得呆'},
+         {t:'按需',d:'视觉能力——开启识图时需要；当前识图跟随本任务的模型，绑视觉条目即可'}]},
+  {key:'emoji',title:'表情选择模型 (emoji)',short:'表情选择模型',desc:'表情包发送前的语境检索词生成，单轮小调用。',
+   caps:[{t:'必须',d:'单轮文本生成即可——无需工具调用、无需思考'},
+         {t:'建议',d:'便宜且快——每次发表情包前多一次小调用'},
+         {t:'建议',d:'中文语境理解——从聊天氛围提炼出贴图的检索词'}]},
+  {key:'learner',title:'学习模型 (learner)',short:'学习模型',desc:'用于表达方式学习和黑话学习，发言后异步运行。',
+   caps:[{t:'必须',d:'结构化输出稳定——表达提取与黑话推断的提示词要求固定格式'},
+         {t:'建议',d:'便宜——发言后批量异步，调用量随聊天量增长'},
+         {t:'建议',d:'非思考模型——后台任务不需要低延迟但需要低成本'}]},
+  {key:'expression_use',title:'表达选择模型 (expression_use)',short:'表达选择模型',desc:'表达方式使用时的情境选择，单轮小调用。',
+   caps:[{t:'必须',d:'文本理解与选择——从表达库中挑出贴合当前语境的条目'},
+         {t:'建议',d:'快且便宜——每次发言前多一次小调用'},
+         {t:'建议',d:'非思考模型'}]},
+];
+const MD_STRATEGIES=[
+  {v:'sequential',label:'按顺序优先（sequential）',tip:'优先使用模型列表中靠前的模型，前面的模型不可用时再尝试后面的模型。'},
+  {v:'random',label:'随机选择（random）',tip:'每次请求从模型列表中随机选择一个模型，适合简单分散请求。'},
+  {v:'balance',label:'负载均衡（balance）',tip:'优先选择当前使用次数较少的模型，适合多个同类模型共同承担请求。'},
+];
+let MM=null;
+function mdTaskCfg(k){
+  /* task_models 为 list 形态：[{task, models, strategy}]（AstrBot object 型 schema 不收任意嵌套） */
+  const list=Array.isArray(S&&S.task_models)?S.task_models:[];
+  const c=list.find(x=>x&&x.task===k)||{};
+  const st=MD_STRATEGIES.some(s=>s.v===c.strategy)?c.strategy:'sequential';
+  return {models:Array.isArray(c.models)?c.models.filter(m=>m&&m.provider&&m.model):[],strategy:st};
+}
+function mdTaskEntry(k){
+  if(!Array.isArray(S.task_models))S.task_models=[];
+  let e=S.task_models.find(x=>x&&x.task===k);
+  if(!e){e={task:k,models:[],strategy:'sequential'};S.task_models.push(e)}
+  if(!Array.isArray(e.models))e.models=[];
+  return e;
+}
+function modelsHTML(){
+  const uncfg=MD_TASKS.filter(t=>!mdTaskCfg(t.key).models.length).map(t=>t.short);
+  return `<div class="page">
+    <div class="page-head"><div><h1>模型管理</h1></div></div>
+    ${uncfg.length?`<div class="md-alert"><strong>${moIcon('circle-alert',14)}以下任务未分配模型</strong><div class="md-alert-body">${uncfg.join('、')} 还未分配模型，将使用 AstrBot 默认 Provider。</div></div>`:''}
+    <div class="ui-tabs full" style="grid-template-columns:1fr 1fr">
+      <button id="md_tab_cfg" class="on" onclick="mdSwitchTab('cfg')">模型设置</button>
+      <button id="md_tab_tasks" onclick="mdSwitchTab('tasks')">功能分配</button>
+    </div>
+    <div id="md_body" onclick="if(MM&&MM.msOpen){MM.msOpen=false;mdRender()}"><div class="loading">加载中…</div></div>
+  </div>`;
+}
+async function initModelsPage(){
+  S.task_models=mdNormalize(S.task_models);
+  MM={providers:[],sel:'all',tab:'cfg',search:'',selTask:'planner',msOpen:false,msQuery:'',saveTimer:null,saveTxt:''};
+  try{
+    const r=await apiGet('models/list');
+    MM.providers=(r&&r.providers)||[];
+  }catch(e){MM.providers=[]}
+  mdRender();
+}
+function mdSwitchTab(t){MM.tab=t;MM.msOpen=false;mdRender()}
+function mdSelProv(p){MM.sel=p;MM.msOpen=false;mdRender()}
+function mdSelTask(k){MM.selTask=k;MM.msOpen=false;mdRender()}
+function mdUsedSet(){const s=new Set();MD_TASKS.forEach(t=>mdTaskCfg(t.key).models.forEach(m=>s.add(m.provider+'::'+m.model)));return s}
+function mdRender(){
+  const a=document.getElementById('md_tab_cfg'),b=document.getElementById('md_tab_tasks');
+  if(a)a.classList.toggle('on',MM.tab==='cfg');
+  if(b)b.classList.toggle('on',MM.tab==='tasks');
+  const host=document.getElementById('md_body');
+  if(host)host.innerHTML=MM.tab==='cfg'?mdCfgHTML():mdTasksHTML();
+}
+
+/* Tab1：厂商+模型 只读浏览 */
+function mdCfgHTML(){
+  const provs=MM.providers,total=provs.reduce((a,p)=>a+p.models.length,0);
+  const selProv=MM.sel==='all'?null:provs.find(p=>p.id===MM.sel);
+  const shown=selProv?[selProv]:provs;
+  const q=(MM.search||'').toLowerCase(),used=mdUsedSet();
+  let count=0;
+  const rows=[];
+  shown.forEach(p=>p.models.forEach(m=>{
+    count++;
+    if(q&&!(String(m).toLowerCase().includes(q)||String(p.id).toLowerCase().includes(q)))return;
+    const on=used.has(p.id+'::'+m);
+    rows.push(`<tr><td class="md-dotcell"><span class="md-dot ${on?'on':''}" title="${on?'已使用':'未使用'}"></span></td><td>${esc(m)}</td><td>${esc(p.id)}${p.enable?'':' <span class="ui-badge secondary">未启用</span>'}</td></tr>`);
+  }));
+  return `<div class="md-grid">
+    <aside class="md-aside">
+      <div class="md-ahead"><h2>模型厂商</h2></div>
+      <div class="md-alist">
+        <button class="md-item ${MM.sel==='all'?'on':''}" onclick="mdSelProv('all')"><span class="l2"><span class="lbl">全部</span></span><span class="cnt">${total}</span></button>
+        ${provs.map(p=>`<button class="md-item ${MM.sel===p.id?'on':''} ${p.enable?'':'off'}" onclick="mdSelProv('${jsq(p.id)}')" title="${esc(p.type)}"><span class="l2"><span class="lbl">${esc(p.id)}</span></span><span class="cnt">${p.models.length}</span></button>`).join('')}
+      </div>
+    </aside>
+    <section class="md-main">
+      <div class="md-bar">
+        <div class="md-search">${moIcon('search',14)}<input placeholder="搜索模型名称、标识符或提供商..." value="${esc(MM.search||'')}" oninput="MM.search=this.value;mdRefreshRows()"></div>
+        <p class="md-found" id="md_found"></p>
+      </div>
+      ${selProv?`<div class="md-provbar"><div><h3>${esc(selProv.id)}</h3><p>类型：${esc(selProv.type)||'—'} · 默认模型：${esc(selProv.default_model)||'—'} · ${selProv.models.length} 个模型${selProv.enable?'':' · 未启用'}</p></div></div>`:''}
+      <table class="ui-tbl"><thead><tr><th class="md-dotcell">使用</th><th>模型名称</th><th>提供商</th></tr></thead><tbody id="md_rows">${rows.length?rows.join(''):`<tr><td colspan="3" class="empty-cell">${MM.search?'未找到匹配的模型':'暂无模型配置'}</td></tr>`}</tbody></table>
+    </section>
+  </div>`;
+}
+function mdRefreshRows(){
+  /* 搜索只刷新表格与计数，不重建输入框（保焦点） */
+  const host=document.getElementById('md_body');if(!host||MM.tab!=='cfg')return;
+  const tmp=document.createElement('div');
+  /* 复用 mdCfgHTML 的行渲染：直接重渲染表格区域 */
+  const provs=MM.providers;
+  const selProv=MM.sel==='all'?null:provs.find(p=>p.id===MM.sel);
+  const shown=selProv?[selProv]:provs;
+  const q=(MM.search||'').toLowerCase(),used=mdUsedSet();
+  const rows=[];
+  shown.forEach(p=>p.models.forEach(m=>{
+    if(q&&!(String(m).toLowerCase().includes(q)||String(p.id).toLowerCase().includes(q)))return;
+    const on=used.has(p.id+'::'+m);
+    rows.push(`<tr><td class="md-dotcell"><span class="md-dot ${on?'on':''}" title="${on?'已使用':'未使用'}"></span></td><td>${esc(m)}</td><td>${esc(p.id)}${p.enable?'':' <span class="ui-badge secondary">未启用</span>'}</td></tr>`);
+  }));
+  const tb=document.getElementById('md_rows');
+  if(tb)tb.innerHTML=rows.length?rows.join(''):`<tr><td colspan="3" class="empty-cell">${MM.search?'未找到匹配的模型':'暂无模型配置'}</td></tr>`;
+  const fd=document.getElementById('md_found');
+  if(fd)fd.textContent=MM.search?`找到 ${rows.length} 个结果`:'';
+}
+/* Tab2：任务分配 */
+function mdOptions(){const out=[];MM.providers.forEach(p=>p.models.forEach(m=>out.push({provider:p.id,model:m})));return out}
+function mdMSListHTML(selected){
+  const q=(MM.msQuery||'').toLowerCase();
+  const filtered=mdOptions().filter(o=>!q||(o.model+' '+o.provider).toLowerCase().includes(q));
+  if(!filtered.length)return `<div class="md-ms-empty">暂无可用模型</div>`;
+  return filtered.map(o=>{
+    const on=selected.some(s=>s.provider===o.provider&&s.model===o.model);
+    return `<div class="md-ms-item" onclick="event.stopPropagation();mdToggleModel('${jsq(o.provider)}','${jsq(o.model)}')"><span class="md-check">${on?moIcon('circle-check',13):''}</span><span>${esc(o.provider)} · ${esc(o.model)}</span></div>`;
+  }).join('');
+}
+function mdMultiSelectHTML(selected){
+  return `<div class="md-ms" id="md_ms">
+    <button type="button" class="md-ms-trig" onclick="event.stopPropagation();MM.msOpen=!MM.msOpen;mdRender()">
+      <span class="md-ms-badges">${selected.length?selected.map(m=>`<span class="ui-badge secondary md-tag"><span>${esc(m.provider)} · ${esc(m.model)}</span><i title="移除" onclick="event.stopPropagation();mdToggleModel('${jsq(m.provider)}','${jsq(m.model)}')">${moIcon('x',10)}</i></span>`).join(''):'<span class="md-ms-ph">选择模型...</span>'}</span>
+      ${moIcon('chevrons-up-down',14)}
+    </button>
+    ${MM.msOpen?`<div class="md-ms-pop" onclick="event.stopPropagation()">
+      <div class="md-ms-search">${moIcon('search',13)}<input placeholder="搜索..." value="${esc(MM.msQuery||'')}" oninput="MM.msQuery=this.value;document.getElementById('md_ms_list').innerHTML=mdMSListHTML(mdTaskCfg(MM.selTask).models)"></div>
+      <div class="md-ms-list" id="md_ms_list">${mdMSListHTML(selected)}</div>
+    </div>`:''}
+  </div>`;
+}
+function mdTasksHTML(){
+  const meta=MD_TASKS.find(t=>t.key===MM.selTask)||MD_TASKS[0];
+  const cur=mdTaskCfg(meta.key);
+  const st=MD_STRATEGIES.find(s=>s.v===cur.strategy)||MD_STRATEGIES[0];
+  return `<div class="md-grid">
+    <aside class="md-aside">
+      <div class="md-ahead"><h2>模型类别</h2></div>
+      <div class="md-alist">
+        ${MD_TASKS.map(t=>{const c=mdTaskCfg(t.key);return `<button class="md-item ${MM.selTask===t.key?'on':''}" onclick="mdSelTask('${t.key}')"><span class="l2"><span class="lbl">${t.short}</span><small class="sub">${c.models.length?c.models.map(m=>esc(m.model)).join('、'):'未配置模型'}</small></span><span class="cnt ${c.models.length?'ok':''}">${c.models.length?'已配置 · '+c.models.length:'未配置'}</span></button>`}).join('')}
+      </div>
+    </aside>
+    <section class="md-main">
+      <div class="md-thead"><h3>${meta.title}</h3><p>${meta.desc}</p>
+        <div class="md-caps">${(meta.caps||[]).map(c=>`<div class="md-cap"><span class="md-cap-t ${c.t==='必须'?'must':(c.t==='按需'?'opt':'')}" style="border:1px solid hsl(var(--border));border-radius:6px;padding:1px 6px;font-size:11px;flex:none;${c.t==='必须'?'color:hsl(var(--destructive))':''}">${c.t}</span><span style="flex:1">${c.d}</span></div>`).join('')}</div>
+      </div>
+      <div class="md-fld"><label>模型列表</label>${mdMultiSelectHTML(cur.models)}</div>
+      <div class="md-fld"><label>模型选择策略</label>
+        <select class="md-sel" onchange="mdSetStrategy(this.value)">
+          ${MD_STRATEGIES.map(s=>`<option value="${s.v}" ${cur.strategy===s.v?'selected':''}>${s.label}</option>`).join('')}
+        </select>
+        <p class="md-hint">${st.tip}</p>
+      </div>
+      <p class="md-note">温度 / 最大 Token 等参数跟随所选 Provider 在 AstrBot 模型设置中的配置（text_chat 不支持按次覆盖）；同理，思考开关也无法按次关闭——需要非思考行为时请直接选择非思考的模型条目。规划模型建议绑「支持工具调用 + 思考」的条目，回复模型建议绑「快 + 非思考」的条目，两类任务可在 AstrBot「模型提供商」中分属不同条目。</p>
+      <div class="md-savest"><span id="md_savetxt">${MM.saveTxt||''}</span></div>
+    </section>
+  </div>`;
+}
+function mdToggleModel(p,m){
+  const entry=mdTaskEntry(MM.selTask),list=entry.models;
+  const idx=list.findIndex(x=>x.provider===p&&x.model===m);
+  if(idx>=0)list.splice(idx,1);else list.push({provider:p,model:m});
+  mdScheduleSave();mdRender();
+}
+function mdSetStrategy(v){
+  mdTaskEntry(MM.selTask).strategy=v;
+  mdScheduleSave();mdRender();
+}
+function mdNormalize(v){
+  const out=[];const known={};
+  if(Array.isArray(v))v.forEach(e=>{if(e&&e.task)known[e.task]=e});
+  else if(v&&typeof v==='object')Object.keys(v).forEach(k=>{known[k]=Object.assign({task:k},v[k])});
+  MD_TASKS.forEach(t=>{
+    const e=known[t.key]||{};
+    out.push({task:t.key,
+      models:Array.isArray(e.models)?e.models.filter(m=>m&&m.provider&&m.model):[],
+      strategy:MD_STRATEGIES.some(s=>s.v===e.strategy)?e.strategy:'sequential'});
+  });
+  return out;
+}
+function mdScheduleSave(){
+  MM.saveTxt='配置将在 2 秒后自动保存';mdSaveTxt();
+  if(MM.saveTimer)clearTimeout(MM.saveTimer);
+  MM.saveTimer=setTimeout(mdDoSave,2000);
+}
+function mdSaveTxt(){const el=document.getElementById('md_savetxt');if(el)el.textContent=MM.saveTxt||''}
+async function mdDoSave(){
+  MM.saveTxt='保存中…';mdSaveTxt();
+  try{
+    await apiPost('config',{task_models:S.task_models});
+    MM.saveTxt='已保存';
+  }catch(e){MM.saveTxt='保存失败：'+e.message}
+  mdSaveTxt();
+}
+
+/* ---------------- 模式 ---------------- */
+function setMode(m){S.mode=m;document.querySelectorAll('.mode').forEach((el,i)=>el.classList.toggle('on',(i===0)===(m==='independent')))}
+
+/* ---------------- 收集 & 保存 ---------------- */
+function collect(){
+  const g=id=>{const el=document.getElementById(id);return el?el.value:null};
+  const num=(id,dft)=>{const v=parseFloat(g(id));return isNaN(v)?dft:v};
+  const bool=(id,dft)=>{const el=document.getElementById(id);return el?(el.type==='checkbox'?el.checked:dft):dft};
+  if(g('bot_name')!==null)S.bot_name=g('bot_name')||'麦麦';
+  ['personality','reply_style','behavior_style','group_chat_prompt','private_chat_prompts'].forEach(k=>{if(g(k)!==null)S[k]=g(k)});
+  if(g('max_context_size')!==null)S.max_context_size=Math.max(5,parseInt(g('max_context_size'))||40);
+  if(g('reply_trigger_mode')!==null)S.reply_trigger_mode=g('reply_trigger_mode');
+  ['multiple_probability','typo_min_freq','splitter_max_length','splitter_max_sentence_num','splitter_max_split_num','max_private_context_size','max_consecutive_wait_count','planner_interrupt_max_consecutive_count','no_action_backoff_start_count','no_action_backoff_bypass_pending_count'].forEach(k=>{if(g(k)!==null)S[k]=num(k,S[k])});
+  ['talk_value','private_talk_value','typing_speed','typo_correction_quote_probability','typo_error_rate','typo_tone_error_rate','typo_word_replace_rate','no_action_backoff_base_seconds','no_action_backoff_cap_seconds'].forEach(k=>{if(g(k)!==null)S[k]=num(k,S[k])});
+  ['enable','enable_response_post_process','typo_enable','typo_enable_correction_quote','splitter_enable','splitter_enable_kaomoji_protection','splitter_enable_overflow_return_all','inevitable_at_reply','mentioned_bot_reply','enable_talk_value_rules','enable_reply_quote'].forEach(k=>{S[k]=bool(k,S[k]??true)});
+  const mb=document.getElementById('maid_bridge');if(mb)S.maid_bridge=mb.checked;
+  const eaw=document.getElementById('escape_at_wake');if(eaw)S.escape_at_wake=eaw.checked;
+  const ei=document.getElementById('eco_injection');if(ei)S.eco_injection=ei.checked;
+  const styles=[...document.querySelectorAll('[data-style]')].map(t=>t.value.trim()).filter(Boolean);
+  if(styles.length||document.getElementById('mrs'))S.multiple_reply_style=styles;
+  const cps=[...document.querySelectorAll('[data-cp]')].map(r=>({platform:r.querySelector('.cp-platform').value.trim(),item_id:r.querySelector('.cp-chat').value.trim(),rule_type:'group',prompt:r.querySelector('.cp-prompt').value.trim()})).filter(c=>c.platform&&c.item_id&&c.prompt);
+  if(cps.length||document.getElementById('cps'))S.chat_prompts=cps;
+  const tvrs=[...document.querySelectorAll('[data-tvr]')].map(r=>({platform:r.querySelector('.tvr-platform').value.trim(),item_id:r.querySelector('.tvr-item').value.trim(),rule_type:'group',time:r.querySelector('.tvr-time').value.trim(),value:parseFloat(r.querySelector('.tvr-value').value)||0}));
+  if(tvrs.length||document.getElementById('tvrs'))S.talk_value_rules=tvrs;
+  const gps=[...document.querySelectorAll('[data-gp]')].map(r=>({chat:r.querySelector('.gp-chat').value.trim(),name:r.querySelector('.gp-name').value}));
+  if(gps.length||document.getElementById('gps'))S.group_persona=gps.filter(g=>g.chat&&g.name);
+  const lrCollect=host=>host?[...host.querySelectorAll('[data-elr]')].map(r=>({platform:r.querySelector('.elr-platform').value.trim(),item_id:r.querySelector('.elr-item').value.trim(),type:'group',use:r.querySelector('.elr-use').checked,learn:r.querySelector('.elr-learn').checked})):[];
+  const elrHost=document.getElementById('elrs');
+  if(elrHost)S.expression_learning_list=lrCollect(elrHost);
+  const jlHost=document.getElementById('jlrs');
+  if(jlHost)S.jargon_learning_list=lrCollect(jlHost);
+  const grCollect=host=>host?[...host.querySelectorAll('[data-egr]')].map(r=>({targets:r.querySelector('.egr-targets').value.split(/[,，]/).map(s=>s.trim()).filter(Boolean).map(s=>{const [platform,item_id]=s.split(':').map(x=>x.trim());return {platform:platform||'',item_id:item_id||''}})})).filter(g=>g.targets.length):[];
+  const egrHost=document.getElementById('egrs');
+  if(egrHost)S.expression_groups=grCollect(egrHost);
+  const jgrHost=document.getElementById('jgrs');
+  if(jgrHost)S.jargon_groups=grCollect(jgrHost);
+  const kwrHost=document.getElementById('kwrs');
+  if(kwrHost)S.keyword_rules=[...kwrHost.querySelectorAll('[data-kwr]')].map(r=>({keywords:r.querySelector('.kwr-keys').value.split(/[,，]/).map(s=>s.trim()).filter(Boolean),regex:[],reaction:r.querySelector('.kwr-reaction').value.trim()})).filter(r=>r.reaction&&r.keywords.length);
+  const rxrHost=document.getElementById('rxrs');
+  if(rxrHost)S.regex_rules=[...rxrHost.querySelectorAll('[data-rxr]')].map(r=>({keywords:[],regex:r.querySelector('.rxr-pattern').value.split('\n').map(s=>s.trim()).filter(Boolean),reaction:r.querySelector('.rxr-reaction').value.trim()})).filter(r=>r.reaction&&r.regex.length);
+  const eco=document.getElementById('enable_context_optimization');if(eco)S.enable_context_optimization=eco.checked;
+  const dp=document.getElementById('default_persona'); if(dp)S.default_persona=dp.value;
+  const fps=document.getElementById('follow_persona_switch'); if(fps)S.follow_persona_switch=fps.checked;
+}
+async function save(){
+  const btn=document.getElementById('saveBtn'),bt=document.getElementById('saveBtn_t');
+  if(btn)btn.disabled=true;if(bt)bt.textContent='保存中…';
+  try{collect();await apiPost('config',S);toast('已保存，立即生效')}
+  catch(e){toast('保存失败：'+e.message)}
+  if(btn)btn.disabled=false;if(bt)bt.textContent='保存全部配置';
+}
+
+/* ---------------- 启动：优先官方 SDK，2.5s 后自动切换内置备用桥 ---------------- */
+(async()=>{
+  // 壳图标与版本徽章
+  const lg=document.getElementById('sb_logo_ic');if(lg)lg.innerHTML=moIcon('bot',24);
+  const tb=document.getElementById('tb_sb');if(tb)tb.innerHTML=moIcon('chevron-left',16);
+  const sv=document.getElementById('saveBtn');if(sv)sv.insertAdjacentHTML('afterbegin',moIcon('save',14));
+  const ver=document.getElementById('tb_ver');if(ver)ver.textContent='maisoul '+PAGE_VERSION;
+  const b = await ensureBridge();
+  if(!b){
+    document.getElementById('body').innerHTML =
+      `<div class="panel"><h3>WebUI 桥不可用</h3>
+       <div class="pdesc">本页面需要通过 <b>AstrBot WebUI → 插件 → astrbot_plugin_maisoul → 插件页面</b> 打开。
+       若从此入口打开仍失败，请强制刷新（Ctrl+F5）清除缓存的旧页面后重试。页面版本：${PAGE_VERSION}</div></div>`;
+    return;
+  }
+  try{S=await apiGet('config');['nicknames','threshold','frequency','context_size','cooldown','seg_min_delay','seg_max_delay','enable_typo','typo_rate'].forEach(k=>delete S[k]);render('overview')}
+  catch(e){document.getElementById('body').innerHTML=`<div class="panel"><h3>配置加载失败</h3><div class="pdesc">${esc(e.message)}<br>请强制刷新（Ctrl+F5）后重试 | 页面版本 ${PAGE_VERSION}</div></div>`}
+})();
+</script>
+</body>
+</html>

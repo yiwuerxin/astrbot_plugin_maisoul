@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+# 运行时生成的数据（每个部署各自生成，不入库）
+data_learning.json
+data_monitor.db*
+data_monitor.json.imported
+*.log
+
+# 本地私有规则与备注（永不入库）
+AGENTS.local.md

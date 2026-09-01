@@ -1,0 +1,454 @@
+"""Planner 决策层 —— 源码级移植 MaiBot maisaka agent 循环
+
+对标文件：
+- prompts/zh-CN/maisaka_chat.prompt（系统提示词原文，占位符 bot_name/
+  behavior_style/group_chat_attention_block/query_memory_rule）
+- maisaka/runtime.py（MAX_INTERNAL_ROUNDS=10；WAIT/RUNNING 状态机；
+  _try_enter_wait_state 连续上限；_resume_from_wait_for_proactive_trigger）
+- maisaka/idle_backoff.py（连续空闲指数退避 base*2^n，封顶 cap；非空闲重置；
+  pending ≥ bypass 绕过）
+- maisaka/builtin_tool/{reply,wait,send_emoji,fetch_history,tool_search}.py（工具声明原文；
+  v6.9.7 起 tool_search + deferred 池 = MaiBot「第三方工具默认 deferred」机制，
+  由 main._planner_cycle 每轮轮转可见集并注入 <system-reminder> 提醒）
+- chat/replyer（reply 工具执行 → 三件套生成 + 后处理 + 打字发送；v6.9.7 起
+  replyer 为纯生成器不带工具，管家/生态工具全部在 planner 侧经 tool_search 发现）
+
+循环语义（对齐 reasoning_engine 的可运行核心）：
+- 评分门通过后进入 Planner：system=maisaka_chat 原文，user=待处理消息
+  （<message msg_id time user> 前缀，对齐 context/planner_messages.build_planner_prefix）
+- 每轮可调用工具；reply → 走 replyer 并结束本轮；wait → 进入等待（群聊期间
+  新消息不唤醒；@/提及必回为主动触发可唤醒）；send_emoji → 表情包后继续；
+  fetch_history → 返回更多记录后继续；无工具 → 本轮空闲结束
+- 连续 wait 上限（默认 3）后视为对话休息；空闲结束累积退避
+- 思考中的 Planner 可被新消息打断重思（planner_interrupt_max_consecutive_count，
+  默认 0=不打断，消息留待本轮循环的后续轮次）
+
+未移植（对应 maisoul 无等价基础设施，未伪造）：focus 专注模式、注意力漂移、
+行为表现情景分析子代理、query_memory（记忆由 livingmemory 承担，取舍见 AGENTS §7）。
+"""
+
+import asyncio
+import time
+from dataclasses import dataclass, field
+
+from astrbot.api import logger
+
+MAX_INTERNAL_ROUNDS = 10  # runtime.MAX_INTERNAL_ROUNDS
+
+# ---------------- maisaka_chat.prompt 原文 ----------------
+PLANNER_SYSTEM_TEMPLATE = """你的任务是分析聊天和聊天中的互动情况，然后做出下一步动作。
+你需要关注 {bot_name} 与用户的对话来为 {bot_name} 选择正确的动作和行为
+
+{bot_name}的行为风格：{behavior_style}
+
+
+以上 {bot_name}的行为风格可以帮助你更好地决策
+
+请你对当前场景和输出规则来进行分析。请注意，你不是 {bot_name} 本人，不要替 {bot_name} 发言，你需要给 {bot_name} 的行为做出决策，请你结合 {bot_name} 的行为风格、当前情况和可用工具做出决策。
+在当前场景中，不同的人正在互动（{bot_name}也是一位参与的用户），用户也可能与进行聊天互动。
+现在的上下文和聊天记录只是与参与聊天的用户当前的互动，你们之间可能有更多过去的关系和信息没有展现在上下文中。
+“分析”应该体现你对当前局面的判断、你的建议、你的下一步计划，以及你为什么这样想。默认直接输出你当前的最新分析，不要重复之前的分析内容。最新分析应尽量具体，贴近上下文。
+你需要先搜集能够帮助{bot_name}进行下一步行动的信息，然后再给出思考。
+
+{group_chat_attention_block}
+
+# Using your tools
+- 当你判断{bot_name}现在应该正式对用户发出一条可见回复时调用reply。调用后生成一条真正展示给用户的回复。你可以针对某个用户回复，也可以对所有用户回复。发言必须通过reply工具，不然用户无法看见如果要回复，把上下文关键信息加入。
+{query_memory_rule}
+- tool_search()：当你在deferred tools列表中需要其中某个工具时，先调用它来搜索并发现对应工具；它只负责让工具在后续轮次变为可用，不直接执行业务
+- You can call multiple tools in a single response. 聚合不同的信息源，进行多种操作来辅助你。If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel.  However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially.
+- 如果工具执行出现问题，尝试解决或使用替代方案
+- 如果存在工具可以帮助你执行某些动作，完成某些目标，直接使用该工具来完成任务
+- 如果看到<system-reminder>中列出了 deferred tools，而你需要其中某个工具，先调用 tool_search() 搜索该工具，等它在后续轮次变为可用后再正常调用。
+- wait(): 需要等待一段时间后再次判断时使用。
+- 不使用工具: 当没有更多操作需要做时，或者等待长时间也没有最新内容时，结束思考，不要调用任何工具，其他情况都需要调用工具。
+
+注意，你无法不调用reply工具直接回复，必须通过reply工具来发送回复。
+
+现在，请你输出你对{bot_name}发言的分析，视情况输出文本内容的分析、进行工具调用："""
+
+# 防复读固定反思文本（对齐 reasoning_engine._should_replace_reasoning 的替换内容）
+PLANNER_REFLECT_ON_REPEAT = ("我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，"
+                             "我需要分析当前场景，对话，然后直接输出我的想法：")
+
+# 表情检索词子提示（emoji_selection.prompt 的 maisoul 适配：MaiBot 用视觉子代理
+# 从 25 宫格选编号，stealer 生态是关键词检索 → 让子 LLM 产检索词）
+EMOJI_QUERY_PROMPT = """{chat_context}
+
+你需要根据上面的聊天内容和当前语气，为{bot_name}选择一个此刻发送的表情包。
+请提炼一个用于表情包检索的关键词或短语：优先写图上可能出现的字、角色名或画面描述，不要只写英文分类名，例如"开心到转圈""无语""猫猫震惊"。
+当前分析参考：{reason}
+
+请只输出这个检索词本身，不要输出任何其他内容。"""
+
+WAIT_TOOL_RESULT = ("当前对话循环进入等待状态，将固定等待 {seconds} 秒；期间收到的新消息不会提前打断本次等待。"
+                    "连续 wait 次数：{current}/{maximum}。")
+WAIT_LIMIT_RESULT = ("连续 wait 已达到上限 {maximum} 次，本次不再进入等待；视为多次等待后仍无后续，当前对话进入休息。")
+
+# wait 完成回执（对齐 reasoning_engine._build_wait_completed_message 原文；
+# requested 为 None 时省略"原计划"段）
+WAIT_COMPLETED_HAS_NEW = ("等待已结束，实际等待 {elapsed:.1f} 秒{requested_text}，"
+                          "期间收到了新的用户输入。请结合这些新消息继续下一轮思考。")
+WAIT_COMPLETED_TIMEOUT = ("等待已超时，实际等待 {elapsed:.1f} 秒{requested_text}，"
+                          "期间没有收到新的用户输入。请基于现有上下文继续下一轮思考。")
+
+
+def build_wait_completed_message(elapsed: float, requested: float | None,
+                                 has_new_messages: bool) -> str:
+    requested_text = f"，原计划等待 {requested:.1f} 秒" if requested is not None else ""
+    template = WAIT_COMPLETED_HAS_NEW if has_new_messages else WAIT_COMPLETED_TIMEOUT
+    return template.format(elapsed=elapsed, requested_text=requested_text)
+
+
+FOLDED_TOOL_HISTORY_PREFIX = "[已折叠的历史工具调用]"
+TURN_CONTEXT_KEEP_COUNT = 6  # 保留最近 3 组 user/assistant（对齐 ASSISTANT_OPTIMIZATION_KEEP_COUNT=3）
+
+
+def fold_old_turns(contexts: list[dict], turn_start: int,
+                   keep: int = TURN_CONTEXT_KEEP_COUNT) -> None:
+    """本轮循环产生的旧轮次折叠（对齐 _build_trimmed_assistant_tool_user_message：
+    保留最近 3 组 user/assistant，更早的一次性折叠为「[已折叠的历史工具调用]」摘要。
+    MaiBot 保留工具调用详情且超 1024 字符转 Complex 消息；maisoul 无该基建，
+    精简为逐条摘要文本——防长循环 contexts 无限膨胀。单趟折叠（while 逐对重折
+    会在折叠块自身上 1 换 1 死循环）。"""
+    excess = len(contexts) - turn_start - keep
+    if excess <= 0:
+        return
+    fold_end = turn_start + excess
+    lines = [f"- {m.get('role')}: " + " ".join(str(m.get("content") or "").split())[:80]
+             for m in contexts[turn_start:fold_end]]
+    contexts[turn_start:fold_end] = [{
+        "role": "user",
+        "content": FOLDED_TOOL_HISTORY_PREFIX + "\n" + "\n".join(lines)}]
+
+REPLY_TOOL_SPEC = {
+    "type": "object",
+    "properties": {
+        "msg_id": {"type": "string", "description": "要回复的消息msg_id。"},
+        "set_quote": {"type": "boolean",
+                      "description": "以引用回复的方式发送这条回复，当发言人数过多，聊天比较乱时使用。",
+                      "default": True},
+        "reply_reference": {"type": "string",
+                            "description": "有助于回复的信息，包括当前聊天状态、人物关系、事实信息、回忆信息。"},
+        "reply_style": {"type": "string",
+                        "description": "可选。控制本次回复的篇幅和表达方式；正常回复不会附加额外要求。",
+                        "enum": ["简短表达", "正常回复", "长回复"]},
+    },
+    "required": ["msg_id"],
+}
+WAIT_TOOL_SPEC = {
+    "type": "object",
+    "properties": {"seconds": {"type": "integer", "description": "等待秒数。"}},
+    "required": ["seconds"],
+}
+FETCH_HISTORY_SPEC = {
+    "type": "object",
+    "properties": {"num": {"type": "integer",
+                           "description": "获取消息数量；不填默认 10，最多 50。",
+                           "minimum": 1, "maximum": 50}},
+}
+# tool_search 声明 = MaiBot builtin_tool/tool_search.py 原文
+TOOL_SEARCH_SPEC = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "要搜索的工具名、前缀或关键词。"},
+        "limit": {"type": "integer", "description": "最多返回多少个工具。", "minimum": 1},
+    },
+    "required": ["query"],
+}
+
+TOOL_SEARCH_NO_HIT = "未找到匹配的 deferred tools，请尝试更完整的工具名、前缀或其他关键词。"
+
+
+def search_deferred_tools(pool: list[dict], query: str, limit: int = 5) -> list[dict]:
+    """按 MaiBot runtime.search_deferred_tool_specs 的分数表匹配 deferred 工具：
+    精确=1000 / 名称前缀=300 / 名称包含=200 / 描述包含=100 / 分词名称=25 / 分词描述=10，
+    同分按名称排序，取前 limit 个。"""
+    import re as _re
+    normalized = str(query or "").strip().lower()
+    if not normalized:
+        return []
+    terms = [t for t in _re.split(r"[_\- ]+", normalized) if t]
+    scored: list[tuple[int, dict]] = []
+    for item in pool:
+        name = str(item.get("name") or "").lower()
+        desc = str(item.get("description") or "").lower()
+        score = 0
+        if normalized == name:
+            score += 1000
+        if name.startswith(normalized):
+            score += 300
+        if normalized in name:
+            score += 200
+        if normalized in desc:
+            score += 100
+        for term in terms:
+            if term in name:
+                score += 25
+            if term in desc:
+                score += 10
+        if score > 0:
+            scored.append((score, item))
+    scored.sort(key=lambda x: (-x[0], str(x[1].get("name") or "")))
+    return [item for _, item in scored[:max(1, int(limit))]]
+
+
+def build_deferred_reminder(deferred_pool: list[dict], discovered: set) -> str:
+    """未发现的 deferred 工具 → <system-reminder> 提醒（模板 = runtime.build_deferred_tools_reminder 原文）。
+
+    已发现的工具不再列出（它们已作为真实工具定义可见）。
+    """
+    lines = []
+    for item in deferred_pool:
+        name = str(item.get("name") or "").strip()
+        if not name or name in discovered:
+            continue
+        desc = str(item.get("description") or "").strip()
+        lines.append(f"{name}: {desc}" if desc else name)
+    if not lines:
+        return ""
+    numbered = [f"{index}. {line}" for index, line in enumerate(lines, start=1)]
+    return "\n".join([
+        "<system-reminder>",
+        "以下工具当前未直接暴露给你，但可以通过 tool_search 工具发现并在后续轮次中使用：",
+        *numbered,
+        "",
+        "如需其中某个工具，请先调用 tool_search。tool_search 只负责发现工具，不直接执行。",
+        "</system-reminder>",
+    ])
+
+
+def tool_search_result_text(hits: list[dict], discovered_after: set) -> str:
+    """tool_search 返回文本（格式 = tool_search.py 原文）。"""
+    lines = []
+    for item in hits:
+        name = str(item.get("name") or "")
+        fresh = name not in discovered_after
+        lines.append(f"- {name}（{'本次新发现' if fresh else '此前已发现'}）")
+    return ("已找到 " + str(len(hits)) + " 个 deferred tools，"
+            "它们会在后续轮次中加入可用工具列表：\n" + "\n".join(lines))
+
+
+def build_planner_system(cfg, attention_block: str) -> str:
+    behavior_style = str(cfg.get("behavior_style") or "").strip()
+    if not behavior_style:  # 兼容拆分前配置：旧版 Planner 直接使用人格配置
+        behavior_style = str(cfg.get("personality") or "").strip()
+    return PLANNER_SYSTEM_TEMPLATE.format(
+        bot_name=str(cfg.get("bot_name") or "麦麦"),
+        behavior_style=behavior_style,
+        group_chat_attention_block=attention_block,
+        query_memory_rule="",  # query_memory 由 livingmemory 承担（取舍），不暴露工具
+    )
+
+
+def render_pending_messages(messages: list[dict]) -> str:
+    """待处理消息 → <message msg_id time user> 块（对齐 build_planner_prefix）。"""
+    blocks = []
+    for m in messages:
+        from datetime import datetime as _dt
+        ts = m.get("ts") or time.time()
+        time_str = _dt.fromtimestamp(float(ts)).strftime("%H:%M:%S")
+        attrs = f'msg_id="{str(m.get("msg_id") or "")}" time="{time_str}" user="{str(m.get("name") or "")}"'
+        blocks.append(f"<message {attrs}>\n{str(m.get("text") or '').strip()}\n<message/>")
+    return "\n".join(blocks)
+
+
+@dataclass
+class PlannerState:
+    """单群 Planner 运行时（WAIT/RUNNING 状态机 + 退避 + 打断）。"""
+
+    agent_state: str = "idle"        # idle / running / wait
+    consecutive_wait_count: int = 0
+    wait_until: float = 0.0
+    backoff_count: int = 0
+    backoff_until: float = 0.0
+    running_task: object = None
+    interrupt_count: int = 0
+    last_analysis: str = ""  # 上一轮 planner 思考（防复读比对用，对齐 _should_replace_reasoning）
+    discovered_tools: set = field(default_factory=set)  # tool_search 已发现的 deferred 工具（会话级；MaiBot 跟上下文裁切走，此处简化）
+    last_event: object = None  # 最近一次真实触发 event（wait 续轮复用：候选列表挂 event 上，换对象=candidate_expired）
+    eco_injection: str = ""  # 本轮 replyer 收集的生态注入全文（观察页展示用，轮始清空）
+    last_cycle_ts: float = 0.0   # 上一轮消费到的消息时间戳（pending 排水用）
+    context_cutoff_ts: float = 0.0  # 已进入 planner 上下文的历史分界（fetch_history 用）
+    context_msg_ids: set = field(default_factory=set)  # 已在上下文中的 msg_id（fetch_history 去重，对齐 MaiBot history_message_ids）
+    umo: str = ""        # wait 恢复续轮所需的发送上下文
+    platform: str = ""
+    is_group: bool = True
+
+    # ---------------- wait 状态机（对齐 _try_enter_wait_state） ----------------
+    def try_enter_wait(self, cfg, seconds: int) -> tuple[bool, int, int]:
+        maximum = max(1, int(cfg.get("max_consecutive_wait_count", 3)))
+        if self.consecutive_wait_count >= maximum:
+            return False, self.consecutive_wait_count, maximum
+        self.consecutive_wait_count += 1
+        self.agent_state = "wait"
+        self.wait_until = time.time() + max(0, seconds)
+        return True, self.consecutive_wait_count, maximum
+
+    def in_wait(self) -> bool:
+        return self.agent_state == "wait" and time.time() < self.wait_until
+
+    def resume_from_wait(self) -> bool:
+        """主动触发（@/提及必回）从 wait 恢复运行（对齐 _resume_from_wait_for_proactive_trigger）。"""
+        if self.agent_state != "wait":
+            return False
+        self.agent_state = "idle"
+        self.wait_until = 0.0
+        return True
+
+    # ---------------- 空闲退避（对齐 IdleBackoffController） ----------------
+    def record_idle_cycle(self, cfg):
+        base = max(0.0, float(cfg.get("no_action_backoff_base_seconds", 15)))
+        cap = max(0.0, float(cfg.get("no_action_backoff_cap_seconds", 300)))
+        if base <= 0 or cap <= 0:
+            return
+        start_count = max(1, int(cfg.get("no_action_backoff_start_count", 2)))
+        self.backoff_count += 1
+        if self.backoff_count < start_count:
+            return
+        exponent = max(0, self.backoff_count - start_count)
+        self.backoff_until = time.time() + min(cap, base * (2 ** exponent))
+
+    def reset_backoff(self):
+        self.backoff_count = 0
+        self.backoff_until = 0.0
+
+    def should_delay(self, cfg, pending_count: int) -> bool:
+        if self.backoff_until <= 0 or time.time() >= self.backoff_until:
+            self.backoff_until = 0.0
+            return False
+        bypass = max(0, int(cfg.get("no_action_backoff_bypass_pending_count", 6)))
+        if bypass > 0 and pending_count >= bypass:
+            return False
+        return True
+
+
+def build_planner_toolset(deps) -> "object":
+    """构造 planner 可见工具集（reply/wait/send_emoji/fetch_history/tool_search，
+    前四者声明=MaiBot 原文，tool_search 为 v6.9.7 新增）。已发现的 deferred 工具
+    由调用方追加进 ToolSet。deps 需提供：on_reply / on_wait / on_send_emoji /
+    on_fetch_history / on_tool_search。
+    """
+    from astrbot.core.agent.tool import FunctionTool, ToolSet
+
+    async def _reply(**kwargs):
+        return await deps.on_reply(kwargs)
+
+    async def _wait(**kwargs):
+        return deps.on_wait(kwargs)
+
+    async def _send_emoji(**kwargs):
+        return await deps.on_send_emoji()
+
+    async def _fetch_history(**kwargs):
+        return deps.on_fetch_history(kwargs)
+
+    def _tool_search(**kwargs):
+        return deps.on_tool_search(kwargs)
+
+    tool_set = ToolSet()
+    tool_set.add_tool(FunctionTool(
+        name="reply", description="根据当前思考生成并发送一条可见回复。",
+        parameters=REPLY_TOOL_SPEC, handler=_reply))
+    tool_set.add_tool(FunctionTool(
+        name="wait", description="暂停当前对话并固定等待一段时间。",
+        parameters=WAIT_TOOL_SPEC, handler=_wait))
+    tool_set.add_tool(FunctionTool(
+        name="send_emoji", description="发送一个表情包来表达情绪，参与聊天。",
+        parameters={"type": "object", "properties": {}}, handler=_send_emoji))
+    tool_set.add_tool(FunctionTool(
+        name="fetch_history",
+        description=("获取当前聊天流中已经存在、但尚未进入 Maisaka 上下文的消息。"
+                     "按从新到旧最多返回 num 条；不能获取其他聊天的信息。"),
+        parameters=FETCH_HISTORY_SPEC, handler=_fetch_history))
+    tool_set.add_tool(FunctionTool(
+        name="tool_search",
+        description="在 deferred tools 列表中按名称或关键词搜索工具，并将命中的工具加入后续轮次的可用工具列表。",
+        parameters=TOOL_SEARCH_SPEC, handler=_tool_search))
+    return tool_set
+
+
+class PlannerDeps:
+    """把 planner 工具回调绑定到 maisoul 的 replyer/表情桥/消息缓冲。"""
+
+    def __init__(self, plugin, st, eff_cfg, event, platform: str, gid: str,
+                 is_group: bool = True, send_fn=None):
+        self.plugin = plugin
+        self.st = st
+        self.cfg = eff_cfg
+        self.event = event
+        self.platform = platform
+        self.gid = gid
+        self.is_group = is_group
+        self.umo = ""
+        self.latest_reason = ""
+        self.send_fn = send_fn  # WebUI 聊天页等需要走 event.send 流式回填的发送通道
+        self.deferred_pool: list[dict] = []  # [{name, description, tool}]，由 _planner_cycle 注入
+
+    async def on_reply(self, args: dict) -> str:
+        return await self.plugin._planner_execute_reply(self, self.latest_reason, args)
+
+    def on_wait(self, args: dict) -> str:
+        try:
+            seconds = int(args.get("seconds", 30))
+        except (TypeError, ValueError):
+            seconds = 30
+        entered, current, maximum = self.st.planner.try_enter_wait(self.cfg, seconds)
+        if not entered:
+            return WAIT_LIMIT_RESULT.format(maximum=maximum)
+        self.plugin._schedule_wait_resume(self.st, self.cfg, self.gid, seconds)
+        return WAIT_TOOL_RESULT.format(seconds=max(0, seconds), current=current, maximum=maximum)
+
+    async def on_send_emoji(self) -> str:
+        return await self.plugin._planner_send_emoji(self)
+
+    def on_tool_search(self, args: dict) -> str:
+        """tool_search 执行：打分匹配 deferred 池 → 命中记入 discovered_tools（下一轮可用）。"""
+        try:
+            limit = max(1, int(args.get("limit", 5) or 5))
+        except (TypeError, ValueError):
+            limit = 5
+        hits = search_deferred_tools(self.deferred_pool, str(args.get("query") or ""), limit)
+        if not hits:
+            return TOOL_SEARCH_NO_HIT
+        discovered = self.st.planner_state().discovered_tools
+        # 新发现判定要在更新前做（MaiBot 同款标记）
+        result = tool_search_result_text(hits, set(discovered))
+        discovered.update(str(h.get("name")) for h in hits)
+        return result
+
+    def on_fetch_history(self, args: dict) -> str:
+        """对齐 MaiBot _get_focus_fetch_history_result：只返回尚未进入上下文的消息。
+
+        按 msg_id 对上下文去重（MaiBot 用 history_message_ids 集合），从新到旧召回，
+        召回过的记入 context_msg_ids——后续调用只会拿到更早/更新的消息，不会重复，
+        模型也就不会反复调用。
+        """
+        try:
+            num = min(50, max(1, int(args.get("num", 10))))
+        except (TypeError, ValueError):
+            num = 10
+        fetched = []
+        for m in reversed(list(self.st.buffer)):  # message_cache 逆序 = 从新到旧
+            mid = str(m.get("msg_id") or "").strip()
+            if not mid or mid in self.st.planner_state().context_msg_ids:
+                continue
+            self.st.planner_state().context_msg_ids.add(mid)
+            fetched.append(m)
+            if len(fetched) >= num:
+                break
+        chat_type = "group" if self.is_group else "private"
+        header = [
+            f"已从当前聊天 chat_id={self.gid} 获取尚未进入上下文的消息。",
+            f"平台: {self.platform}",
+            f"id: {self.gid}",
+            f"类型: {chat_type}",
+            f"请求数量: {num}",
+            f"召回消息数: {len(fetched)}",
+            "召回顺序为从新到旧；可直接用各自 msg_id 引用。",
+        ]
+        if not fetched:
+            return "\n".join(header) + "\n没有尚未进入上下文的消息了。"
+        body = [f"{m.get('name')}(msg_id={m.get('msg_id')}): {m.get('text')}"
+                for m in fetched]
+        return "\n".join(header + body)
