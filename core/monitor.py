@@ -10,7 +10,9 @@
 - 存储写法照抄：SQL 表 maisaka_monitor_events（SQLModel，表名/列/四个索引
   逐字段对齐 database_model.py）；record/replay/cleanup 语句逐行对齐
   event_store.py。MaiBot 挂自身 MySQL，maisoul 无法在 AstrBot 主库建表，
-  用插件目录独立 SQLite data_monitor.db 承载同一张表（仅会话工厂差异）。
+  用独立 SQLite data_monitor.db 承载同一张表（仅会话工厂差异）；文件存
+  AstrBot 持久化目录 data/plugin_data/（卸载不删数据时幸存，坑 50），
+  由 main.py 显式传路径，_DATA_FILE 仅作离线默认。
 - 推送适配：MaiBot 经 websocket_manager.broadcast_to_topic 推 WebUI；
   插件页在沙盒 iframe 内，改经 SSE 端点 + 订阅队列（webui/routes.py）。
 - sanitize 对齐：剔除 data_url 键，避免大体积内联二进制入账本

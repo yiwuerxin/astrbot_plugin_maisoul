@@ -13,7 +13,9 @@
 
 import asyncio
 import re
+import shutil
 import time
+from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -32,23 +34,53 @@ try:
 except ImportError:  # 兼容不同小版本
     from astrbot.core.message.message_event_result import MessageChain
 
+# 运行时数据文件清单（观察账本/学习库及 SQLite 侧车与旧版遗留）——卸载时随插件
+# 目录被无条件删除，必须存进 AstrBot 持久化目录（坑 50）
+_RUNTIME_DATA_FILES = (
+    "data_learning.json",
+    "data_monitor.db",
+    "data_monitor.db-wal",
+    "data_monitor.db-shm",
+    "data_monitor.json.imported",
+)
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.12.2")
+
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.12.3")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
         self.states = StateManager()
-        self.learning_store = learning.LearningStore()
-        self.monitor = monitor.Monitor(monitor.MonitorStore(monitor._DATA_FILE))
+        data_dir = self._persistent_data_dir()
+        self.learning_store = learning.LearningStore(path=data_dir / "data_learning.json")
+        self.monitor = monitor.Monitor(monitor.MonitorStore(data_dir / "data_monitor.db"))
         self._cycle_counter: dict[str, int] = {}
         self._group_sessions: set[str] = set()
         self._monitor_sessions: set[str] = set()
 
+    @staticmethod
+    def _persistent_data_dir() -> Path:
+        """运行时数据目录：AstrBot 的 data/plugin_data/<插件名>。
+
+        AstrBot 卸载插件时会无条件删除整个插件目录，勾选框只控制配置文件与
+        plugin_data 的清理——观察账本/学习库放插件目录里会在"未勾删除数据"
+        的卸载中一起消失（坑 50）。首次运行把插件目录里的旧数据文件搬过来。
+        """
+        from astrbot.core.star.star_tools import StarTools
+
+        data_dir = StarTools.get_data_dir("astrbot_plugin_maisoul")
+        legacy_dir = Path(__file__).resolve().parent
+        for name in _RUNTIME_DATA_FILES:
+            src, dst = legacy_dir / name, data_dir / name
+            if src.exists() and not dst.exists():
+                shutil.move(str(src), str(dst))
+                logger.info(f"maisoul: 运行时数据 {name} 已迁移至持久化目录 {data_dir}")
+        return data_dir
+
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.12.2 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.12.3 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -1257,7 +1289,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.12.2状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.12.3状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1372,4 +1404,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.12.2 已卸载")
+        logger.info("maisoul v6.12.3 已卸载")

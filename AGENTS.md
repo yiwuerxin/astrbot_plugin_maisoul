@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.12.2：显示名「麦麦之魂」。含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
+> 当前版本 v6.12.3：显示名「麦麦之魂」。含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
 
 ---
 
@@ -89,7 +89,9 @@ astrbot_plugin_maisoul/
 ├── _conf_schema.json         # 配置 schema：WebUI 与 AstrBotConfig 的字段来源（键名/默认值/
 │                             #   描述逐条对标 MaiBot official_configs.py，见 §4 映射表）
 ├── data_char_frequency.json  # 汉字字频表（拷自 MaiBot depends-data/，错字引擎用）
-├── data_learning.json        # 学习库（表达/黑话，按共享组分库，运行时生成）
+├── data_learning.json        # 学习库（表达/黑话，按共享组分库）——运行时生成于
+│                             #   AstrBot 持久化目录 data/plugin_data/<插件名>/（坑 50，
+│                             #   卸载不删数据时幸存；首次运行自动从插件目录迁移）
 ├── core/                     # 核心业务（不依赖 AstrBot 运行时可单测）
 │   ├── constants.py          # 评分词典/常量，逐条对齐 MaiBot reply_necessity.py；
 │   │                         #   含 OUTPUT_INSTRUCTION（MaiBot 输出指令原文）
@@ -367,8 +369,9 @@ v6.7.0 追加：
   database_model.py：列/四个索引/默认值），record/replay/cleanup 逐行对齐
   event_store.py（含 flush 取 event_id 回写 payload_json、两条 DELETE 语句、
   每 200 条或 60s 检查清理）。MaiBot 挂自身 MySQL，maisoul 无法在 AstrBot 主库
-  建表 → 插件目录独立 SQLite data_monitor.db 承载同一张表（仅会话工厂差异；
-  早期 JSON 账本自动一次性迁移并改名 .json.imported）。
+  建表 → 独立 SQLite data_monitor.db 承载同一张表（仅会话工厂差异）；文件
+  存 AstrBot 持久化目录 data/plugin_data/<插件名>/（坑 50，卸载不删数据时
+  幸存；早期 JSON 账本自动一次性迁移并改名 .json.imported）。
 - 推送适配：MaiBot websocket broadcast → 插件页轮询 GET /monitor/replay?since=
   （2.5s，SSE 端点已注册但本部署被适配层缓冲，见 §8 坑14；前端先试 SSE 6s 看门狗
   无帧自动降级轮询）。
@@ -568,6 +571,8 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 48. **`_schedule_planner` 所有分支必须返回 awaitable**——调用方统一 `await self._schedule_planner(...)`；裸 `return`（退避/wait 不可恢复/不打断/群聊 create_task 后的隐式 None）会让调用方 `await None` 抛 TypeError：`stop_event()` 被跳过、事件漏进原生管线（outputpro 的报错拦截「呜哇，<bot名>死掉拉～」每次触发即此因），状态机也被打乱。fire-and-forget 分支一律 `return asyncio.sleep(0)`（v6.11.5 修复，群聊路径自 v6.6 起带病）。同修：表情双路径收敛——send_meme/search_meme 移出 planner deferred 池（`bridge.DEFERRED_EXCLUDE`，内置 send_emoji 已覆盖两步制，同轮两路各发一次=双发表情）；独立模式 chat_toolset 保留完整两步制对。
 
 49. **生态注入的 extra_user_content_parts 绝不能 `str()` 强转**（v6.12.1 修复）：生态插件往 `req.extra_user_content_parts` 写入的是 `ContentPart` 对象（TextPart/ImageURLPart）、裸 `str` 或消息组件（`Plain` 等），类型不统一；provider 侧（anthropic/openai source）逐块 `isinstance` 校验，只认 ContentPart 三类，**裸 str 直接 `ValueError: 不支持的额外内容块类型`**，replyer 请求在拼装阶段被打断 → planner 整轮循环异常 → 机器人沉默。旧代码 `[str(x) for x in parts if str(x).strip()]` 两重错：str 对象得到 pydantic repr（`type='text' text='…'`、`type=<ComponentType.Plain: 'Plain'>`），repr 非空能过 strip() 过滤，垃圾被当正文混进注入与观察页。**间歇性指纹**：livingmemory 召回是 RAG，命中才 append——附加 ≥1 段必崩、附加 0 段正常，表现"时好时坏"完全由该回合是否召回记忆决定。修法：`_normalize_extra_parts`（ContentPart 透传保留 `mark_as_temp` 的 _no_save 语义；裸 str 包 TextPart；其它对象取 `.text` 包 TextPart，取不到丢弃）+ 观察页 join 用 `_extra_part_text` 提取纯文本（无文本段以类名占位）。注意 `Plain` 与 ContentPart 不在同一棵类树上（isinstance 为 False），走 `.text` 提取分支。快捷指纹：日志出现 `不支持的额外内容块类型: <class 'str'>` 一定是调用方把本该传 ContentPart 对象的参数传成了字符串，grep 调用点的 `str(` 强转即可定位。
+
+50. **运行时数据必须存 AstrBot 持久化目录，不能放插件目录**（v6.12.3 修复，用户实报）：AstrBot `uninstall_plugin` **无条件 `remove_dir(整个插件目录)`**，卸载弹窗的勾选框只控制配置文件（`data/config/<插件>_config.json`）与 `data/plugin_data/<插件名>/` 的清理——观察账本 `data_monitor.db`、学习库 `data_learning.json` 放插件目录里时，"未勾删除数据"的卸载也会连带删光（实机故障：人格在配置文件里幸存、麦麦观察数据全丢，正是这个不对称）。修法：`main._persistent_data_dir()` 经 `StarTools.get_data_dir("astrbot_plugin_maisoul")` 解析 `data/plugin_data/astrbot_plugin_maisoul/`，store 显式传路径；首次运行把插件目录旧文件（含 SQLite -wal/-shm 侧车与 .imported 遗留）搬过去。`data_char_frequency.json` 是随包分发的静态依赖，留在插件目录（删了重装即回）。
 
 ## 9. 打包与发布
 

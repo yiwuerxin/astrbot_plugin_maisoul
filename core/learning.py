@@ -17,7 +17,9 @@
 - learning_list [{platform, item_id, type, use, learn}] 控制按聊天使用/学习；
   *_groups [{targets:[{platform, item_id}]}] 让组内聊天共享学习库
 
-存储：插件目录 data_learning.json，按共享组键分库（默认 global）。
+存储：data_learning.json，按共享组键分库（默认 global）；文件存 AstrBot
+持久化目录 data/plugin_data/（卸载不删数据时幸存，坑 50），由 main.py
+显式传路径，_DATA_FILE 仅作离线默认。
 """
 
 import json
