@@ -1285,3 +1285,5 @@ if __name__ == "__main__":
     test_tool_exec_official_path()
     test_personas()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
+    # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
+    sys.exit(1 if FAIL else 0)

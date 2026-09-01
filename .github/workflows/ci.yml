@@ -34,14 +34,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: 运行时数据与本地私有文件不得被跟踪
         run: |
-          if git ls-files | grep -E 'data_learning\.json|data_monitor\.db|data_monitor\.json\.imported|AGENTS\.local\.md|__pycache__'; then
+          if git ls-files | grep -E 'data_learning\.json|data_monitor\.db|data_monitor\.json\.imported|AGENTS\.local\.md|__pycache__|\.log$'; then
             echo "⛔ 运行时数据或本地私有文件被 git 跟踪，禁止合并"
             exit 1
           fi
           echo "✅ 无运行时数据/私有文件被跟踪"
       - name: 部署细节不得出现在提交文件（占位符规范）
         run: |
-          if git grep -nE '/home/|127\.0\.0\.1|/AstrBot/|:6185|docker exec astrbot|docker logs astrbot' -- . ':(exclude).github'; then
+          # 只排除模式定义所在的 ci.yml 自身行（行号无关），.github 其余文件照查
+          if git grep -nE '/home/|127\.0\.0\.1|/AstrBot/|:6185|docker exec astrbot|docker logs astrbot' -- . \
+              | grep -vE '^\.github/workflows/ci\.yml:[0-9]+:'; then
             echo "⛔ 命中本机部署细节，示例一律改用 <astrbot容器>/<端口>/<容器内插件路径> 等占位符（规范见 AGENTS.md §9 纯净交付红线）"
             exit 1
           fi
