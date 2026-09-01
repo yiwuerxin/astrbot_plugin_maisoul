@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: 单元测试（Python ${{ matrix.python-version }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.12']
+    steps:
+      # 检出到子目录 astrbot_plugin_maisoul/：test_core.py 把 tests/../.. 加进
+      # sys.path 后以包名导入 core，工作区根必须正好是插件目录的父目录
+      - uses: actions/checkout@v4
+        with:
+          path: astrbot_plugin_maisoul
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 安装依赖
+        run: pip install -r astrbot_plugin_maisoul/requirements.txt
+      - name: 运行测试
+        run: python astrbot_plugin_maisoul/tests/test_core.py
+
+  purity:
+    name: 纯净交付检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 运行时数据与本地私有文件不得被跟踪
+        run: |
+          if git ls-files | grep -E 'data_learning\.json|data_monitor\.db|data_monitor\.json\.imported|AGENTS\.local\.md|__pycache__'; then
+            echo "⛔ 运行时数据或本地私有文件被 git 跟踪，禁止合并"
+            exit 1
+          fi
+          echo "✅ 无运行时数据/私有文件被跟踪"
+      - name: 部署细节不得出现在提交文件（占位符规范）
+        run: |
+          if git grep -nE '/home/|127\.0\.0\.1|/AstrBot/|:6185|docker exec astrbot|docker logs astrbot' -- . ':(exclude).github'; then
+            echo "⛔ 命中本机部署细节，示例一律改用 <astrbot容器>/<端口>/<容器内插件路径> 等占位符（规范见 AGENTS.md §9 纯净交付红线）"
+            exit 1
+          fi
+          echo "✅ 无部署细节泄露"
