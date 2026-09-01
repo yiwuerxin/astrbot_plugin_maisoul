@@ -242,6 +242,8 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
    - **版本号联动**：`fix`→patch、`feat`→minor、`BREAKING CHANGE`→major（本插件版本号四处同步见坑 12）
    - **自检标准**：reviewer 不点开 Files changed 就能懂 = 合格；只写"优化"= 不及格
 
+10. **新装纯净（项目首要红线，owner 2026-09-01 确认）**：任何改动之后，插件被安装后的状态必须等于一个**干净的新插件**——无运行时数据（学习库/观察账本/缓存/日志）、无任何本机部署信息（容器名/端口/容器内路径/会话 ID/真实人设/QQ 号）、默认值中性且对齐 MaiBot 官方。交付包内容必须 ≡ `git ls-files` 全集；提交前过 AGENTS.local.md 的红线 grep；详细验收标准见 §9「纯净交付红线」。
+
 ## 6. 常见任务
 
 - **加配置项**：_conf_schema.json 加字段（键名/默认值/描述先查 MaiBot official_configs.py 对标）→ （若影响 prompt/评分）core 对应函数读 `cfg.get(...)` → 页面 render 对应分栏加 field + collect() 收集 → 测试补断言。
