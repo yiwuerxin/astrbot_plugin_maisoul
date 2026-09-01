@@ -249,7 +249,9 @@ def render_pending_messages(messages: list[dict]) -> str:
         ts = m.get("ts") or time.time()
         time_str = _dt.fromtimestamp(float(ts)).strftime("%H:%M:%S")
         attrs = f'msg_id="{str(m.get("msg_id") or "")}" time="{time_str}" user="{str(m.get("name") or "")}"'
-        blocks.append(f"<message {attrs}>\n{str(m.get("text") or '').strip()}\n<message/>")
+        # f-string 内嵌同引号调用仅 3.12 合法（PEP 701），先取出保 3.10 兼容
+        text = str(m.get("text") or "").strip()
+        blocks.append(f"<message {attrs}>\n{text}\n<message/>")
     return "\n".join(blocks)
 
 
