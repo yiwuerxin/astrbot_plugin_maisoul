@@ -240,6 +240,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
    - **Commit**：`<type>(<scope>): 祈使句摘要`——一行、动词开头，≤72 字符为硬线；正文写**为什么**（72 列手动换行）；破坏性变更用 `feat!:` 或 `BREAKING CHANGE:` footer；**不列文件清单**（仅文件移动/全局配置/对外 API 变更三种情况点名文件）
    - **PR 四段**：① 改动简述（用户可感知，即 changelog 口径）② 为什么改（背景）③ 核心改动（只挑 1-2 个关键文件或风险点；**UI 改动必须附前后截图**）④ 测试情况
    - **版本号联动**：`fix`→patch、`feat`→minor、`BREAKING CHANGE`→major（本插件版本号四处同步见坑 12）
+   - **push 纪律**：owner 没有明确说 push，就只做本地 commit（攒着批量推）；改动的即时同步对象是本地部署容器，不是远程仓库
    - **自检标准**：reviewer 不点开 Files changed 就能懂 = 合格；只写"优化"= 不及格
 
 10. **新装纯净（项目首要红线，owner 2026-09-01 确认）**：任何改动之后，插件被安装后的状态必须等于一个**干净的新插件**——无运行时数据（学习库/观察账本/缓存/日志）、无任何本机部署信息（容器名/端口/容器内路径/会话 ID/真实人设/QQ 号）、默认值中性且对齐 MaiBot 官方。交付包内容必须 ≡ `git ls-files` 全集；提交前过 AGENTS.local.md 的红线 grep；详细验收标准见 §9「纯净交付红线」。
