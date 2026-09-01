@@ -13,6 +13,119 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+# CI 等无 AstrBot 运行时的环境：注入桩模块，识图/引用链用例离线可跑
+# （容器内有真实 astrbot 时不生效，仍测真实类。构造语义对齐：
+#   ImageURLPart(image_url={"url": ...}) → .image_url.url / .type == "image_url"
+#   MessageChain([Reply(id=...)]).message(text) → .chain / Reply.toDict() OneBot 段）
+try:
+    from astrbot.api.event import MessageChain  # noqa: F401
+    from astrbot.api.message_components import Plain, Reply  # noqa: F401
+    from astrbot.core.agent.message import ImageURLPart  # noqa: F401
+    _HAS_REAL_ASTRBOT = True
+except ImportError:
+    _HAS_REAL_ASTRBOT = False
+    import types as _types
+
+    class _StubImageURL:
+        def __init__(self, url=None):
+            self.url = url
+
+    class _StubImageURLPart:
+        type = "image_url"
+
+        def __init__(self, image_url=None):
+            if isinstance(image_url, dict):
+                image_url = _StubImageURL(url=image_url.get("url"))
+            self.image_url = image_url
+
+    class _StubPlain:
+        def __init__(self, text=""):
+            self.text = text
+
+    class _StubReply:
+        def __init__(self, id=None):
+            self.id = id
+
+        def toDict(self):
+            return {"type": "reply", "data": {"id": self.id}}
+
+    class _StubMessageChain:
+        def __init__(self, chain=None):
+            self.chain = list(chain or [])
+
+        def message(self, text):
+            self.chain.append(_StubPlain(text))
+            return self
+
+    class _StubLogger:
+        # core 模块级 from astrbot.api import logger——离线环境吞日志即可
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    class _StubToolSet:
+        # bridge.build_chat_toolset 用：add_tool/empty/tools 三件套
+        def __init__(self, tools=None):
+            self.tools = list(tools or [])
+
+        def add_tool(self, tool):
+            self.tools.append(tool)
+
+        def empty(self):
+            return not self.tools
+
+    class _StubFunctionTool:
+        # 纯数据记录：list_astrbot_tools 逻辑测试用
+        def __init__(self, name="", description="", parameters=None,
+                     handler=None, handler_module_path=None):
+            self.name = name
+            self.description = description
+            self.parameters = parameters
+            self.handler = handler
+            self.handler_module_path = handler_module_path
+
+    class _StubMCPTool:
+        # list_astrbot_tools 的 isinstance 分支判别用（测试内无 MCP 实例）
+        pass
+
+    _pkg = _types.ModuleType("astrbot")
+    _core = _types.ModuleType("astrbot.core")
+    _agent = _types.ModuleType("astrbot.core.agent")
+    _msg = _types.ModuleType("astrbot.core.agent.message")
+    _tool = _types.ModuleType("astrbot.core.agent.tool")
+    _mcp = _types.ModuleType("astrbot.core.agent.mcp_client")
+    _star = _types.ModuleType("astrbot.core.star")
+    _api = _types.ModuleType("astrbot.api")
+    _comp = _types.ModuleType("astrbot.api.message_components")
+    _evt = _types.ModuleType("astrbot.api.event")
+    _msg.ImageURLPart = _StubImageURLPart
+    _tool.ToolSet = _StubToolSet
+    _tool.FunctionTool = _StubFunctionTool
+    _mcp.MCPTool = _StubMCPTool
+    _star.star_map = {}
+    _comp.Plain = _StubPlain
+    _comp.Reply = _StubReply
+    _evt.MessageChain = _StubMessageChain
+    _api.logger = _StubLogger()
+    _pkg.core = _core
+    _pkg.api = _api
+    _core.agent = _agent
+    _core.star = _star
+    _agent.message = _msg
+    _agent.tool = _tool
+    _agent.mcp_client = _mcp
+    _api.message_components = _comp
+    _api.event = _evt
+    for _name, _mod in {"astrbot": _pkg, "astrbot.core": _core,
+                        "astrbot.core.agent": _agent,
+                        "astrbot.core.agent.message": _msg,
+                        "astrbot.core.agent.tool": _tool,
+                        "astrbot.core.agent.mcp_client": _mcp,
+                        "astrbot.core.star": _star,
+                        "astrbot.api": _api,
+                        "astrbot.api.message_components": _comp,
+                        "astrbot.api.event": _evt}.items():
+        sys.modules[_name] = _mod
+
 from astrbot_plugin_maisoul.core import postprocess, prompt, scoring, sender, trigger  # noqa: E402
 from astrbot_plugin_maisoul.core.constants import OUTPUT_INSTRUCTION  # noqa: E402
 from astrbot_plugin_maisoul.core.states import GroupState, StateManager  # noqa: E402
@@ -493,7 +606,8 @@ class _FakeMgr:
 
 def test_bridge_toolset():
     print("[工具暴露策略]")
-    from astrbot.core.agent.tool import ToolSet  # noqa: F401  确认可导入
+    if _HAS_REAL_ASTRBOT:  # 框架模块导入契约只在真实环境检查（CI 离线跳过）
+        from astrbot.core.agent.tool import ToolSet  # noqa: F401  确认可导入
     from astrbot_plugin_maisoul.core import bridge
 
     class _Ctx:
@@ -603,29 +717,36 @@ def test_tool_skill_registry():
     check("工具: builtin 同名去重（对齐官方逻辑）", len(dup) == 1 and dup[0]["origin"] == "builtin", str(dup))
 
     # 技能：真实 SkillManager round-trip（在 AstrBot 技能根目录临时建一个技能再清理）
-    from astrbot.core.skills.skill_manager import SkillManager
-    from astrbot.core.utils.astrbot_path import get_astrbot_skills_path
+    # ——框架集成测试，仅真实环境运行（CI 离线跳过）
+    if _HAS_REAL_ASTRBOT:
+        from astrbot.core.skills.skill_manager import SkillManager
+        from astrbot.core.utils.astrbot_path import get_astrbot_skills_path
 
-    sdir = Path(get_astrbot_skills_path()) / "maisoul_test_skill"
-    sdir.mkdir(parents=True, exist_ok=True)
-    (sdir / "SKILL.md").write_text(
-        "---\nname: maisoul_test_skill\ndescription: 测试技能\n---\n# 测试\n",
-        encoding="utf-8")
-    try:
-        skills = {s["name"]: s for s in bridge.list_astrbot_skills()}
-        check("技能: 读取 SKILL.md frontmatter 描述",
-              skills.get("maisoul_test_skill", {}).get("description") == "测试技能")
-        blk = bridge.build_skills_block({"chat_skills": ["maisoul_test_skill"]})
-        check("技能块: 原生 build_skills_prompt 注入",
-              blk.startswith("\n## Skills") and "maisoul_test_skill" in blk and "SKILL.md" in blk)
-        check("技能块: 未选/选了不存在 → 空",
-              bridge.build_skills_block({}) == ""
-              and bridge.build_skills_block({"chat_skills": ["不存在的技能"]}) == "")
-    finally:
-        SkillManager().delete_skill("maisoul_test_skill")
+        sdir = Path(get_astrbot_skills_path()) / "maisoul_test_skill"
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / "SKILL.md").write_text(
+            "---\nname: maisoul_test_skill\ndescription: 测试技能\n---\n# 测试\n",
+            encoding="utf-8")
+        try:
+            skills = {s["name"]: s for s in bridge.list_astrbot_skills()}
+            check("技能: 读取 SKILL.md frontmatter 描述",
+                  skills.get("maisoul_test_skill", {}).get("description") == "测试技能")
+            blk = bridge.build_skills_block({"chat_skills": ["maisoul_test_skill"]})
+            check("技能块: 原生 build_skills_prompt 注入",
+                  blk.startswith("\n## Skills") and "maisoul_test_skill" in blk and "SKILL.md" in blk)
+            check("技能块: 未选/选了不存在 → 空",
+                  bridge.build_skills_block({}) == ""
+                  and bridge.build_skills_block({"chat_skills": ["不存在的技能"]}) == "")
+        finally:
+            SkillManager().delete_skill("maisoul_test_skill")
 
 
 def test_tool_exec_official_path():
+    # 官方 FunctionToolExecutor 执行路径（坑 10 回归）——框架集成测试，
+    # 仅真实环境运行（CI 离线跳过）
+    if not _HAS_REAL_ASTRBOT:
+        print("[工具执行官方路径] 跳过（无 AstrBot 运行时）")
+        return
     print("[工具执行官方路径]")
     import asyncio as _aio
 
@@ -1164,3 +1285,5 @@ if __name__ == "__main__":
     test_tool_exec_official_path()
     test_personas()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
+    # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
+    sys.exit(1 if FAIL else 0)
