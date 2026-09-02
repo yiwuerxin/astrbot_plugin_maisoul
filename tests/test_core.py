@@ -437,10 +437,29 @@ def test_prompt():
     check("通用注意事项", "通用注意事项：\n群里要简短" in sp)
     check("每群额外注意事项(精确匹配)", "当前聊天额外注意事项：\n这个群聊游戏" in sp)
     check("输出指令原文", OUTPUT_INSTRUCTION in sp)
+    check("behavior_style 不进 replyer 提示词（对齐 MaiBot 分工：只进 planner）",
+          "大二学生" not in sp and "行动准则" not in sp)
     sp2 = prompt.build_system_prompt(cfg, chat_id="99999", platform="qq")
     check("其他群不命中额外注意事项", "这个群聊游戏" not in sp2)
     cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=100)
     check("风格彩票必中", "本次临时风格" in prompt.select_reply_style(cfg2))
+    # 预设对话（maisoul 扩展）：空配置不注入；条目渲染；缺边条目跳过；人格覆盖生效
+    from astrbot_plugin_maisoul.core import personas as _personas_mod
+
+    check("预设对话: 默认不注入", prompt.build_preset_dialogues_block(cfg) == "")
+    cfg_pd = dict(cfg, preset_dialogues=[
+        {"user": "在吗", "reply": "咋了"},
+        {"user": "只有对方没回复", "reply": ""},
+        {"user": "", "reply": "孤儿回复"},
+        "不是字典的脏条目",
+    ])
+    blk = prompt.build_preset_dialogues_block(cfg_pd)
+    check("预设对话: 有效条目渲染", "【预设对话】" in blk and "用户：在吗\n你：咋了" in blk, blk)
+    check("预设对话: 缺边/脏条目跳过", "孤儿回复" not in blk and "只有对方" not in blk)
+    check("预设对话: 进系统提示词", "【预设对话】" in prompt.build_system_prompt(cfg_pd))
+    ov_pd = _personas_mod.overlay(cfg_pd, {"name": "傲娇", "preset_dialogues": [{"user": "哈喽", "reply": "干嘛"}]})
+    check("预设对话: 人格覆盖生效",
+          prompt.build_preset_dialogues_block(ov_pd).count("用户：") == 1 and "哈喽" in prompt.build_preset_dialogues_block(ov_pd))
     cfgp = dict(cfg, private_chat_prompts="私聊要温柔")
     spp = prompt.build_system_prompt(cfgp, chat_id="u1", platform="qq", is_group=False)
     check("私聊: 注意事项用私聊提示词", "通用注意事项：\n私聊要温柔" in spp and "群里要简短" not in spp)
@@ -1173,11 +1192,14 @@ def test_planner():
     ps3.reset_backoff()
     check("退避: 非空闲重置", not ps3.should_delay(bcfg, 1))
 
+    import datetime as _dtm
+    _ts = time.time()
     blocks = P.render_pending_messages(
-        [{"msg_id": "m1", "name": "张三", "text": "大家好", "ts": time.time()}])
-    check("消息前缀对齐 build_planner_prefix",
-          blocks.startswith('<message msg_id="m1"') and 'user="张三"' in blocks
-          and blocks.endswith("<message/>"))
+        [{"msg_id": "m1", "name": "张三", "text": "大家好", "ts": _ts}])
+    check("消息前缀对齐 format_speaker_content",
+          blocks == _dtm.datetime.fromtimestamp(_ts).strftime("%H:%M:%S") + "[msg_id:m1][张三]大家好", blocks)
+    check("末尾提醒原文", P.PLANNER_FINAL_USER_REMINDER.format(bot_name="麦麦")
+          == "你需要输出对麦麦发言的分析，视情况输出文本内容的分析，思考是否进行工具调用")
 
     # 表达 LLM 选择（expression_select 路径）
     import pathlib

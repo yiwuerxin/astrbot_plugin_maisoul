@@ -15,7 +15,7 @@
 
 循环语义（对齐 reasoning_engine 的可运行核心）：
 - 评分门通过后进入 Planner：system=maisaka_chat 原文，user=待处理消息
-  （<message msg_id time user> 前缀，对齐 context/planner_messages.build_planner_prefix）
+  （HH:MM:SS[msg_id:x][说话人] 前缀，对齐 maisaka/context/message_adapter.format_speaker_content）
 - 每轮可调用工具；reply → 走 replyer 并结束本轮；wait → 进入等待（群聊期间
   新消息不唤醒；@/提及必回为主动触发可唤醒）；send_emoji → 表情包后继续；
   fetch_history → 返回更多记录后继续；无工具 → 本轮空闲结束
@@ -242,17 +242,27 @@ def build_planner_system(cfg, attention_block: str) -> str:
 
 
 def render_pending_messages(messages: list[dict]) -> str:
-    """待处理消息 → <message msg_id time user> 块（对齐 build_planner_prefix）。"""
+    """待处理消息 → HH:MM:SS[msg_id:x][说话人]内容（对齐 1.2.3
+    maisaka/context/message_adapter.format_speaker_content 原文格式；
+    旧版 <message> 包裹是历史版本 MaiBot 的格式）。"""
+    from datetime import datetime as _dt
     blocks = []
     for m in messages:
-        from datetime import datetime as _dt
         ts = m.get("ts") or time.time()
         time_str = _dt.fromtimestamp(float(ts)).strftime("%H:%M:%S")
-        attrs = f'msg_id="{str(m.get("msg_id") or "")}" time="{time_str}" user="{str(m.get("name") or "")}"'
-        # f-string 内嵌同引号调用仅 3.12 合法（PEP 701），先取出保 3.10 兼容
+        mid = str(m.get("msg_id") or "").strip()
+        mid_prefix = "[msg_id:" + mid + "]" if mid else ""
+        name = str(m.get("name") or "").strip()
         text = str(m.get("text") or "").strip()
-        blocks.append(f"<message {attrs}>\n{text}\n<message/>")
+        blocks.append(time_str + mid_prefix + "[" + name + "]" + text)
     return "\n".join(blocks)
+
+
+# 每轮 Planner 请求末尾的一次性 user 提醒（chat_loop_service.
+# PLANNER_FINAL_USER_REMINDER_TEMPLATE 原文，v6.13.2 补齐）
+PLANNER_FINAL_USER_REMINDER = (
+    "你需要输出对{bot_name}发言的分析，视情况输出文本内容的分析，思考是否进行工具调用"
+)
 
 
 @dataclass
