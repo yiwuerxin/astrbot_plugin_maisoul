@@ -20,7 +20,7 @@ find_persona 对该名字（或"主配置"）返回主配置本身，因此群�
 from astrbot.api import logger
 
 PERSONA_FIELDS = ("bot_name", "personality", "behavior_style", "reply_style",
-                  "group_chat_prompt", "aliases")
+                  "group_chat_prompt", "aliases", "preset_dialogues")
 
 MAIN_PERSONA_KEY = "主配置"
 

@@ -34,6 +34,11 @@
     "type": "string",
     "default": "（示例人设，请改写成你的 bot）一名喜欢上网冲浪的女生，聊天风格随和自然，平时在群里安静看大家聊天，被点名或遇到感兴趣的话题时才接话。"
   },
+  "preset_dialogues": {
+    "description": "预设对话：示范麦麦说话风格的示例对话，生成回复时作为风格参考注入（只参考语气与用词，不照搬内容）",
+    "type": "list",
+    "default": []
+  },
   "behavior_style": {
     "description": "Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。",
     "type": "string",
