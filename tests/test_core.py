@@ -441,6 +441,23 @@ def test_prompt():
     check("其他群不命中额外注意事项", "这个群聊游戏" not in sp2)
     cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=100)
     check("风格彩票必中", "本次临时风格" in prompt.select_reply_style(cfg2))
+    # 预设对话（maisoul 扩展）：空配置不注入；条目渲染；缺边条目跳过；人格覆盖生效
+    from astrbot_plugin_maisoul.core import personas as _personas_mod
+
+    check("预设对话: 默认不注入", prompt.build_preset_dialogues_block(cfg) == "")
+    cfg_pd = dict(cfg, preset_dialogues=[
+        {"user": "在吗", "reply": "咋了"},
+        {"user": "只有对方没回复", "reply": ""},
+        {"user": "", "reply": "孤儿回复"},
+        "不是字典的脏条目",
+    ])
+    blk = prompt.build_preset_dialogues_block(cfg_pd)
+    check("预设对话: 有效条目渲染", "【预设对话】" in blk and "用户：在吗\n你：咋了" in blk, blk)
+    check("预设对话: 缺边/脏条目跳过", "孤儿回复" not in blk and "只有对方" not in blk)
+    check("预设对话: 进系统提示词", "【预设对话】" in prompt.build_system_prompt(cfg_pd))
+    ov_pd = _personas_mod.overlay(cfg_pd, {"name": "傲娇", "preset_dialogues": [{"user": "哈喽", "reply": "干嘛"}]})
+    check("预设对话: 人格覆盖生效",
+          prompt.build_preset_dialogues_block(ov_pd).count("用户：") == 1 and "哈喽" in prompt.build_preset_dialogues_block(ov_pd))
     cfgp = dict(cfg, private_chat_prompts="私聊要温柔")
     spp = prompt.build_system_prompt(cfgp, chat_id="u1", platform="qq", is_group=False)
     check("私聊: 注意事项用私聊提示词", "通用注意事项：\n私聊要温柔" in spp and "群里要简短" not in spp)

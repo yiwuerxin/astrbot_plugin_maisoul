@@ -73,6 +73,26 @@ def build_behavior_block(cfg) -> str:
     return f"行动准则参考（把握参与姿态与话题边界）：\n{style}\n"
 
 
+def build_preset_dialogues_block(cfg) -> str:
+    """预设对话（maisoul 扩展）：示例对话注入系统提示词作为说话风格参考。
+
+    条目 {user, reply} 均非空才收录；只示范语气与习惯，明确告知不照搬内容。
+    """
+    items = []
+    for d in (cfg.get("preset_dialogues") or []):
+        if not isinstance(d, dict):
+            continue
+        u = str(d.get("user") or "").strip()
+        r = str(d.get("reply") or "").strip()
+        if u and r:
+            items.append((u, r))
+    if not items:
+        return ""
+    lines = ["【预设对话】以下示例展示你应有的说话风格，只参考语气与用词习惯，不要照搬内容："]
+    lines += [f"用户：{u}\n你：{r}" for u, r in items]
+    return "\n".join(lines) + "\n"
+
+
 def build_system_prompt(cfg, chat_id: str | None = None, platform: str | None = None,
                         is_group: bool = True) -> str:
     """逐行复刻 prompts/zh-CN/maisaka_replyer.prompt 的结构。"""
@@ -82,6 +102,7 @@ def build_system_prompt(cfg, chat_id: str | None = None, platform: str | None = 
         f"{select_reply_style(cfg)}\n"
         "你可以参考【回复信息参考】中的信息，但是视情况而定，不用完全遵守。\n"
         f"{build_attention_block(cfg, chat_id, platform, is_group)}"
+        f"{build_preset_dialogues_block(cfg)}"
         f"{build_behavior_block(cfg)}"
         f"{OUTPUT_INSTRUCTION}"
     )

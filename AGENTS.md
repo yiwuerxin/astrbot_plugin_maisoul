@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.12.3：显示名「麦麦之魂」。含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
+> 当前版本 v6.13.0：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
 
 ---
 
@@ -176,7 +176,7 @@ astrbot_plugin_maisoul/
 | no_action_backoff_*（base/cap/start/bypass） | chat.reply_timing.* | 15 / 300 / 2 / 6 |
 | enable_reply_quote | chat.reply_style.enable_reply_quote | `true` |
 | bot_name / aliases / personality / behavior_style / reply_style / group_chat_prompt / chat_prompts / multiple_reply_style | bot.nickname / bot.alias_names / personality.* / chat.reply_style.* | 与 MaiBot 官方默认一致（nickname=麦麦、alias_names=[]） |
-| mode / maid_bridge / chat_tools / enable / escape_at_wake / personas / default_persona / group_persona / follow_persona_switch | —（maisoul 扩展或插件必需） | — |
+| mode / maid_bridge / chat_tools / enable / escape_at_wake / personas / default_persona / group_persona / follow_persona_switch / preset_dialogues | —（maisoul 扩展或插件必需） | preset_dialogues=预设对话 `[{user, reply}]`，经 prompt.build_preset_dialogues_block 注入系统提示词【预设对话】块（人格可覆盖，PERSONA_FIELDS 已含） |
 
 chat_prompts 条目结构 = MaiBot ExtraPromptItem：`{platform, item_id, rule_type:"group"|"private", prompt}`，
 platform+目标 ID **精确匹配**（无后缀/通配），多条命中换行拼接；私聊时 item_id=用户 ID。
@@ -488,7 +488,7 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
    自己刚发的消息，而 `context.send_message` 只返回 bool 拿不到 message_id（见坑 21），
    维持普通文本发送。
 4. **focus/注意力漂移/情景分析子代理**：未移植（见 §7.1）。
-5. **maisoul 独有扩展（MaiBot 之外的加项）**：多人格、管家桥（call_maid 桥+单轮回填）、
+5. **maisoul 独有扩展（MaiBot 之外的加项）**：预设对话（preset_dialogues，v6.13.0——示例对话 {user, reply} 注入【预设对话】块作风格参考，人格库条目可覆盖）、多人格、管家桥（call_maid 桥+单轮回填）、
    independent/native 模式、逃生舱（v6.10.0 起默认关闭=全面接管，escape_at_wake 可开）、总开关、native 三件套注入。
 6. **用户明示同意的取舍**：A_memorix→livingmemory、偷表情→stealer、行为/高频词
    学习、mid_term_memory、世界书/好感度。
