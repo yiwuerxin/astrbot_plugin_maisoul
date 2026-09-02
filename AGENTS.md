@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.13.1：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
+> 当前版本 v6.13.2：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
 
 ---
 
@@ -329,6 +329,13 @@ behavior_style 分工已改回 MaiBot 语义：只进 planner 系统提示词（
   fetch_history 返回"尚未进入上下文"的更早消息（新到旧，上限 50）
 - 工具结果轮（tool_continue）不要求新消息即继续，直到 reply/wait/无工具/轮数上限
 - contexts 顺序 user→assistant；wait 到期有积压自动续轮
+- v6.13.2 planner 请求三处保真补齐（用户实报"两边观察页输出规范完全不一致"根因）：
+  ① 消息渲染格式改 1.2.3 原文 `HH:MM:SS[msg_id:x][说话人]内容`（对齐
+  message_adapter.format_speaker_content；旧 `<message>` 包裹是历史版本格式）；
+  ② 自己的旧发言进 assistant 轮纯文本（对齐 SessionBackedMessage 角色分工）；
+  ③ 每轮请求末尾追加一次性提醒原文（chat_loop_service.PLANNER_FINAL_USER_
+  REMINDER_TEMPLATE："你需要输出对{bot_name}发言的分析，视情况输出文本内容的
+  分析，思考是否进行工具调用"）——此前缺失是 planner 输出规范漂移的主因
 
 v6.7.0 追加：
 - **planner 模式的 replyer 也接聊天工具集**（chat_tools + call_maid + chat_skills 注入，
