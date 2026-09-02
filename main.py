@@ -1224,7 +1224,8 @@ class MaiSoulPlugin(Star):
             f"\n\n【maisoul 麦麦三件套（本群主动发言由意愿评分触发｜人格={pname}）】\n"
             f"{prompt.build_identity(eff_cfg)}\n"
             f"{prompt.select_reply_style(eff_cfg)}\n"
-                f"{OUTPUT_INSTRUCTION}"
+            f"{prompt.build_preset_dialogues_block(eff_cfg)}"
+            f"{OUTPUT_INSTRUCTION}"
         )
         req.system_prompt = (req.system_prompt or "") + inject
 
