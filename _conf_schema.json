@@ -20,32 +20,32 @@
     "default": true
   },
   "bot_name": {
-    "description": "机器人昵称：麦麦显示和自称时使用的名字；同时也是主配置人格的人格名，可用 /persona 昵称 切换",
+    "description": "麦麦显示和自称时使用的名字。",
     "type": "string",
     "default": "麦麦"
   },
   "aliases": {
-    "description": "别名：别人可能用来称呼麦麦的名字，用于辅助识别提及",
+    "description": "别人可能用来称呼麦麦的名字，用于辅助识别提及。",
     "type": "list",
     "default": []
   },
   "personality": {
-    "description": "人格设定：麦麦的人格和身份设定，建议简短描述她是谁、是什么性格",
+    "description": "麦麦的人格和身份设定，建议简短描述她是谁、是什么性格。",
     "type": "string",
     "default": "（示例人设，请改写成你的 bot）一名喜欢上网冲浪的女生，聊天风格随和自然，平时在群里安静看大家聊天，被点名或遇到感兴趣的话题时才接话。"
   },
   "behavior_style": {
-    "description": "行为风格：Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静",
+    "description": "Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。",
     "type": "string",
     "default": "是大二女大学生，现在正在上网和群友聊天。善于用人类的角度思考问题，聊天偏日常。不会没话题硬找话题，"
   },
   "reply_style": {
-    "description": "表达方式：麦麦平时说话的风格，例如简短、温和、吐槽或正式",
+    "description": "麦麦平时说话的风格，例如简短、温和、吐槽或正式。",
     "type": "string",
     "default": "你的风格平淡简短，可以参考贴吧的回复风格。不滥用比喻或者生硬句子。视情况省略主语或者进行倒装，风格较为随意。"
   },
   "multiple_reply_style": {
-    "description": "备用说话风格；触发后只影响本次回复",
+    "description": "备用说话风格；触发后只影响本次回复。",
     "type": "list",
     "default": [
       "你的风格平淡但不失讽刺，很简短,很白话。可以参考贴吧，微博的回复风格。",
@@ -56,27 +56,27 @@
     ]
   },
   "multiple_probability": {
-    "description": "随机启用备用风格的概率（0-100）；0 表示不随机切换",
+    "description": "随机启用备用风格的概率；0 表示不随机切换。",
     "type": "int",
     "default": 0
   },
   "group_chat_prompt": {
-    "description": "群聊通用提示词，告诉麦麦群聊中该怎么说话",
+    "description": "群聊通用提示词，告诉麦麦群聊中该怎么说话。",
     "type": "string",
     "default": "你正在qq群里聊天，下面是群里正在聊的内容，聊天中包含文字，图片和表情包等消息。\n回复尽量简短一些。最好一次对一个话题进行回复，但必须考虑不同群友发言之间的交互，免得啰嗦或者回复内容太乱。请注意把握聊天内容。\n不要总是提及自己的身份背景，根据聊天内容自由发挥，但是要日常不浮夸，不要刻意找话题。\n不用刻意回复其他人发送的表情包，只要关注表情包表达的含义。你可以适当发送表情包表达情绪。控制回复的频率，不要每个人的消息都回复，优先回复你感兴趣的或者主动提及你的，适当回复其他话题。\n"
   },
   "private_chat_prompts": {
-    "description": "私聊通用提示词，告诉麦麦私聊中该怎么说话",
+    "description": "私聊通用提示词，告诉麦麦私聊中该怎么说话。",
     "type": "string",
     "default": "你正在聊天，下面是正在聊的内容，其中包含聊天记录和聊天中的图片。\n回复尽量简短一些。请注意把握聊天内容。\n请考虑对方的发言频率，想法，思考自己何时回复以及回复内容。\n"
   },
   "chat_prompts": {
-    "description": "按聊天追加的额外提示词；平台与目标 ID 精确匹配，多条命中自动拼接",
+    "description": "给指定群聊或私聊额外补充聊天要求；有特殊群规或语气要求时再加。",
     "type": "list",
     "default": []
   },
   "reply_trigger_mode": {
-    "description": "触发方式：frequency 按频率触发（攒消息数或空窗补偿）；reply_necessity 按必要性评分触发（评分达标才回复）",
+    "description": "控制新消息何时进入 Planner。",
     "type": "string",
     "default": "frequency",
     "options": [
@@ -85,67 +85,67 @@
     ]
   },
   "talk_value": {
-    "description": "群聊里麦麦主动说话的频率；越小越安静",
+    "description": "群聊里麦麦主动说话的频率；越小越安静。",
     "type": "float",
     "default": 1.0
   },
   "private_talk_value": {
-    "description": "私聊里麦麦主动说话的频率；越小越安静",
+    "description": "私聊里麦麦主动说话的频率；越小越安静。",
     "type": "float",
     "default": 1.0
   },
   "mentioned_bot_reply": {
-    "description": "开启后，只要消息提到麦麦名字就更容易回复",
+    "description": "开启后，只要消息提到麦麦名字就更容易回复。",
     "type": "bool",
     "default": false
   },
   "inevitable_at_reply": {
-    "description": "开启后，被 @ 时会尽量回复",
+    "description": "开启后，被 @ 时会尽量回复。",
     "type": "bool",
     "default": true
   },
   "enable_talk_value_rules": {
-    "description": "开启后，可以按聊天或时间段单独调整发言频率",
+    "description": "开启后，可以按聊天或时间段单独调整发言频率。",
     "type": "bool",
     "default": false
   },
   "max_consecutive_wait_count": {
-    "description": "Planner 最多连续调用 wait 多少次；达到上限后 wait 工具会拒绝继续进入等待",
+    "description": "Planner 最多连续调用 wait 多少次；达到上限后 wait 工具会拒绝继续进入等待。",
     "type": "int",
     "default": 3
   },
   "planner_interrupt_max_consecutive_count": {
-    "description": "思考时来了新消息，最多重新思考多少次",
+    "description": "思考时来了新消息，最多重新思考多少次。",
     "type": "int",
     "default": 0
   },
   "no_action_backoff_base_seconds": {
-    "description": "连续决定不回复后，下一次检查前先等多久",
+    "description": "连续决定不回复后，下一次检查前先等多久。",
     "type": "float",
     "default": 15
   },
   "no_action_backoff_cap_seconds": {
-    "description": "不回复退避等待的最长时间",
+    "description": "不回复退避等待的最长时间。",
     "type": "float",
     "default": 300
   },
   "no_action_backoff_start_count": {
-    "description": "连续几次不回复后开始放慢检查",
+    "description": "连续几次不回复后开始放慢检查。",
     "type": "int",
     "default": 2
   },
   "no_action_backoff_bypass_pending_count": {
-    "description": "等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断等待",
+    "description": "等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断等待。",
     "type": "int",
     "default": 6
   },
   "enable_reply_quote": {
-    "description": "回复时是否可以引用上一条或相关消息",
+    "description": "回复时是否可以引用上一条或相关消息。",
     "type": "bool",
     "default": true
   },
   "talk_value_rules": {
-    "description": "动态发言频率规则；可让麦麦在某些群、私聊或时段更活跃或更安静",
+    "description": "动态发言频率规则；可让麦麦在某些群、私聊或时段更活跃或更安静。",
     "type": "list",
     "default": [
       {
@@ -165,22 +165,22 @@
     ]
   },
   "max_context_size": {
-    "description": "群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型",
+    "description": "群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型。",
     "type": "int",
     "default": 40
   },
   "max_private_context_size": {
-    "description": "私聊回复时参考的最近消息数量",
+    "description": "私聊回复时参考的最近消息数量。",
     "type": "int",
     "default": 60
   },
   "ban_words": {
-    "description": "过滤词：非指令消息包含这些词即整条丢弃，不进麦麦上下文也不触发回复",
+    "description": "包含这些词的消息会被过滤，不进入麦麦处理。",
     "type": "list",
     "default": []
   },
   "ban_msgs_regex": {
-    "description": "正则过滤：非指令消息命中任一正则即整条丢弃；适合更复杂的过滤规则",
+    "description": "用正则过滤消息；适合更复杂的过滤规则。",
     "type": "list",
     "default": []
   },
@@ -195,27 +195,27 @@
     "default": 3
   },
   "enable_context_optimization": {
-    "description": "压缩部分上下文，减少模型消耗；一般建议开启",
+    "description": "压缩部分上下文，减少模型消耗；一般建议开启。",
     "type": "bool",
     "default": true
   },
   "keyword_rules": {
-    "description": "命中关键词后，给麦麦追加一段固定反应提示",
+    "description": "命中关键词后，给麦麦追加一段固定反应提示。",
     "type": "list",
     "default": []
   },
   "regex_rules": {
-    "description": "命中正则规则后，给麦麦追加一段固定反应提示",
+    "description": "命中正则规则后，给麦麦追加一段固定反应提示。",
     "type": "list",
     "default": []
   },
   "expression_checked_only": {
-    "description": "仅使用人工精选的表达",
+    "description": "仅使用人工精选的表达。",
     "type": "bool",
     "default": true
   },
   "expression_self_reflect": {
-    "description": "写入表达方式前先让 AI 检查，减少学到奇怪内容",
+    "description": "写入表达方式前先让 AI 检查，减少学到奇怪内容。",
     "type": "bool",
     "default": true
   },
@@ -229,12 +229,12 @@
     ]
   },
   "max_expression_learner": {
-    "description": "同时运行的表达学习任务数量；太高可能占用更多资源",
+    "description": "同时运行的表达学习任务数量；太高可能占用更多资源。",
     "type": "int",
     "default": 3
   },
   "expression_learning_list": {
-    "description": "配置哪些聊天会学习和使用表达方式；默认规则不够时再单独添加",
+    "description": "配置哪些聊天会学习和使用表达方式；默认规则不够时再单独添加。",
     "type": "list",
     "default": [
       {
@@ -247,12 +247,12 @@
     ]
   },
   "expression_groups": {
-    "description": "让多个群聊或私聊共享学到的表达方式",
+    "description": "让多个群聊或私聊共享学到的表达方式。",
     "type": "list",
     "default": []
   },
   "jargon_learning_list": {
-    "description": "配置哪些聊天会学习和使用黑话；默认规则不够时再单独添加",
+    "description": "配置哪些聊天会学习和使用表达方式；默认规则不够时再单独添加。",
     "type": "list",
     "default": [
       {
@@ -265,82 +265,82 @@
     ]
   },
   "jargon_groups": {
-    "description": "让多个群聊或私聊共享学到的黑话",
+    "description": "让多个群聊或私聊共享学到的黑话。",
     "type": "list",
     "default": []
   },
   "enable_response_post_process": {
-    "description": "开启后会对回复做错别字、分段等后处理",
+    "description": "开启后会对回复做错别字、分段等后处理。",
     "type": "bool",
     "default": true
   },
   "typing_speed": {
-    "description": "模拟打字等待时间；0 最快，1 默认，2 更慢",
+    "description": "模拟打字等待时间；0 最快，1 默认，2 更慢。",
     "type": "float",
     "default": 1.0
   },
   "typo_enable": {
-    "description": "让麦麦偶尔打错字，更像真人聊天",
+    "description": "让麦麦偶尔打错字，更像真人聊天。",
     "type": "bool",
     "default": true
   },
   "typo_enable_correction_quote": {
-    "description": "纠正错别字时，是否引用上一条包含错别字的消息",
+    "description": "纠正错别字时，是否引用上一条包含错别字的消息。",
     "type": "bool",
     "default": true
   },
   "typo_correction_quote_probability": {
-    "description": "生成纠正消息时，引用上一条错别字消息的概率",
+    "description": "生成纠正消息时，引用上一条错别字消息的概率。",
     "type": "float",
     "default": 1.0
   },
   "typo_error_rate": {
-    "description": "单个字被替换成错字的概率",
+    "description": "单个字被替换成错字的概率。",
     "type": "float",
     "default": 0.01
   },
   "typo_min_freq": {
-    "description": "只对常见程度达到该值的字尝试制造错字",
+    "description": "只对常见程度达到该值的字尝试制造错字。",
     "type": "int",
     "default": 9
   },
   "typo_tone_error_rate": {
-    "description": "按相近声调制造错字的概率",
+    "description": "按相近声调制造错字的概率。",
     "type": "float",
     "default": 0.1
   },
   "typo_word_replace_rate": {
-    "description": "整词被替换成错词的概率",
+    "description": "整词被替换成错词的概率。",
     "type": "float",
     "default": 0.006
   },
   "splitter_enable": {
-    "description": "把过长回复拆成多条发送",
+    "description": "把过长回复拆成多条发送。",
     "type": "bool",
     "default": true
   },
   "splitter_max_length": {
-    "description": "单条回复允许的最大长度",
+    "description": "单条回复允许的最大长度。",
     "type": "int",
     "default": 512
   },
   "splitter_max_sentence_num": {
-    "description": "单条回复最多包含多少个句子",
+    "description": "单条回复最多包含多少个句子。",
     "type": "int",
     "default": 8
   },
   "splitter_max_split_num": {
-    "description": "一次回复最多拆成几条消息",
+    "description": "一次回复最多拆成几条消息。",
     "type": "int",
     "default": 3
   },
   "splitter_enable_kaomoji_protection": {
-    "description": "尽量避免把颜文字从中间拆开",
+    "description": "尽量避免把颜文字从中间拆开。",
     "type": "bool",
     "default": false
   },
   "splitter_enable_overflow_return_all": {
-    "description": "句子太多时是否直接保留完整回复，不再强行截断",
+    "description": "句子太多时是否直接保留完整回复，不再强行截断。",
     "type": "bool",
     "default": false
   },
