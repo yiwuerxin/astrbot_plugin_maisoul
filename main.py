@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.1")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.2")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.1 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.2 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -772,8 +772,14 @@ class MaiSoulPlugin(Star):
                 if _last_day is not None and m_day != _last_day:
                     contexts.append({"role": "user", "content": (
                         f"时间：{_dt.fromtimestamp(float(m.get('ts') or 0)).strftime('%Y-%m-%d %H:%M:%S')}")})
-                contexts.append({"role": "user",
-                                 "content": planner.render_pending_messages([m])})
+                # 自己的旧发言进 assistant 轮纯文本（对齐 SessionBackedMessage
+                # 角色分工：用户消息 user 轮带说话人前缀，bot 发言 assistant 轮）
+                if str(m.get("sid")) == "self":
+                    contexts.append({"role": "assistant",
+                                     "content": str(m.get("text") or "").strip()})
+                else:
+                    contexts.append({"role": "user",
+                                     "content": planner.render_pending_messages([m])})
                 _last_day = m_day
             # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
             # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
@@ -822,7 +828,12 @@ class MaiSoulPlugin(Star):
                 # deferred 提醒只进本次请求、不进 contexts 历史（对齐每轮重建注入）
                 reminder = planner.build_deferred_reminder(
                     deps.deferred_pool, pl.discovered_tools)
-                request_content = f"{user_content}\n\n{reminder}" if reminder else user_content
+                # 每轮末尾的一次性 user 提醒（对齐 chat_loop_step 的
+                # final_user_message=PLANNER_FINAL_USER_REMINDER，v6.13.2 补齐）
+                final_reminder = planner.PLANNER_FINAL_USER_REMINDER.format(
+                    bot_name=str(eff_cfg.get("bot_name") or "").strip() or "麦麦")
+                request_content = "\n\n".join(
+                    x for x in (user_content, reminder, final_reminder) if x)
                 # 识图上下文（v6.9.9）：最近 N 张聊天图片附给多模态模型（默认关）
                 image_parts = prompt.image_context_parts(st, eff_cfg)
                 if image_parts:
@@ -1288,7 +1299,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.1状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.2状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1403,4 +1414,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.1 已卸载")
+        logger.info("maisoul v6.13.2 已卸载")

@@ -1192,11 +1192,14 @@ def test_planner():
     ps3.reset_backoff()
     check("退避: 非空闲重置", not ps3.should_delay(bcfg, 1))
 
+    import datetime as _dtm
+    _ts = time.time()
     blocks = P.render_pending_messages(
-        [{"msg_id": "m1", "name": "张三", "text": "大家好", "ts": time.time()}])
-    check("消息前缀对齐 build_planner_prefix",
-          blocks.startswith('<message msg_id="m1"') and 'user="张三"' in blocks
-          and blocks.endswith("<message/>"))
+        [{"msg_id": "m1", "name": "张三", "text": "大家好", "ts": _ts}])
+    check("消息前缀对齐 format_speaker_content",
+          blocks == _dtm.datetime.fromtimestamp(_ts).strftime("%H:%M:%S") + "[msg_id:m1][张三]大家好", blocks)
+    check("末尾提醒原文", P.PLANNER_FINAL_USER_REMINDER.format(bot_name="麦麦")
+          == "你需要输出对麦麦发言的分析，视情况输出文本内容的分析，思考是否进行工具调用")
 
     # 表达 LLM 选择（expression_select 路径）
     import pathlib
