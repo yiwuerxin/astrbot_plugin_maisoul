@@ -437,6 +437,8 @@ def test_prompt():
     check("通用注意事项", "通用注意事项：\n群里要简短" in sp)
     check("每群额外注意事项(精确匹配)", "当前聊天额外注意事项：\n这个群聊游戏" in sp)
     check("输出指令原文", OUTPUT_INSTRUCTION in sp)
+    check("behavior_style 不进 replyer 提示词（对齐 MaiBot 分工：只进 planner）",
+          "大二学生" not in sp and "行动准则" not in sp)
     sp2 = prompt.build_system_prompt(cfg, chat_id="99999", platform="qq")
     check("其他群不命中额外注意事项", "这个群聊游戏" not in sp2)
     cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=100)

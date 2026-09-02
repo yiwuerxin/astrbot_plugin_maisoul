@@ -65,14 +65,6 @@ def _match_chat_prompt(cfg, chat_id: str | None, platform: str | None = None,
     return "\n".join(matched)
 
 
-def build_behavior_block(cfg) -> str:
-    """MaiBot 中 behavior_style 由 Planner 使用；此处作为发言姿态参考注入。"""
-    style = str(cfg.get("behavior_style") or "").strip()
-    if not style:
-        return ""
-    return f"行动准则参考（把握参与姿态与话题边界）：\n{style}\n"
-
-
 def build_preset_dialogues_block(cfg) -> str:
     """预设对话（maisoul 扩展）：示例对话注入系统提示词作为说话风格参考。
 
@@ -103,7 +95,6 @@ def build_system_prompt(cfg, chat_id: str | None = None, platform: str | None = 
         "你可以参考【回复信息参考】中的信息，但是视情况而定，不用完全遵守。\n"
         f"{build_attention_block(cfg, chat_id, platform, is_group)}"
         f"{build_preset_dialogues_block(cfg)}"
-        f"{build_behavior_block(cfg)}"
         f"{OUTPUT_INSTRUCTION}"
     )
 
