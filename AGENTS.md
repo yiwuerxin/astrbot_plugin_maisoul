@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.12.1：显示名「麦麦之魂」。含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
+> 当前版本 v6.13.2：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
 
 ---
 
@@ -89,7 +89,9 @@ astrbot_plugin_maisoul/
 ├── _conf_schema.json         # 配置 schema：WebUI 与 AstrBotConfig 的字段来源（键名/默认值/
 │                             #   描述逐条对标 MaiBot official_configs.py，见 §4 映射表）
 ├── data_char_frequency.json  # 汉字字频表（拷自 MaiBot depends-data/，错字引擎用）
-├── data_learning.json        # 学习库（表达/黑话，按共享组分库，运行时生成）
+├── data_learning.json        # 学习库（表达/黑话，按共享组分库）——运行时生成于
+│                             #   AstrBot 持久化目录 data/plugin_data/<插件名>/（坑 50，
+│                             #   卸载不删数据时幸存；首次运行自动从插件目录迁移）
 ├── core/                     # 核心业务（不依赖 AstrBot 运行时可单测）
 │   ├── constants.py          # 评分词典/常量，逐条对齐 MaiBot reply_necessity.py；
 │   │                         #   含 OUTPUT_INSTRUCTION（MaiBot 输出指令原文）
@@ -174,7 +176,7 @@ astrbot_plugin_maisoul/
 | no_action_backoff_*（base/cap/start/bypass） | chat.reply_timing.* | 15 / 300 / 2 / 6 |
 | enable_reply_quote | chat.reply_style.enable_reply_quote | `true` |
 | bot_name / aliases / personality / behavior_style / reply_style / group_chat_prompt / chat_prompts / multiple_reply_style | bot.nickname / bot.alias_names / personality.* / chat.reply_style.* | 与 MaiBot 官方默认一致（nickname=麦麦、alias_names=[]） |
-| mode / maid_bridge / chat_tools / enable / escape_at_wake / personas / default_persona / group_persona / follow_persona_switch | —（maisoul 扩展或插件必需） | — |
+| mode / maid_bridge / chat_tools / enable / escape_at_wake / personas / default_persona / group_persona / follow_persona_switch / preset_dialogues | —（maisoul 扩展或插件必需） | preset_dialogues=预设对话 `[{user, reply}]`，经 prompt.build_preset_dialogues_block 注入系统提示词【预设对话】块（人格可覆盖，PERSONA_FIELDS 已含） |
 
 chat_prompts 条目结构 = MaiBot ExtraPromptItem：`{platform, item_id, rule_type:"group"|"private", prompt}`，
 platform+目标 ID **精确匹配**（无后缀/通配），多条命中换行拼接；私聊时 item_id=用户 ID。
@@ -222,7 +224,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
 5. 版本号三处同步：metadata.yaml、main.py `@register`、页面 PAGE_VERSION + status API。
 6. 复刻保真原则：凡标"对齐 MaiBot xxx"的常量/公式，改动前先对照 MaiBot 官方仓库源码（github.com/Mai-with-u/MaiBot）的对应文件。
 7. **需求铁律（项目首要政策）**：任何功能需求，**默认含义是"完全对标 MaiBot，功能要完全一样"**——行为、配置字段、提示词结构、参数默认值都按 MaiBot 源码来，不许自作主张做"近似/简化版"。**实现写法也要照抄 MaiBot**（MaiBot 用 SQL 表就用 SQL 表，不许以"插件侧更轻"为由换成 JSON 等变体）；**WebUI 仿照对象 = MaiBot 部署实例的构建产物**（`:dashboard端口` 的 pip 包 `maibot_dashboard` dist），不是容器里的前端源码 dump——样式、颜色、字号、圆角、图标（lucide SVG，不用 emoji）、文案必须**一模一样**：部署版有的一个不能少，部署版没有的（如暂停按钮、自造徽章）**不许自己加**；比对方法 = 抓部署 chunk 里的中文字符串与 CSS 变量/组件类。只有两种情况可以偏离：① MaiBot 没有该功能（此时按 AstrBot 生态最优实现，自己写）；② **相对 MaiBot 本身的写法确实有更好的替代**——必须先在 Issue/PR 中说明并获维护者同意才能用，不许默认采用。拿不准就先查源码再动手，不要凭记忆或直觉实现。
-8. **代码规范（v6.10.0 移植自 MaiBot AGENTS.md：<https://github.com/Mai-with-u/MaiBot/blob/main/AGENTS.md>，已按插件形态适配；不适配项：uv/pyproject、npm build、A_memorix、插件提交仓库流程）**：
+8. **代码规范（v6.10.0 移植自 MaiBot AGENTS.md：<https://github.com/Mai-with-u/MaiBot/blob/main/AGENTS.md>，已按插件形态适配，2026-09-02 复核上游全文补入提交卫生/UI 叠层排查/实验目录三条；不适配项：uv/pyproject、npm build、A_memorix、插件提交仓库流程、data-dashboard-style 主题与 Radix/motion 组件（本插件单文件零依赖页无此设施）、prompt 多语言模板（maisoul 提示词仅中文、直取 MaiBot 中文原文））**：
    - **import 顺序**：`from X import Y` 在前、`import X` 在后，两组各自按字母序；标准库/第三方在前、本地模块在后，块间空行分隔。core/ 内相对导入；astrbot 框架对象统一 `from astrbot...` 绝对导入（bridge.py 是唯一运行时边界）。
    - **注释**：重构时原注释可修正不可删；新增的长/复杂逻辑块必须写注释。一律简体中文。
    - **类型注解**：重构保留原注解；复杂函数、多参数函数补注解（简单变量可不加）；泛型用 `typing` 模块（`list[int]`/`dict[str, Any]`）。
@@ -230,9 +232,9 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
    - **类属性**：少用 getattr/setattr，能直接属性访问就直接写；例外：bridge.py 对 AstrBot 动态属性（`event._xxx` 等）的访问。
    - **debug 铁律**：**不许用 fallback/兜底掩盖错误**——有错就完整暴露（logger.error + 异常栈），精准定位根因，兜底难以维护。允许**显式声明的降级路径**（如二轮生成失败回退一轮），但必须留 error 日志；禁止静默吞异常（与坑 44 一脉相承）。
    - **语言**：注释、日志、WebUI 文案一律简体中文优先。
-   - **WebUI**：涉及聊天流/会话显示用真实名称（群名或"xxx 的私聊"），不裸显 session_id；排查布局问题：对比展开前后 DOM 找新增元素、查 computed style 实际值（height/min-height/background/backdrop-filter），不要只看 CSS class。
+   - **WebUI**：涉及聊天流/会话显示用真实名称（群名或"xxx 的私聊"），不裸显 session_id；排查布局问题：对比展开前后 DOM 找新增元素、查 computed style 实际值（height/min-height/background/backdrop-filter），不要只看 CSS class；排查底纹/阴影/半透明/模糊/颜色叠加问题：先按 DOM 层级拆分父容器、触发器、内部装饰元素和伪元素，逐层查 computed style 的 background/background-color/background-image/backdrop-filter/box-shadow/opacity，不要只盯着截图中最显眼的子元素或只看 class（MaiBot 原文）。
    - **会话 ID**：业务代码不得自行拼会话键或造 fallback hash 写库——统一走既有会话键（群=group_id，私聊=sender_id，见坑 23）。
-   - **配置**：纯配置改动只动 schema 字段 + 页面 render/collect + 本文档 §4 映射表（§5.3 模式），不需要建测试文件；main.py 里旧配置迁移逻辑保持幂等，已发布的迁移路径不可随意改动。
+   - **配置**：纯配置改动只动 schema 字段 + 页面 render/collect + 本文档 §4 映射表（§5.3 模式），不需要建测试文件；main.py 里旧配置迁移逻辑保持幂等，已发布的迁移路径不可随意改动，也不擅自新增迁移步骤（对齐 MaiBot「除非明确说明不擅自新增 ConfigUpgradeHook／禁改 legacy_migration」）。
    - **changelog**：本插件无独立 changelog 文件，以 git 提交信息承载——一个功能一行、按模块分段；纯版本号提升不单独成条。
 
 
@@ -240,6 +242,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
    - **Commit**：`<type>(<scope>): 祈使句摘要`——一行、动词开头，≤72 字符为硬线；正文写**为什么**（72 列手动换行）；破坏性变更用 `feat!:` 或 `BREAKING CHANGE:` footer；**不列文件清单**（仅文件移动/全局配置/对外 API 变更三种情况点名文件）
    - **PR 四段**：① 改动简述（用户可感知，即 changelog 口径）② 为什么改（背景）③ 核心改动（只挑 1-2 个关键文件或风险点；**UI 改动必须附前后截图**）④ 测试情况
    - **版本号联动**：`fix`→patch、`feat`→minor、`BREAKING CHANGE`→major（本插件版本号四处同步见坑 12）
+   - **不提交无边界的格式化/ruff/导入整理/大面积实现整理**（MaiBot 原文）——这类 diff 会淹没真实改动、无法 review；确需整理时单独成提交并在正文说明范围，不与功能改动混在一起
    - **自检标准**：reviewer 不点开 Files changed 就能懂 = 合格；只写"优化"= 不及格
 
 10. **新装纯净（项目首要红线，owner 2026-09-01 确认）**：任何改动之后，插件被安装后的状态必须等于一个**干净的新插件**——无运行时数据（学习库/观察账本/缓存/日志）、无任何本机部署信息（容器名/端口/容器内路径/会话 ID/真实人设/QQ 号）、默认值中性且对齐 MaiBot 官方。交付包内容必须 ≡ `git ls-files` 全集；提交前过 AGENTS.local.md 的红线 grep；详细验收标准见 §9「纯净交付红线」。
@@ -319,13 +322,20 @@ send_emoji（声明无参数=MaiBot 原样，执行桥接 send_meme）、fetch_h
 WAIT/RUNNING 状态机（群聊 wait 不唤醒，@/提及必回主动触发恢复 resume_from_wait）；
 思考打断（planner_interrupt_max_consecutive_count=0 默认不打断）；空闲指数退避
 （base15×2^n 封顶 300、起点 2、积压 6 绕过、reply 重置）；wait 到期有积压自动续轮。
-behavior_style 分工已改回 MaiBot 语义：只进 planner 系统提示词。
+behavior_style 分工已改回 MaiBot 语义：只进 planner 系统提示词（v6.13.1 起彻底落实——replyer 的 build_system_prompt 与 native 三件套注入不再追加「行动准则参考」块，MaiBot 的 replyer 模板本就没有 behavior_style）。
 
 运行期修正（v6.6.x，均为对齐 MaiBot 行为的补齐）：
 - planner 请求首轮以 contexts 注入最近历史（群 40/私聊 60 条，对齐 chat_history 传参），
   fetch_history 返回"尚未进入上下文"的更早消息（新到旧，上限 50）
 - 工具结果轮（tool_continue）不要求新消息即继续，直到 reply/wait/无工具/轮数上限
 - contexts 顺序 user→assistant；wait 到期有积压自动续轮
+- v6.13.2 planner 请求三处保真补齐（用户实报"两边观察页输出规范完全不一致"根因）：
+  ① 消息渲染格式改 1.2.3 原文 `HH:MM:SS[msg_id:x][说话人]内容`（对齐
+  message_adapter.format_speaker_content；旧 `<message>` 包裹是历史版本格式）；
+  ② 自己的旧发言进 assistant 轮纯文本（对齐 SessionBackedMessage 角色分工）；
+  ③ 每轮请求末尾追加一次性提醒原文（chat_loop_service.PLANNER_FINAL_USER_
+  REMINDER_TEMPLATE："你需要输出对{bot_name}发言的分析，视情况输出文本内容的
+  分析，思考是否进行工具调用"）——此前缺失是 planner 输出规范漂移的主因
 
 v6.7.0 追加：
 - **planner 模式的 replyer 也接聊天工具集**（chat_tools + call_maid + chat_skills 注入，
@@ -367,8 +377,9 @@ v6.7.0 追加：
   database_model.py：列/四个索引/默认值），record/replay/cleanup 逐行对齐
   event_store.py（含 flush 取 event_id 回写 payload_json、两条 DELETE 语句、
   每 200 条或 60s 检查清理）。MaiBot 挂自身 MySQL，maisoul 无法在 AstrBot 主库
-  建表 → 插件目录独立 SQLite data_monitor.db 承载同一张表（仅会话工厂差异；
-  早期 JSON 账本自动一次性迁移并改名 .json.imported）。
+  建表 → 独立 SQLite data_monitor.db 承载同一张表（仅会话工厂差异）；文件
+  存 AstrBot 持久化目录 data/plugin_data/<插件名>/（坑 50，卸载不删数据时
+  幸存；早期 JSON 账本自动一次性迁移并改名 .json.imported）。
 - 推送适配：MaiBot websocket broadcast → 插件页轮询 GET /monitor/replay?since=
   （2.5s，SSE 端点已注册但本部署被适配层缓冲，见 §8 坑14；前端先试 SSE 6s 看门狗
   无帧自动降级轮询）。
@@ -485,7 +496,7 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
    自己刚发的消息，而 `context.send_message` 只返回 bool 拿不到 message_id（见坑 21），
    维持普通文本发送。
 4. **focus/注意力漂移/情景分析子代理**：未移植（见 §7.1）。
-5. **maisoul 独有扩展（MaiBot 之外的加项）**：多人格、管家桥（call_maid 桥+单轮回填）、
+5. **maisoul 独有扩展（MaiBot 之外的加项）**：预设对话（preset_dialogues，v6.13.0——示例对话 {user, reply} 注入【预设对话】块作风格参考，人格库条目可覆盖）、多人格、管家桥（call_maid 桥+单轮回填）、
    independent/native 模式、逃生舱（v6.10.0 起默认关闭=全面接管，escape_at_wake 可开）、总开关、native 三件套注入。
 6. **用户明示同意的取舍**：A_memorix→livingmemory、偷表情→stealer、行为/高频词
    学习、mid_term_memory、世界书/好感度。
@@ -569,10 +580,12 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 
 49. **生态注入的 extra_user_content_parts 绝不能 `str()` 强转**（v6.12.1 修复）：生态插件往 `req.extra_user_content_parts` 写入的是 `ContentPart` 对象（TextPart/ImageURLPart）、裸 `str` 或消息组件（`Plain` 等），类型不统一；provider 侧（anthropic/openai source）逐块 `isinstance` 校验，只认 ContentPart 三类，**裸 str 直接 `ValueError: 不支持的额外内容块类型`**，replyer 请求在拼装阶段被打断 → planner 整轮循环异常 → 机器人沉默。旧代码 `[str(x) for x in parts if str(x).strip()]` 两重错：str 对象得到 pydantic repr（`type='text' text='…'`、`type=<ComponentType.Plain: 'Plain'>`），repr 非空能过 strip() 过滤，垃圾被当正文混进注入与观察页。**间歇性指纹**：livingmemory 召回是 RAG，命中才 append——附加 ≥1 段必崩、附加 0 段正常，表现"时好时坏"完全由该回合是否召回记忆决定。修法：`_normalize_extra_parts`（ContentPart 透传保留 `mark_as_temp` 的 _no_save 语义；裸 str 包 TextPart；其它对象取 `.text` 包 TextPart，取不到丢弃）+ 观察页 join 用 `_extra_part_text` 提取纯文本（无文本段以类名占位）。注意 `Plain` 与 ContentPart 不在同一棵类树上（isinstance 为 False），走 `.text` 提取分支。快捷指纹：日志出现 `不支持的额外内容块类型: <class 'str'>` 一定是调用方把本该传 ContentPart 对象的参数传成了字符串，grep 调用点的 `str(` 强转即可定位。
 
+50. **运行时数据必须存 AstrBot 持久化目录，不能放插件目录**（v6.12.3 修复，用户实报）：AstrBot `uninstall_plugin` **无条件 `remove_dir(整个插件目录)`**，卸载弹窗的勾选框只控制配置文件（`data/config/<插件>_config.json`）与 `data/plugin_data/<插件名>/` 的清理——观察账本 `data_monitor.db`、学习库 `data_learning.json` 放插件目录里时，"未勾删除数据"的卸载也会连带删光（实机故障：人格在配置文件里幸存、麦麦观察数据全丢，正是这个不对称）。修法：`main._persistent_data_dir()` 经 `StarTools.get_data_dir("astrbot_plugin_maisoul")` 解析 `data/plugin_data/astrbot_plugin_maisoul/`，store 显式传路径；首次运行把插件目录旧文件（含 SQLite -wal/-shm 侧车与 .imported 遗留）搬过去。`data_char_frequency.json` 是随包分发的静态依赖，留在插件目录（删了重装即回）。
+
 ## 9. 打包与发布
 
 - **打生产 zip**：python zipfile 打包，排除 `__pycache__`、`data_learning.json`（学习库）、`data_monitor.db*`（观察账本，含 SQLite -wal/-shm 侧车）、`data_monitor.json.imported`、`*.log`、`AGENTS.local.md`、`.git/`——最稳妥的取文件方式是 `git ls-files`（天然只含干净源文件）；生产部署各自生成这两份；`data_char_frequency.json`（错字引擎依赖）必须包含。插件市场对发布包有 **16MB 上限**。
-- **纯净交付红线（每次提交与发版自查）**：被提交/打包的文件里不得出现任何本机部署细节——容器名、内网 IP/端口、容器内绝对路径、webchat 会话 ID、真实人设与 QQ 号；文档示例一律用 `<astrbot容器>`、`<端口>`、`<容器内插件路径>`、`<AstrBot数据目录>` 占位符，本机实际命令只记在 AGENTS.local.md「本机环境备注」。**新装纯净验收**：交付包内容 = `git ls-files` 全集（无运行时数据、无本地信息、中性默认值），安装后插件目录只新增该部署自己生成的运行时文件（学习库/观察账本等）。
+- **纯净交付红线（每次提交与发版自查）**：被提交/打包的文件里不得出现任何本机部署细节——容器名、内网 IP/端口、容器内绝对路径、webchat 会话 ID、真实人设与 QQ 号；文档示例一律用 `<astrbot容器>`、`<端口>`、`<容器内插件路径>`、`<AstrBot数据目录>` 占位符，本机实际命令只记在 AGENTS.local.md「本机环境备注」。**新装纯净验收**：交付包内容 = `git ls-files` 全集（无运行时数据、无本地信息、中性默认值），安装后插件目录只新增该部署自己生成的运行时文件（学习库/观察账本等）。**本地实验目录、临时脚本、比对用私有产物不经 owner 确认不进共享历史**（对齐 MaiBot「实验目录不入共享历史」——MaiBot 源码 dump/部署前端 chunk 只留在本机，路径记 AGENTS.local.md）。
 - **分发默认值不含任何个人部署内容**：人格三件套默认 = MaiBot 官方模板原文 + 中性示例人设；实机环境细节（容器名/端口/网关）不进仓库。
 - **提交 PR 流程**（本仓库）：开分支 → 提交 → `gh pr create` → 页面审阅合并；Commit/PR 格式与版本联动规则见 §5 条目 9（Conventional Commits）。
 - **本地私有红线与环境备注**：写在 `AGENTS.local.md`（已列 .gitignore，永不入库）——含禁止提交的真实环境数据/隐私清单、同步前自查命令与发版自查清单。

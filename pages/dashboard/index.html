@@ -499,7 +499,7 @@ let FB = null;
 let maisoulTab = 'core';
 function setMsTab(t){maisoulTab=t;render('maisoul')}
 const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理'};
-const PAGE_VERSION = 'v6.12.1';
+const PAGE_VERSION = 'v6.13.2';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -602,31 +602,35 @@ function render(p){
   const map={
     maisoul: ()=>{
       const core = [
-        panel('ident','人格配置','她是谁、什么性格——对应 bot_config.toml 的 [personality].personality 与 bot 名字/别名。',
-          field('机器人昵称（bot_name）','麦麦显示和自称时使用的名字',`<input type="text" id="bot_name" value="${esc(S.bot_name)}">`)+
-          field('别名（aliases）','别人可能用来称呼麦麦的名字，用于辅助识别提及——身份行与提及检测共用这一份',chips('aliases',S.aliases,'小麦'),'',true)+
-          field('人格设定（personality）','麦麦的人格和身份设定，建议简短描述她是谁、是什么性格',textarea('personality',S.personality,'她是谁、什么性格…'),`${String(S.personality||'').length} 字`,true)
+        panel('ident','人格配置','机器人昵称、别名与人格设定。',
+          field('机器人昵称（bot_name）','麦麦显示和自称时使用的名字。',`<input type="text" id="bot_name" value="${esc(S.bot_name)}">`)+
+          field('别名（aliases）','别人可能用来称呼麦麦的名字，用于辅助识别提及。',chips('aliases',S.aliases,'小麦'),'',true)+
+          field('人格设定（personality）','麦麦的人格和身份设定，建议简短描述她是谁、是什么性格。',textarea('personality',S.personality,'她是谁、什么性格…'),`${String(S.personality||'').length} 字`,true)
         ),
-        panel('express','表达方式','对应 [personality].reply_style —— 篇幅、语气、用词、格式规范。',
-          field('表达风格（reply_style）','麦麦平时说话的风格，例如简短、温和、吐槽或正式',textarea('reply_style',S.reply_style,''),`${String(S.reply_style||'').length} 字`,true)
+        panel('express','表达风格','麦麦平时说话的风格，例如简短、温和、吐槽或正式。',
+          field('表达风格（reply_style）','麦麦平时说话的风格，例如简短、温和、吐槽或正式。',textarea('reply_style',S.reply_style,''),`${String(S.reply_style||'').length} 字`,true)
         ),
-        panel('behave','行为风格','对应 [personality].behavior_style —— 何时参与、如何观察、何时安静（MaiBot 中由 Planner 使用）。',
-          field('行为风格（behavior_style）','Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静',textarea('behavior_style',S.behavior_style,''),`${String(S.behavior_style||'').length} 字`,true)
+        panel('preset','预设对话','示例对话展示麦麦应有的说话风格，生成回复时作为风格参考注入；只参考语气与用词，不照搬内容。',
+          `<div id="pds">${(S.preset_dialogues||[]).map((d,i)=>pdRow(i,d)).join('')}</div>
+           ${smBtn('outline','plus','添加示例对话','onclick="addPdRow()"')}`
         ),
-        panel('attn','群聊注意事项','对应 [chat.reply_style].group_chat_prompt。',
-          field('群聊提示词（group_chat_prompt）','群聊通用提示词，告诉麦麦群聊中该怎么说话',textarea('group_chat_prompt',S.group_chat_prompt,''),`${String(S.group_chat_prompt||'').length} 字`,true)
+        panel('behave','行为风格','Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。',
+          field('行为风格（behavior_style）','Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。',textarea('behavior_style',S.behavior_style,''),`${String(S.behavior_style||'').length} 字`,true)
         ),
-        panel('pattn','私聊提示词','对应 [chat.reply_style].private_chat_prompts —— 私聊通用提示词（maisoul 已接管私聊，与群聊同一条管线）。',
-          field('私聊提示词（private_chat_prompts）','私聊通用提示词，告诉麦麦私聊中该怎么说话',textarea('private_chat_prompts',S.private_chat_prompts||'',''),`${String(S.private_chat_prompts||'').length} 字`,true)
+        panel('attn','群聊注意事项','群聊通用提示词，告诉麦麦群聊中该怎么说话。',
+          field('群聊提示词（group_chat_prompt）','群聊通用提示词，告诉麦麦群聊中该怎么说话。',textarea('group_chat_prompt',S.group_chat_prompt,''),`${String(S.group_chat_prompt||'').length} 字`,true)
+        ),
+        panel('pattn','私聊提示词','私聊通用提示词，告诉麦麦私聊中该怎么说话。',
+          field('私聊提示词（private_chat_prompts）','私聊通用提示词，告诉麦麦私聊中该怎么说话。',textarea('private_chat_prompts',S.private_chat_prompts||'',''),`${String(S.private_chat_prompts||'').length} 字`,true)
         ),
       ].join('');
       const detail = [
-        panel('lottery','随机风格彩票','对应 multiple_reply_style / multiple_probability —— 概率触发后仅影响本次回复。',
+        panel('lottery','随机风格彩票','备用说话风格；触发后只影响本次回复。',
           `<div id="mrs">${(S.multiple_reply_style||[]).map((t,i)=>styleItem(i,t)).join('')}</div>
            ${smBtn('outline','plus','添加备用风格','onclick="addStyle()"')}`+
-          field('触发概率（multiple_probability）','0 表示不随机切换',slider('multiple_probability',S.multiple_probability??0,0,100,1,'%'))
+          field('触发概率（multiple_probability）','随机启用备用风格的概率；0 表示不随机切换。',slider('multiple_probability',S.multiple_probability??0,0,100,1,'%'))
         ),
-        panel('kwr','关键词反应','对应 <code>[keyword_reaction]</code>——最新消息命中关键词/正则后，给麦麦追加一段固定反应提示（不会直接发送）。正则用命名捕获组，reaction 里 <code>[名字]</code> 会被替换为匹配内容。',
+        panel('kwr','关键词反应','命中关键词后，给麦麦追加一段固定反应提示。正则用命名捕获组，reaction 里 <code>[名字]</code> 会被替换为匹配内容。',
           `<div class="lab"><span>关键词规则（keyword_rules）</span></div>
            <div id="kwrs">${(S.keyword_rules||[]).map((r,i)=>kwRow(i,r)).join('')}</div>
            ${smBtn('outline','plus','添加关键词规则','onclick="addKwRow()"')}
@@ -634,7 +638,7 @@ function render(p){
            <div id="rxrs">${(S.regex_rules||[]).map((r,i)=>rxRow(i,r)).join('')}</div>
            ${smBtn('outline','plus','添加正则规则','onclick="addRxRow()"')}`
         ),
-        panel('chatp','额外 Prompt','对应 chat.reply_style.chat_prompts —— 命中的群会在注意事项块追加"当前聊天额外注意事项"。平台+群号精确匹配（平台填适配器名如 qq），同一群可配多条自动拼接。',
+        panel('chatp','额外 Prompt','给指定群聊或私聊额外补充聊天要求；有特殊群规或语气要求时再加。平台与目标 ID 精确匹配（平台填适配器名如 qq），同一目标多条自动拼接。',
           `<div id="cps">${(S.chat_prompts||[]).map((c,i)=>cpItem(i,c)).join('')}</div>
            ${smBtn('outline','plus','添加规则','onclick="addCp()"')}`
         ),
@@ -728,16 +732,16 @@ function render(p){
         switchRow('escape_at_wake',S.escape_at_wake===true,'逃生舱（@/唤醒放行原生）','默认关=聊天全面接管：@/唤醒前缀也进麦麦管线（at 级强制点名）；开启后恢复旧行为，@/唤醒交给原生 agent 回答。/指令恒放行不受影响')+
         switchRow('eco_injection',S.eco_injection!==false,'生态注入桥','心弦好感/记忆/世界书等注入型插件在麦麦管线内生效：生成前收集 on_llm_request 注入、发言后触发 on_llm_response 回写（记忆沉淀）')
       ),
-      panel('plannercfg','Planner 决策设置','对应 <code>[chat.reply_timing]</code> 的规划器参数（决策模式生效）——wait 状态机、思考打断、空闲退避。',
+      panel('plannercfg','Planner 决策设置','决策模式的规划器参数——wait 状态机、思考打断、空闲退避。',
         field('连续 wait 上限（max_consecutive_wait_count）','Planner 最多连续调用 wait 多少次；达到上限后视为对话进入休息',`<input type="number" id="max_consecutive_wait_count" min="1" max="10" value="${S.max_consecutive_wait_count??3}">`)+
         field('规划器连续打断上限（planner_interrupt_max_consecutive_count）','思考时来了新消息，最多重新思考多少次；0 表示不打断',`<input type="number" id="planner_interrupt_max_consecutive_count" min="0" max="10" value="${S.planner_interrupt_max_consecutive_count??0}">`)+
         field('空闲退避基准（no_action_backoff_base_seconds）','连续决定不回复后，下一次检查前先等多久',`<input type="number" id="no_action_backoff_base_seconds" min="0" max="600" step="1" value="${S.no_action_backoff_base_seconds??15}">`)+
         field('空闲退避上限（no_action_backoff_cap_seconds）','不回复退避等待的最长时间',`<input type="number" id="no_action_backoff_cap_seconds" min="0" max="3600" value="${S.no_action_backoff_cap_seconds??300}">`)+
         field('空闲退避起点（no_action_backoff_start_count）','连续几次不回复后开始放慢检查',`<input type="number" id="no_action_backoff_start_count" min="1" max="10" value="${S.no_action_backoff_start_count??2}">`)+
         field('空闲退避绕过消息数（no_action_backoff_bypass_pending_count）','等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断',`<input type="number" id="no_action_backoff_bypass_pending_count" min="0" max="50" value="${S.no_action_backoff_bypass_pending_count??6}">`)+
-        switchRow('enable_reply_quote',S.enable_reply_quote??true,'启用引用回复','对应 chat.reply_style.enable_reply_quote（本版本 AstrBot 无引用组件，暂存开关语义）')
+        switchRow('enable_reply_quote',S.enable_reply_quote??true,'启用引用回复','回复时是否可以引用上一条或相关消息')
       ),
-      panel('timing','什么时候发言','对应 MaiBot <code>[chat.reply_timing]</code>——决定新消息何时进入生成。',
+      panel('timing','什么时候发言','决定新消息何时进入生成——触发方式与发言频率。',
         field('回复触发模式（reply_trigger_mode）','frequency=频率触发：按新消息数量（ceil(1/f) 条 + 空窗补偿）决定；reply_necessity=必要性触发：综合数量、内容、过往发言评分（≥80）',
           `<select id="reply_trigger_mode">${['frequency','reply_necessity'].map(m=>`<option value="${m}" ${S.reply_trigger_mode===m?'selected':''}>${m==='frequency'?'频率触发':'必要性触发'}</option>`).join('')}</select>`)+
         field('群聊频率（talk_value）','群聊里麦麦主动说话的频率；越小越安静，0 为静默接收',slider('talk_value',S.talk_value??1,0,1,0.01,'')+`<div class="fdesc" id="freq_tip" style="margin-top:6px"></div>`)+
@@ -748,11 +752,11 @@ function render(p){
         field('私聊上下文（max_private_context_size）','私聊回复时参考的最近消息数量',`<input type="number" id="max_private_context_size" min="5" max="300" value="${S.max_private_context_size??60}">`)+
         switchRow('enable_context_optimization',S.enable_context_optimization??true,'优化上下文','压缩部分上下文——自己的旧发言只保留最近 3 条；一般建议开启')
       ),
-      panel('rules','动态发言频率规则','对应 <code>talk_value_rules</code>——按群或时段单独调整频率；精确匹配优先于通配，时段命中优先于留空。',
+      panel('rules','动态发言频率规则','按群或时段单独调整频率；精确匹配优先于通配，时段命中优先于留空。',
         switchRow('enable_talk_value_rules',S.enable_talk_value_rules??false,'启用动态发言频率规则','开启后按聊天/时间段调整发言频率')+
         `<div id="tvrs">${(S.talk_value_rules||[]).map((r,i)=>tvrRow(i,r)).join('')}</div>
          ${smBtn('outline','plus','添加规则','onclick="addTvr()"')}`),
-      panel('pp','回复后处理','对应 MaiBot <code>[response_post_process] + chinese_typo + response_splitter</code>——错别字、分段、打字节奏。',
+      panel('pp','回复后处理','错别字、分段、打字节奏等拟人后处理。',
         switchRow('enable_response_post_process',S.enable_response_post_process??true,'启用回复后处理','开启后会对回复做错别字、分段等后处理')+
         field('打字速度（typing_speed）','模拟打字等待时间；0 最快（不等待），1 默认，2 更慢',slider('typing_speed',S.typing_speed??1,0,2,0.1,'倍'))
       ),
@@ -765,7 +769,7 @@ function render(p){
         field('声调错字概率（typo_tone_error_rate）','按相近声调制造错字的概率',slider('typo_tone_error_rate',S.typo_tone_error_rate??0.1,0,1,0.05,''))+
         field('整词替换概率（typo_word_replace_rate）','整词被替换成错词的概率',slider('typo_word_replace_rate',S.typo_word_replace_rate??0.006,0,0.1,0.002,''))
       ),
-      panel('split','回复分割','对应 <code>[response_splitter]</code>——分句（引号/冒号保护+概率合并）→ 错字 → 条数上限 → 合并。',
+      panel('split','回复分割','分句（引号/冒号保护+概率合并）→ 错字 → 条数上限 → 合并。',
         switchRow('splitter_enable',S.splitter_enable??true,'启用回复分割','把过长回复拆成多条发送')+
         field('单条最大长度（splitter_max_length）','基本全中文且超过 2 倍该值时返回默认回复',`<input type="number" id="splitter_max_length" min="50" max="2000" value="${S.splitter_max_length??512}">`)+
         field('单条最大句数（splitter_max_sentence_num）','分割后超过该条数触发超限策略',`<input type="number" id="splitter_max_sentence_num" min="1" max="30" value="${S.splitter_max_sentence_num??8}">`)+
@@ -797,7 +801,7 @@ function render(p){
           <div class="statc"><small>表达学习范围</small><b>${(S.expression_learning_list||[]).length} 条规则</b></div>
           <div class="statc"><small>黑话学习范围</small><b>${(S.jargon_learning_list||[]).length} 条规则</b></div>
         </div>`,
-        panel('expr','表达学习','对应 MaiBot <code>[expression]</code>——发言后从群聊学习"当 X 时可以用 Y 表达"的语言风格（learn_style 原文 prompt + AI 自查），回复时按 legacy 随手抽候选注入【表达习惯参考】；学习库满 10 条后启用。',
+        panel('expr','表达学习','发言后从群聊学习"当 X 时可以用 Y 表达"的语言风格，回复时抽候选注入【表达习惯参考】；学习库满 10 条后启用。',
           switchRow('expression_checked_only',S.expression_checked_only??true,'使用精选表达','仅使用通过 AI 检查的表达')+
           switchRow('expression_self_reflect',S.expression_self_reflect??true,'优化表达方式学习','写入表达方式前先让 AI 检查，减少学到奇怪内容')+
           field('表达使用方式（expression_selection_mode）','legacy=随手抽取候选；vector_intent 需嵌入模型，未配置自动回落 legacy',
@@ -819,7 +823,7 @@ function render(p){
               <td>${iconBtn('trash-2','删除','onclick="delLib(\'expressions\','+i+')"')}</td></tr>`).join('')||'<tr><td colspan="5" class="empty-cell">暂无学到的表达（发言后自动学习，满 10 条启用注入）</td></tr>'}
            </table>`
         ),
-        panel('jargon','黑话学习','对应 MaiBot <code>[jargon]</code>——学习群内黑话/缩写/梗词及含义（learn_jargon + 含义推断原文 prompt），上下文命中词条时注入【黑话参考】帮助理解语境。',
+        panel('jargon','黑话学习','学习群内黑话/缩写/梗词及含义，上下文命中词条时注入【黑话参考】帮助理解语境。',
           field('学习配置（jargon_learning_list）','哪些聊天使用/学习黑话；平台与群号都留空表示全局默认',
             `<div id="jlrs">${jlRows}</div>${smBtn('outline','plus','添加规则','onclick="addLrRow(\'jlrs\')"')}`,null,true)+
           field('黑话共享组（jargon_groups）','组内聊天共享学到的黑话',
@@ -1043,6 +1047,8 @@ function cpItem(i,c){return `<div class="cp-row" data-cp="${i}" style="flex-wrap
 function addCp(){document.getElementById('cps').insertAdjacentHTML('beforeend',cpItem((document.querySelectorAll('[data-cp]').length)||0,{}))}
 function tvrRow(i,r){return `<div class="cp-row" data-tvr="${i}"><input type="text" class="tvr-platform" placeholder="平台(空=全部)" style="width:100px" value="${esc(r.platform||'')}"><input type="text" class="tvr-item" placeholder="群号(空=全部 *" style="width:110px" value="${esc(r.item_id||'')}"><input type="text" class="tvr-time" placeholder="00:00-08:59 或 *" style="width:120px" value="${esc(r.time||'')}"><input type="number" class="tvr-value" placeholder="0-1" style="width:70px" step="0.05" min="0" max="1" value="${r.value!=null?r.value:1}">${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
 function addTvr(){document.getElementById('tvrs').insertAdjacentHTML('beforeend',tvrRow((document.querySelectorAll('[data-tvr]').length)||0,{}))}
+function pdRow(i,d){return `<div class="cp-row" data-pdr="${i}"><textarea class="pdr-user" placeholder="对方说（示例）" style="flex:1">${esc(d.user||'')}</textarea><textarea class="pdr-reply" placeholder="麦麦回（示例）" style="flex:1">${esc(d.reply||'')}</textarea>${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
+function addPdRow(){const h=document.getElementById('pds');if(!h)return;h.insertAdjacentHTML('beforeend',pdRow(h.children.length,{}))}
 function kwRow(i,r){return `<div class="cp-row" data-kwr="${i}"><input type="text" class="kwr-keys" placeholder="关键词，逗号分隔" style="width:180px" value="${esc((r.keywords||[]).join(', '))}"><textarea class="kwr-reaction" placeholder="命中后给麦麦看的提示内容（不会直接发送）" style="flex:1">${esc(r.reaction||'')}</textarea>${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
 function addKwRow(){document.getElementById('kwrs').insertAdjacentHTML('beforeend',kwRow((document.querySelectorAll('[data-kwr]').length)||0,{}))}
 function rxRow(i,r){return `<div class="cp-row" data-rxr="${i}"><textarea class="rxr-pattern" placeholder="正则（每行一个，用命名捕获组 (?P&lt;名字&gt;…)）" style="width:240px;height:44px">${esc((r.regex||[]).join('\n'))}</textarea><textarea class="rxr-reaction" placeholder="提示内容，[名字] 会被替换为捕获组内容" style="flex:1;height:44px">${esc(r.reaction||'')}</textarea>${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`}
@@ -1757,6 +1763,8 @@ function collect(){
   const jgrHost=document.getElementById('jgrs');
   if(jgrHost)S.jargon_groups=grCollect(jgrHost);
   const kwrHost=document.getElementById('kwrs');
+  const pdrHost=document.getElementById('pds');
+  if(pdrHost)S.preset_dialogues=[...pdrHost.querySelectorAll('[data-pdr]')].map(r=>({user:r.querySelector('.pdr-user').value.trim(),reply:r.querySelector('.pdr-reply').value.trim()})).filter(d=>d.user&&d.reply);
   if(kwrHost)S.keyword_rules=[...kwrHost.querySelectorAll('[data-kwr]')].map(r=>({keywords:r.querySelector('.kwr-keys').value.split(/[,，]/).map(s=>s.trim()).filter(Boolean),regex:[],reaction:r.querySelector('.kwr-reaction').value.trim()})).filter(r=>r.reaction&&r.keywords.length);
   const rxrHost=document.getElementById('rxrs');
   if(rxrHost)S.regex_rules=[...rxrHost.querySelectorAll('[data-rxr]')].map(r=>({keywords:[],regex:r.querySelector('.rxr-pattern').value.split('\n').map(s=>s.trim()).filter(Boolean),reaction:r.querySelector('.rxr-reaction').value.trim()})).filter(r=>r.reaction&&r.regex.length);

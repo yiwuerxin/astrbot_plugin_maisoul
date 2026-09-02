@@ -13,7 +13,9 @@
 
 import asyncio
 import re
+import shutil
 import time
+from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -32,23 +34,53 @@ try:
 except ImportError:  # 兼容不同小版本
     from astrbot.core.message.message_event_result import MessageChain
 
+# 运行时数据文件清单（观察账本/学习库及 SQLite 侧车与旧版遗留）——卸载时随插件
+# 目录被无条件删除，必须存进 AstrBot 持久化目录（坑 50）
+_RUNTIME_DATA_FILES = (
+    "data_learning.json",
+    "data_monitor.db",
+    "data_monitor.db-wal",
+    "data_monitor.db-shm",
+    "data_monitor.json.imported",
+)
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.12.1")
+
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.2")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
         self.states = StateManager()
-        self.learning_store = learning.LearningStore()
-        self.monitor = monitor.Monitor(monitor.MonitorStore(monitor._DATA_FILE))
+        data_dir = self._persistent_data_dir()
+        self.learning_store = learning.LearningStore(path=data_dir / "data_learning.json")
+        self.monitor = monitor.Monitor(monitor.MonitorStore(data_dir / "data_monitor.db"))
         self._cycle_counter: dict[str, int] = {}
         self._group_sessions: set[str] = set()
         self._monitor_sessions: set[str] = set()
 
+    @staticmethod
+    def _persistent_data_dir() -> Path:
+        """运行时数据目录：AstrBot 的 data/plugin_data/<插件名>。
+
+        AstrBot 卸载插件时会无条件删除整个插件目录，勾选框只控制配置文件与
+        plugin_data 的清理——观察账本/学习库放插件目录里会在"未勾删除数据"
+        的卸载中一起消失（坑 50）。首次运行把插件目录里的旧数据文件搬过来。
+        """
+        from astrbot.core.star.star_tools import StarTools
+
+        data_dir = StarTools.get_data_dir("astrbot_plugin_maisoul")
+        legacy_dir = Path(__file__).resolve().parent
+        for name in _RUNTIME_DATA_FILES:
+            src, dst = legacy_dir / name, data_dir / name
+            if src.exists() and not dst.exists():
+                shutil.move(str(src), str(dst))
+                logger.info(f"maisoul: 运行时数据 {name} 已迁移至持久化目录 {data_dir}")
+        return data_dir
+
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.12.1 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.2 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -740,8 +772,14 @@ class MaiSoulPlugin(Star):
                 if _last_day is not None and m_day != _last_day:
                     contexts.append({"role": "user", "content": (
                         f"时间：{_dt.fromtimestamp(float(m.get('ts') or 0)).strftime('%Y-%m-%d %H:%M:%S')}")})
-                contexts.append({"role": "user",
-                                 "content": planner.render_pending_messages([m])})
+                # 自己的旧发言进 assistant 轮纯文本（对齐 SessionBackedMessage
+                # 角色分工：用户消息 user 轮带说话人前缀，bot 发言 assistant 轮）
+                if str(m.get("sid")) == "self":
+                    contexts.append({"role": "assistant",
+                                     "content": str(m.get("text") or "").strip()})
+                else:
+                    contexts.append({"role": "user",
+                                     "content": planner.render_pending_messages([m])})
                 _last_day = m_day
             # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
             # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
@@ -790,7 +828,12 @@ class MaiSoulPlugin(Star):
                 # deferred 提醒只进本次请求、不进 contexts 历史（对齐每轮重建注入）
                 reminder = planner.build_deferred_reminder(
                     deps.deferred_pool, pl.discovered_tools)
-                request_content = f"{user_content}\n\n{reminder}" if reminder else user_content
+                # 每轮末尾的一次性 user 提醒（对齐 chat_loop_step 的
+                # final_user_message=PLANNER_FINAL_USER_REMINDER，v6.13.2 补齐）
+                final_reminder = planner.PLANNER_FINAL_USER_REMINDER.format(
+                    bot_name=str(eff_cfg.get("bot_name") or "").strip() or "麦麦")
+                request_content = "\n\n".join(
+                    x for x in (user_content, reminder, final_reminder) if x)
                 # 识图上下文（v6.9.9）：最近 N 张聊天图片附给多模态模型（默认关）
                 image_parts = prompt.image_context_parts(st, eff_cfg)
                 if image_parts:
@@ -1181,7 +1224,7 @@ class MaiSoulPlugin(Star):
             f"\n\n【maisoul 麦麦三件套（本群主动发言由意愿评分触发｜人格={pname}）】\n"
             f"{prompt.build_identity(eff_cfg)}\n"
             f"{prompt.select_reply_style(eff_cfg)}\n"
-            f"{prompt.build_behavior_block(eff_cfg)}"
+            f"{prompt.build_preset_dialogues_block(eff_cfg)}"
             f"{OUTPUT_INSTRUCTION}"
         )
         req.system_prompt = (req.system_prompt or "") + inject
@@ -1257,7 +1300,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.12.1状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.2状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1372,4 +1415,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.12.1 已卸载")
+        logger.info("maisoul v6.13.2 已卸载")

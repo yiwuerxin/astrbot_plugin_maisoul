@@ -1,6 +1,6 @@
 {
   "mode": {
-    "description": "发言模式。independent=独立模式：评分触发后单轮生成；native=协作模式：触发后交给原生 agent（生态插件注入生效）；planner=决策模式：完全对标 maisaka——触发后进入 LLM Planner 循环（reply/wait/send_emoji/fetch_history 工具，由它决定回不回/等多久/发表情）",
+    "description": "发言模式：planner=决策循环（默认）；independent=直接生成；native=交给 AstrBot 原生 agent",
     "type": "string",
     "default": "planner",
     "options": [
@@ -10,42 +10,47 @@
     ]
   },
   "escape_at_wake": {
-    "description": "逃生舱（@/唤醒放行）：开启后群聊 @机器人或唤醒前缀的消息放行给 AstrBot 原生路径回答；关闭（默认）=聊天全面接管，@/唤醒也进麦麦管线，作为 at 级强制点名触发（inevitable_at_reply 语义）。/指令 与其他插件的触发不受此开关影响，恒放行",
+    "description": "逃生舱：开启后群聊 @/唤醒前缀放行给 AstrBot 原生回答；关闭（默认）则聊天全面由麦麦管线接管",
     "type": "bool",
     "default": false
   },
   "eco_injection": {
-    "description": "生态注入桥：麦麦管线生成前手动触发 on_llm_request 钩子链、发言后触发 on_llm_response——心弦好感/记忆/世界书等注入型插件在 independent/planner 模式下同样生效（native 模式原生已生效）。关闭后麦麦提示词完全对标 MaiBot、不带任何生态注入",
+    "description": "生态注入：把好感/记忆/世界书等插件的注入接进麦麦管线（生成前收集，发言后回写）",
     "type": "bool",
     "default": true
   },
   "bot_name": {
-    "description": "机器人昵称：麦麦显示和自称时使用的名字（对应 bot_config.toml 的 bot.nickname）；同时是主配置人格的人格名，/persona 昵称 可切换",
+    "description": "麦麦显示和自称时使用的名字。",
     "type": "string",
     "default": "麦麦"
   },
   "aliases": {
-    "description": "别名：别人可能用来称呼麦麦的名字，用于辅助识别提及——身份行与提及检测共用同一列表（对应 bot.alias_names）",
+    "description": "别人可能用来称呼麦麦的名字，用于辅助识别提及。",
     "type": "list",
     "default": []
   },
   "personality": {
-    "description": "人格设定：麦麦的人格和身份设定，建议简短描述她是谁、是什么性格（对应 [personality].personality）",
+    "description": "麦麦的人格和身份设定，建议简短描述她是谁、是什么性格。",
     "type": "string",
     "default": "（示例人设，请改写成你的 bot）一名喜欢上网冲浪的女生，聊天风格随和自然，平时在群里安静看大家聊天，被点名或遇到感兴趣的话题时才接话。"
   },
+  "preset_dialogues": {
+    "description": "预设对话：示范麦麦说话风格的示例对话，生成回复时作为风格参考注入（只参考语气与用词，不照搬内容）",
+    "type": "list",
+    "default": []
+  },
   "behavior_style": {
-    "description": "行为风格：Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静（对应 [personality].behavior_style）",
+    "description": "Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。",
     "type": "string",
     "default": "是大二女大学生，现在正在上网和群友聊天。善于用人类的角度思考问题，聊天偏日常。不会没话题硬找话题，"
   },
   "reply_style": {
-    "description": "表达风格：麦麦平时说话的风格，例如简短、温和、吐槽或正式（对应 [personality].reply_style）",
+    "description": "麦麦平时说话的风格，例如简短、温和、吐槽或正式。",
     "type": "string",
     "default": "你的风格平淡简短，可以参考贴吧的回复风格。不滥用比喻或者生硬句子。视情况省略主语或者进行倒装，风格较为随意。"
   },
   "multiple_reply_style": {
-    "description": "备用表达风格列表；触发后只影响本次回复（对应 [personality].multiple_reply_style）",
+    "description": "备用说话风格；触发后只影响本次回复。",
     "type": "list",
     "default": [
       "你的风格平淡但不失讽刺，很简短,很白话。可以参考贴吧，微博的回复风格。",
@@ -56,27 +61,27 @@
     ]
   },
   "multiple_probability": {
-    "description": "随机启用备用表达风格的概率，0-100；0 表示不随机切换（对应 [personality].multiple_probability）",
+    "description": "随机启用备用风格的概率；0 表示不随机切换。",
     "type": "int",
     "default": 0
   },
   "group_chat_prompt": {
-    "description": "群聊提示词：群聊通用提示词，告诉麦麦群聊中该怎么说话（对应 [chat.reply_style].group_chat_prompt）",
+    "description": "群聊通用提示词，告诉麦麦群聊中该怎么说话。",
     "type": "string",
     "default": "你正在qq群里聊天，下面是群里正在聊的内容，聊天中包含文字，图片和表情包等消息。\n回复尽量简短一些。最好一次对一个话题进行回复，但必须考虑不同群友发言之间的交互，免得啰嗦或者回复内容太乱。请注意把握聊天内容。\n不要总是提及自己的身份背景，根据聊天内容自由发挥，但是要日常不浮夸，不要刻意找话题。\n不用刻意回复其他人发送的表情包，只要关注表情包表达的含义。你可以适当发送表情包表达情绪。控制回复的频率，不要每个人的消息都回复，优先回复你感兴趣的或者主动提及你的，适当回复其他话题。\n"
   },
   "private_chat_prompts": {
-    "description": "私聊提示词（对应 [chat.reply_style].private_chat_prompts）：私聊通用提示词，告诉麦麦私聊中该怎么说话",
+    "description": "私聊通用提示词，告诉麦麦私聊中该怎么说话。",
     "type": "string",
     "default": "你正在聊天，下面是正在聊的内容，其中包含聊天记录和聊天中的图片。\n回复尽量简短一些。请注意把握聊天内容。\n请考虑对方的发言频率，想法，思考自己何时回复以及回复内容。\n"
   },
   "chat_prompts": {
-    "description": "额外 Prompt（对应 [chat.reply_style].chat_prompts）：[{platform: \"适配器平台名(如qq)\", item_id: \"群号\", rule_type: \"group\", prompt: \"要求\"}]——精确匹配，多条命中拼接",
+    "description": "给指定群聊或私聊额外补充聊天要求；有特殊群规或语气要求时再加。",
     "type": "list",
     "default": []
   },
   "reply_trigger_mode": {
-    "description": "回复触发模式（对应 [chat.reply_timing].reply_trigger_mode）：frequency=频率触发，按照新消息数量决定思考（ceil(1/f) 条 + 空窗补偿）；reply_necessity=必要性触发，综合新消息数量、内容、过往发言决定思考（评分≥80）",
+    "description": "控制新消息何时进入 Planner。",
     "type": "string",
     "default": "frequency",
     "options": [
@@ -85,67 +90,67 @@
     ]
   },
   "talk_value": {
-    "description": "群聊频率（对应 [chat.reply_timing].talk_value）：群聊里麦麦主动说话的频率；越小越安静，0 为静默接收",
+    "description": "群聊里麦麦主动说话的频率；越小越安静。",
     "type": "float",
     "default": 1.0
   },
   "private_talk_value": {
-    "description": "私聊频率（对应 [chat.reply_timing].private_talk_value）：私聊里麦麦主动说话的频率；越小越安静，0 为静默接收",
+    "description": "私聊里麦麦主动说话的频率；越小越安静。",
     "type": "float",
     "default": 1.0
   },
   "mentioned_bot_reply": {
-    "description": "提及必回复（对应 [chat.reply_timing].mentioned_bot_reply）：开启后，只要消息提到麦麦名字就更容易回复（强制触发）",
+    "description": "开启后，只要消息提到麦麦名字就更容易回复。",
     "type": "bool",
     "default": false
   },
   "inevitable_at_reply": {
-    "description": "At 必回复（对应 [chat.reply_timing].inevitable_at_reply）：开启后，被 @ 时会尽量回复（强制触发）",
+    "description": "开启后，被 @ 时会尽量回复。",
     "type": "bool",
     "default": true
   },
   "enable_talk_value_rules": {
-    "description": "启用动态发言频率规则（对应 [chat.reply_timing].enable_talk_value_rules）：开启后可按聊天或时间段单独调整发言频率",
+    "description": "开启后，可以按聊天或时间段单独调整发言频率。",
     "type": "bool",
     "default": false
   },
   "max_consecutive_wait_count": {
-    "description": "连续 wait 上限（对应 [chat.reply_timing].max_consecutive_wait_count）：Planner 最多连续调用 wait 多少次；达到上限后 wait 工具会拒绝继续进入等待",
+    "description": "Planner 最多连续调用 wait 多少次；达到上限后 wait 工具会拒绝继续进入等待。",
     "type": "int",
     "default": 3
   },
   "planner_interrupt_max_consecutive_count": {
-    "description": "规划器连续打断上限（对应 [chat.reply_timing].planner_interrupt_max_consecutive_count）：思考时来了新消息，最多重新思考多少次；0 表示不打断",
+    "description": "思考时来了新消息，最多重新思考多少次。",
     "type": "int",
     "default": 0
   },
   "no_action_backoff_base_seconds": {
-    "description": "空闲退避基准（对应 [chat.reply_timing].no_action_backoff_base_seconds）：连续决定不回复后，下一次检查前先等多久",
+    "description": "连续决定不回复后，下一次检查前先等多久。",
     "type": "float",
     "default": 15
   },
   "no_action_backoff_cap_seconds": {
-    "description": "空闲退避上限（对应 [chat.reply_timing].no_action_backoff_cap_seconds）：不回复退避等待的最长时间",
+    "description": "不回复退避等待的最长时间。",
     "type": "float",
     "default": 300
   },
   "no_action_backoff_start_count": {
-    "description": "空闲退避起点（对应 [chat.reply_timing].no_action_backoff_start_count）：连续几次不回复后开始放慢检查",
+    "description": "连续几次不回复后开始放慢检查。",
     "type": "int",
     "default": 2
   },
   "no_action_backoff_bypass_pending_count": {
-    "description": "空闲退避绕过消息数（对应 [chat.reply_timing].no_action_backoff_bypass_pending_count）：等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断等待",
+    "description": "等待期间新消息达到多少条就立刻重新处理；0 表示不按条数打断等待。",
     "type": "int",
     "default": 6
   },
   "enable_reply_quote": {
-    "description": "启用引用回复（对应 [chat.reply_style].enable_reply_quote）：回复时是否可以引用上一条或相关消息（AstrBot 本版本 MessageChain 暂无引用组件，当前仅保留开关语义）",
+    "description": "回复时是否可以引用上一条或相关消息。",
     "type": "bool",
     "default": true
   },
   "talk_value_rules": {
-    "description": "动态发言频率规则（对应 [chat.reply_timing].talk_value_rules）：[{platform, item_id, rule_type: group, time: \"HH:MM-HH:MM 或 *\", value}]——精确匹配优先于通配，时段命中优先于留空",
+    "description": "动态发言频率规则；可让麦麦在某些群、私聊或时段更活跃或更安静。",
     "type": "list",
     "default": [
       {
@@ -165,62 +170,62 @@
     ]
   },
   "max_context_size": {
-    "description": "群聊上下文（对应 [chat].max_context_size）：群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型",
+    "description": "群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型。",
     "type": "int",
     "default": 40
   },
   "max_private_context_size": {
-    "description": "私聊上下文（对应 [chat].max_private_context_size）：私聊回复时参考的最近消息数量",
+    "description": "私聊回复时参考的最近消息数量。",
     "type": "int",
     "default": 60
   },
   "ban_words": {
-    "description": "过滤词（对应 [message_receive].ban_words）：非指令消息包含这些词即整条丢弃，不进麦麦上下文也不触发回复",
+    "description": "包含这些词的消息会被过滤，不进入麦麦处理。",
     "type": "list",
     "default": []
   },
   "ban_msgs_regex": {
-    "description": "正则过滤（对应 [message_receive].ban_msgs_regex）：非指令消息命中任一正则即整条丢弃",
+    "description": "用正则过滤消息；适合更复杂的过滤规则。",
     "type": "list",
     "default": []
   },
   "enable_image_context": {
-    "description": "识图上下文（对应 [visual] 精简版）：把最近几张聊天图片直接附给模型理解（需视觉/多模态模型）；MaiBot 的识图等待与大图压缩不在此范围",
+    "description": "识图上下文：把最近几张聊天图片直接附给模型理解（需视觉/多模态模型）",
     "type": "bool",
     "default": false
   },
   "image_context_max_num": {
-    "description": "识图上下文最多附带图片数（对应 [visual].max_image_num 精简；MaiBot 默认 128 指多模态请求上限，maisoul 按最近附带张数取小值）",
+    "description": "识图上下文一次最多附带的图片张数",
     "type": "int",
     "default": 3
   },
   "enable_context_optimization": {
-    "description": "优化上下文（对应 [chat].enable_context_optimization）：压缩部分上下文——自己的旧发言只保留最近 3 条，减少模型消耗；一般建议开启",
+    "description": "压缩部分上下文，减少模型消耗；一般建议开启。",
     "type": "bool",
     "default": true
   },
   "keyword_rules": {
-    "description": "关键词规则（对应 [keyword_reaction].keyword_rules）：[{keywords: [\"词\"], regex: [], reaction: \"命中后给麦麦看的提示\"}]——命中后给麦麦追加一段固定反应提示",
+    "description": "命中关键词后，给麦麦追加一段固定反应提示。",
     "type": "list",
     "default": []
   },
   "regex_rules": {
-    "description": "正则规则（对应 [keyword_reaction].regex_rules）：[{keywords: [], regex: [\"(?P<word>\\\\w+)\"], reaction: \"提示 [word]\"}]——reaction 中的 [命名捕获组] 会被替换为匹配内容",
+    "description": "命中正则规则后，给麦麦追加一段固定反应提示。",
     "type": "list",
     "default": []
   },
   "expression_checked_only": {
-    "description": "使用精选表达（对应 [expression].expression_checked_only）：仅使用通过 AI 检查的表达",
+    "description": "仅使用人工精选的表达。",
     "type": "bool",
     "default": true
   },
   "expression_self_reflect": {
-    "description": "优化表达方式学习（对应 [expression].expression_self_reflect）：写入表达方式前先让 AI 检查，减少学到奇怪内容",
+    "description": "写入表达方式前先让 AI 检查，减少学到奇怪内容。",
     "type": "bool",
     "default": true
   },
   "expression_selection_mode": {
-    "description": "表达使用方式（对应 [expression].expression_selection_mode）：legacy=随手抽取候选；vector_intent 需要嵌入模型，未配置时自动回落 legacy",
+    "description": "表达使用方式：legacy 随手抽取候选；vector_intent 按语义召回（需嵌入模型，未配置时自动回落 legacy）",
     "type": "string",
     "default": "legacy",
     "options": [
@@ -229,12 +234,12 @@
     ]
   },
   "max_expression_learner": {
-    "description": "表达学习最大并发（对应 [expression].max_expression_learner）：同时运行的表达学习任务数量；太高可能占用更多资源",
+    "description": "同时运行的表达学习任务数量；太高可能占用更多资源。",
     "type": "int",
     "default": 3
   },
   "expression_learning_list": {
-    "description": "表达学习配置（对应 [expression].learning_list）：[{platform, item_id, type: \"group\", use, learn}]——平台与群号都留空表示全局默认",
+    "description": "配置哪些聊天会学习和使用表达方式；默认规则不够时再单独添加。",
     "type": "list",
     "default": [
       {
@@ -247,12 +252,12 @@
     ]
   },
   "expression_groups": {
-    "description": "表达共享组（对应 [expression].expression_groups）：[{targets: [{platform, item_id}]}]——组内聊天共享学到的表达方式",
+    "description": "让多个群聊或私聊共享学到的表达方式。",
     "type": "list",
     "default": []
   },
   "jargon_learning_list": {
-    "description": "黑话学习配置（对应 [jargon].learning_list）：[{platform, item_id, type: \"group\", use, learn}]——平台与群号都留空表示全局默认",
+    "description": "配置哪些聊天会学习和使用表达方式；默认规则不够时再单独添加。",
     "type": "list",
     "default": [
       {
@@ -265,129 +270,129 @@
     ]
   },
   "jargon_groups": {
-    "description": "黑话共享组（对应 [jargon].jargon_groups）：[{targets: [{platform, item_id}]}]——组内聊天共享学到的黑话",
+    "description": "让多个群聊或私聊共享学到的黑话。",
     "type": "list",
     "default": []
   },
   "enable_response_post_process": {
-    "description": "启用回复后处理（对应 [response_post_process].enable）：开启后会对回复做错别字、分段等后处理",
+    "description": "开启后会对回复做错别字、分段等后处理。",
     "type": "bool",
     "default": true
   },
   "typing_speed": {
-    "description": "打字速度（对应 [response_post_process].typing_speed）：模拟打字等待时间；0 最快（不等待），1 默认，2 更慢",
+    "description": "模拟打字等待时间；0 最快，1 默认，2 更慢。",
     "type": "float",
     "default": 1.0
   },
   "typo_enable": {
-    "description": "启用错别字（对应 [chinese_typo].enable）：让麦麦偶尔打错字，更像真人聊天",
+    "description": "让麦麦偶尔打错字，更像真人聊天。",
     "type": "bool",
     "default": true
   },
   "typo_enable_correction_quote": {
-    "description": "错别字纠正时引用原消息（对应 [chinese_typo].enable_correction_quote）：纠正错别字时是否引用上一条包含错别字的消息（AstrBot 引用回复原语暂未接，当前仅记录标记）",
+    "description": "纠正错别字时，是否引用上一条包含错别字的消息。",
     "type": "bool",
     "default": true
   },
   "typo_correction_quote_probability": {
-    "description": "错别字纠正引用概率（对应 [chinese_typo].correction_quote_probability）：生成纠正消息时引用上一条错别字消息的概率",
+    "description": "生成纠正消息时，引用上一条错别字消息的概率。",
     "type": "float",
     "default": 1.0
   },
   "typo_error_rate": {
-    "description": "单字错字概率（对应 [chinese_typo].error_rate）：单个字被替换成错字的概率",
+    "description": "单个字被替换成错字的概率。",
     "type": "float",
     "default": 0.01
   },
   "typo_min_freq": {
-    "description": "最小字频（对应 [chinese_typo].min_freq）：只对常见程度达到该值的字尝试制造错字",
+    "description": "只对常见程度达到该值的字尝试制造错字。",
     "type": "int",
     "default": 9
   },
   "typo_tone_error_rate": {
-    "description": "声调错字概率（对应 [chinese_typo].tone_error_rate）：按相近声调制造错字的概率",
+    "description": "按相近声调制造错字的概率。",
     "type": "float",
     "default": 0.1
   },
   "typo_word_replace_rate": {
-    "description": "整词替换概率（对应 [chinese_typo].word_replace_rate）：整词被替换成错词的概率",
+    "description": "整词被替换成错词的概率。",
     "type": "float",
     "default": 0.006
   },
   "splitter_enable": {
-    "description": "启用回复分割（对应 [response_splitter].enable）：把过长回复拆成多条发送",
+    "description": "把过长回复拆成多条发送。",
     "type": "bool",
     "default": true
   },
   "splitter_max_length": {
-    "description": "单条最大长度（对应 [response_splitter].max_length）：单条回复允许的最大长度（超过 2 倍且基本全中文时返回默认回复）",
+    "description": "单条回复允许的最大长度。",
     "type": "int",
     "default": 512
   },
   "splitter_max_sentence_num": {
-    "description": "单条最大句数（对应 [response_splitter].max_sentence_num）：分割后消息数量超过该值时的处理阈值",
+    "description": "单条回复最多包含多少个句子。",
     "type": "int",
     "default": 8
   },
   "splitter_max_split_num": {
-    "description": "最多分割条数（对应 [response_splitter].max_split_num）：最终合并到最多几条消息发出",
+    "description": "一次回复最多拆成几条消息。",
     "type": "int",
     "default": 3
   },
   "splitter_enable_kaomoji_protection": {
-    "description": "保护颜文字（对应 [response_splitter].enable_kaomoji_protection）：分割前把颜文字替换为占位符，分割后恢复",
+    "description": "尽量避免把颜文字从中间拆开。",
     "type": "bool",
     "default": false
   },
   "splitter_enable_overflow_return_all": {
-    "description": "超限保留全文（对应 [response_splitter].enable_overflow_return_all）：分割后消息数量过多时直接返回原文而非默认回复",
+    "description": "句子太多时是否直接保留完整回复，不再强行截断。",
     "type": "bool",
     "default": false
   },
   "maid_bridge": {
-    "description": "管家桥：聊天模型可召唤 maid_agent 的 call_maid 管家执行任务（查资料/跑任务），拿到结果后用麦麦口吻转达。需要安装 astrbot_plugin_maid_agent",
+    "description": "把管家工具（call_maid）一并暴露给聊天模型，可调度复杂 agent 任务",
     "type": "bool",
     "default": true
   },
   "chat_tools": {
-    "description": "暴露给聊天 LLM 的工具名列表（MaiBot 原生工具的 AstrBot 等价物，如 send_meme=表情包）。MaiBot 没有的能力不要加进来——那些走 call_maid 管家",
+    "description": "暴露给聊天模型的工具",
     "type": "list",
     "default": [
       "send_meme"
     ]
   },
   "chat_skills": {
-    "description": "暴露给聊天 LLM 的 AstrBot 技能名列表，经原生 build_skills_prompt 注入聊天系统提示词（技能细节由模型按 SKILL.md 自行读取）",
+    "description": "暴露给聊天模型的 AstrBot 技能，经原生技能提示注入",
     "type": "list",
     "default": []
   },
   "enable": {
-    "description": "总开关。关闭后群聊回到 AstrBot 原生/Heartflow 路径",
+    "description": "总开关；关闭后插件不再接管聊天",
     "type": "bool",
     "default": true
   },
   "personas": {
-    "description": "多人格库：[{name, bot_name?(机器人昵称), personality(人格设定), behavior_style(行为风格), reply_style(表达风格), aliases?(别名), group_chat_prompt?(群聊提示词)}]，非空字段覆盖主配置；主配置本身即固定首行人格，名字为 bot_name（如麦麦），/persona 麦麦 可切换",
+    "description": "多人格库：[{name, bot_name?, personality, behavior_style?, reply_style?, aliases?, group_chat_prompt?}]，非空字段覆盖主配置；主配置固定为首行人格，名字为机器人昵称，/persona 昵称 可切换",
     "type": "list",
     "default": []
   },
   "default_persona": {
-    "description": "默认人格名；空 = 使用主配置三件套",
+    "description": "默认人格名；留空使用主配置",
     "type": "string",
     "default": ""
   },
   "group_persona": {
-    "description": "静态群绑定：[{chat: \"群号或*\", name: \"人格名\"}]",
+    "description": "静态群绑定：[{chat: 群号或*, name: 人格名}]",
     "type": "list",
     "default": []
   },
   "follow_persona_switch": {
-    "description": "兼容 astrbot_plugin_persona_switch：/persona 切换会话人格后，同名 maisoul 人格自动生效（最高优先级）",
+    "description": "兼容人格切换插件：/persona 切换后，同名 maisoul 人格最高优先生效",
     "type": "bool",
     "default": true
   },
   "task_models": {
-    "description": "模型管理（对应 MaiBot [model_task_config]）：任务→模型绑定与选择策略。条目 {task, models:[{provider,model}], strategy}；models 空列表=跟随 AstrBot 默认 Provider。策略 sequential=按顺序优先（异常降级）/random=随机/balance=负载均衡。温度与最大 Token 跟随 Provider 在 AstrBot 模型设置中的配置。",
+    "description": "模型管理：任务到模型的绑定与选择策略。条目 {task, models:[{provider,model}], strategy}；models 留空表示跟随 AstrBot 默认模型",
     "type": "list",
     "default": [
       {
