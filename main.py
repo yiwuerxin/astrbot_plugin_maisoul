@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.2")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.3")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.2 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.3 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -829,7 +829,7 @@ class MaiSoulPlugin(Star):
                 reminder = planner.build_deferred_reminder(
                     deps.deferred_pool, pl.discovered_tools)
                 # 每轮末尾的一次性 user 提醒（对齐 chat_loop_step 的
-                # final_user_message=PLANNER_FINAL_USER_REMINDER，v6.13.2 补齐）
+                # final_user_message=PLANNER_FINAL_USER_REMINDER，v6.13.3 补齐）
                 final_reminder = planner.PLANNER_FINAL_USER_REMINDER.format(
                     bot_name=str(eff_cfg.get("bot_name") or "").strip() or "麦麦")
                 request_content = "\n\n".join(
@@ -1300,7 +1300,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.2状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.3状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1404,15 +1404,24 @@ class MaiSoulPlugin(Star):
 
     @staticmethod
     def _resp_text(resp) -> str:
+        """提取 LLMResponse 可见文本。
+
+        completion_text 缺失时走 result_chain 逐组件取 .text——绝不 str()
+        整个组件：纯工具调用轮链上常是空 Plain，str() 得到 pydantic repr
+        （type=<ComponentType.Plain...> text=''），会冒充思考文本并顶掉
+        reasoning_content 兜底（坑 49 同族，v6.13.3）。
+        """
         if not resp:
             return ""
         txt = getattr(resp, "completion_text", None)
         if txt:
-            return txt.strip()
+            return str(txt).strip()
         chain = getattr(resp, "result_chain", None)
         if chain:
-            return "".join(str(c) for c in getattr(chain, "chain", [])).strip()
+            parts = [str(getattr(c, "text", "") or "")
+                     for c in getattr(chain, "chain", [])]
+            return "".join(parts).strip()
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.2 已卸载")
+        logger.info("maisoul v6.13.3 已卸载")
