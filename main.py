@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.3")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.4")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.3 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.4 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -742,7 +742,6 @@ class MaiSoulPlugin(Star):
             system_prompt = planner.build_planner_system(
                 eff_cfg, prompt.build_attention_block(eff_cfg, gid, platform, is_group))
             # 对齐 MaiBot：chat_history 作为上下文消息传给 planner（非本轮 pending 的历史）
-            contexts: list[dict] = []
             context_key = "max_context_size" if is_group else "max_private_context_size"
             # 2× KV cache 稳定窗（对齐 CONTEXT_SELECTION_CACHE_STABILITY_RATIO=2.0：
             # 选取窗口放大一倍，避免逐条追加导致前缀缓存失效）
@@ -752,7 +751,12 @@ class MaiSoulPlugin(Star):
             pending_now = [m for m in all_buf
                            if float(m.get("ts") or 0) > pl.last_cycle_ts
                            and str(m.get("sid")) != "self"]
-            history_msgs = [m for m in all_buf if m not in pending_now][-context_limit:]
+            # 历史段 = 聊天记录 + 历史 planner 分析按时间交错（对齐 MaiBot 会话
+            # 历史：分析作为 assistant 轮回灌，输出格式由此自我强化，坑 52）；
+            # 窗口在合并流上截取，included 为进入窗口的聊天消息（fetch 去重种子）
+            contexts, history_msgs = planner.build_history_contexts(
+                [m for m in all_buf if m not in pending_now],
+                pl.analysis_log, context_limit)
             history_count = len(history_msgs)
             pl.context_cutoff_ts = min(
                 (float(m.get("ts") or 0) for m in pending_now), default=0.0)
@@ -761,26 +765,6 @@ class MaiSoulPlugin(Star):
                 str(m.get("msg_id") or "").strip()
                 for m in list(history_msgs) + list(pending_now)
                 if str(m.get("msg_id") or "").strip()}
-            # 跨日插入时间行（对齐 _build_request_messages：相邻消息跨天时分隔）
-            from datetime import datetime as _dt
-            contexts = []
-            _last_day = None
-            for m in history_msgs:
-                if not str(m.get("text") or "").strip():
-                    continue
-                m_day = _dt.fromtimestamp(float(m.get("ts") or 0)).date()
-                if _last_day is not None and m_day != _last_day:
-                    contexts.append({"role": "user", "content": (
-                        f"时间：{_dt.fromtimestamp(float(m.get('ts') or 0)).strftime('%Y-%m-%d %H:%M:%S')}")})
-                # 自己的旧发言进 assistant 轮纯文本（对齐 SessionBackedMessage
-                # 角色分工：用户消息 user 轮带说话人前缀，bot 发言 assistant 轮）
-                if str(m.get("sid")) == "self":
-                    contexts.append({"role": "assistant",
-                                     "content": str(m.get("text") or "").strip()})
-                else:
-                    contexts.append({"role": "user",
-                                     "content": planner.render_pending_messages([m])})
-                _last_day = m_day
             # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
             # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
             use_jargon, _ = learning.learning_flags(
@@ -886,6 +870,9 @@ class MaiSoulPlugin(Star):
                         analysis = planner.PLANNER_REFLECT_ON_REPEAT
                 if analysis:
                     pl.last_analysis = analysis
+                    # 记入会话历史（对齐 build_model_output_context_messages：
+                    # 下一轮起回灌为 assistant 轮，坑 52）
+                    pl.analysis_log.append({"ts": time.time(), "text": analysis})
                 logger.debug(f"maisoul planner[{gid}]: 正文 {len(self._resp_text(resp))} 字 / "
                              f"思考 {len(reasoning)} 字 / 工具 "
                              f"{len(getattr(resp, 'tools_call_name', None) or [])} 个")
@@ -1258,6 +1245,11 @@ class MaiSoulPlugin(Star):
     @filter.command("maisoul")
     async def maisoul_cmd(self, event: AstrMessageEvent):
         raw = (event.message_str or "").strip()
+        # waking_check 只剥唤醒前缀"/"，CommandFilter 匹配不改写 message_str——
+        # 此处 raw 仍带命令名"maisoul"，子命令解析先剥掉它（否则 sim 等子命令
+        # 全部落到状态分支，v6.13.4 修复）
+        if raw.lower().startswith("maisoul"):
+            raw = raw[len("maisoul"):].strip()
         arg = raw.lower()
         if arg.startswith("sim ") and raw[4:].strip():
             # 调试：把文本灌进完整管线（门控→planner→replyer），不依赖群聊适配器
@@ -1300,7 +1292,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.3状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.4状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1424,4 +1416,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.3 已卸载")
+        logger.info("maisoul v6.13.4 已卸载")

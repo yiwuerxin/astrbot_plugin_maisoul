@@ -29,7 +29,9 @@
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime as _dt
 
 from astrbot.api import logger
 
@@ -120,6 +122,58 @@ def fold_old_turns(contexts: list[dict], turn_start: int,
     contexts[turn_start:fold_end] = [{
         "role": "user",
         "content": FOLDED_TOOL_HISTORY_PREFIX + "\n" + "\n".join(lines)}]
+
+
+def build_history_contexts(history_msgs: list[dict], analyses,
+                           context_limit: int) -> tuple[list[dict], list[dict]]:
+    """合并聊天历史与历史 planner 分析，按时间戳交错构建 contexts 初始段。
+
+    对齐 MaiBot 会话历史机制：build_model_output_context_messages 把 planner
+    每轮输出写入 _chat_history，select_llm_context_messages 在「聊天消息+分析+
+    工具结果」合并流上从新往旧按 2× 稳定窗选取——模型每轮都能看到自己先前
+    轮次的分析（assistant 轮），输出结构由此自我强化。这是部署版 planner 分析
+    呈「当前状态/分析/下一步」格式的来源（提示词并无此要求）；maisoul 此前
+    每轮从聊天记录重建、分析不回灌，格式零样本漂移（v6.13.4 补齐）。
+
+    窗口在合并流上截取（对齐 MaiBot 按合并条数计数）；返回
+    (contexts, included_chat_msgs)，后者为进入窗口的聊天消息——fetch_history
+    去重种子（context_msg_ids）要用它，不能再用截窗前的全量聊天历史。
+    跨日时间行规则与旧实现一致（相邻项跨天时插入「时间：YYYY-MM-DD HH:MM:SS」）。
+    """
+    merged: list[dict] = [
+        {"kind": "chat", "ts": float(m.get("ts") or 0), "msg": m}
+        for m in history_msgs if str(m.get("text") or "").strip()]
+    merged += [
+        {"kind": "analysis", "ts": float(a.get("ts") or 0),
+         "text": str(a.get("text") or "").strip()}
+        for a in analyses if str(a.get("text") or "").strip()]
+    # 稳定排序：同 ts 时聊天消息在前（先插入，分析是响应、天然晚于触发消息）
+    merged.sort(key=lambda x: x["ts"])
+    if context_limit > 0:
+        merged = merged[-context_limit:]
+    contexts: list[dict] = []
+    included_chat: list[dict] = []
+    _last_day = None
+    for item in merged:
+        day = _dt.fromtimestamp(item["ts"]).date()
+        if _last_day is not None and day != _last_day:
+            contexts.append({"role": "user", "content": (
+                f"时间：{_dt.fromtimestamp(item['ts']).strftime('%Y-%m-%d %H:%M:%S')}")})
+        _last_day = day
+        if item["kind"] == "analysis":
+            contexts.append({"role": "assistant", "content": item["text"]})
+            continue
+        m = item["msg"]
+        # 自己的旧发言进 assistant 轮纯文本（对齐 SessionBackedMessage
+        # 角色分工：用户消息 user 轮带说话人前缀，bot 发言 assistant 轮）
+        if str(m.get("sid")) == "self":
+            contexts.append({"role": "assistant",
+                             "content": str(m.get("text") or "").strip()})
+        else:
+            contexts.append({"role": "user",
+                             "content": render_pending_messages([m])})
+        included_chat.append(m)
+    return contexts, included_chat
 
 REPLY_TOOL_SPEC = {
     "type": "object",
@@ -245,7 +299,6 @@ def render_pending_messages(messages: list[dict]) -> str:
     """待处理消息 → HH:MM:SS[msg_id:x][说话人]内容（对齐 1.2.3
     maisaka/context/message_adapter.format_speaker_content 原文格式；
     旧版 <message> 包裹是历史版本 MaiBot 的格式）。"""
-    from datetime import datetime as _dt
     blocks = []
     for m in messages:
         ts = m.get("ts") or time.time()
@@ -277,6 +330,7 @@ class PlannerState:
     running_task: object = None
     interrupt_count: int = 0
     last_analysis: str = ""  # 上一轮 planner 思考（防复读比对用，对齐 _should_replace_reasoning）
+    analysis_log: deque = field(default_factory=lambda: deque(maxlen=200))  # 历史分析 {ts,text}（跨轮回灌，对齐 build_model_output_context_messages 写会话历史；2× 稳定窗外的旧条目随界淘汰）
     discovered_tools: set = field(default_factory=set)  # tool_search 已发现的 deferred 工具（会话级；MaiBot 跟上下文裁切走，此处简化）
     last_event: object = None  # 最近一次真实触发 event（wait 续轮复用：候选列表挂 event 上，换对象=candidate_expired）
     eco_injection: str = ""  # 本轮 replyer 收集的生态注入全文（观察页展示用，轮始清空）
