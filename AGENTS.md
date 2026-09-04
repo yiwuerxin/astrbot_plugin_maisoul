@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.13.6：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）。
+> 当前版本 v6.13.7：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议结构对齐（坑 55）。
 
 ---
 
@@ -603,7 +603,9 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 
 53. **planner 请求结构五处偏离（v6.13.5 修复，v6.13.2 两处误对齐的纠正）**：回灌修完后格式仍有差距，逐项 diff 部署请求 dump 发现——① 消息前缀：部署版是 `planner_messages.build_planner_prefix` 的 `<message msg_id="…" [quote="…"] time="…" user="…" [group_card="…"] [is_self_message="true"]>\n内容`（无闭合标签），v6.13.2 抄的 `HH:MM:SS[msg_id:x][说话人]内容` 是 `format_speaker_content` 的**可见文本**格式，planner 请求根本不用（同一文件里两种格式，用途不同——抄之前必须确认函数挂在哪条调用链上）；② 自发消息进 **user 轮**带 `is_self_message="true"`（v6.13.2 误放 assistant 轮）；③ 尾部结构：部署版每条注入是**独立 user 轮**（`<system-reminder>` deferred 提醒 → `时间：YYYY-MM-DD HH:MM:SS` 每请求一条 → `当前聊天额外注意事项`（chat_prompts 命中，尾部消息而非系统提示词）→ 末尾提醒），maisoul 曾全部 `\n\n` 拼进一个 user turn 且缺时间消息；实现 = 尾部轮临时 append 进 contexts、请求完 `del`（text_chat 的 prompt 参数固定给末尾提醒原文）；④ fetch_history 是 focus 专属（见坑 30）；⑤ 自发消息回写只存首段 80 字 → planner 上下文里自发消息被截断，改存全文（quote 属性一并接通：入站消息提 Reply 组件、自发回写带发送侧引用目标）。**通用教训：功能名相同 ≠ 格式相同，"对齐 MaiBot"的验收物是逐消息 diff 请求 dump（含属性顺序与转义），不是函数名对上就算数**。
 
-54. **planner 思考文本不得回灌；「可见正文锚点」的引导是概率性的（v6.13.6 修复，用户实报"格式差距更大了变成英文"）**：MaiBot 会话历史里的 ReasoningItem（思考块）**重发时恒为空**，只有 AssistantMessageItem（可见正文）持久化为 few-shot——部署版 dump 实锤：其会话冷启动前两轮也是英文思考，因思考不回灌而自然蒸发，某续轮产出第一篇可见中文正文后，格式由模仿锁定「当前状态/分析/下一步」。maisoul 坑 51 的 thinking 兜底把思考文本也记进回灌 → 英文思考成为强吸引子 → 语言/格式双漂移且自锁。修法：`_planner_cycle` 区分 `visible_analysis`（`_resp_text`，回灌唯一来源——analysis_log 与 in-cycle contexts 都只记它）与展示并集（观察页/防复读/latest_reason 仍取正文∪思考）。**部署侧结论（中转多轮对照探测 + owner 确认双端同一中转）**：v4f 完全有能力出可见正文——多轮请求带示范时完美模仿格式续写，无示范时也可能自发写中文；但**冷启动到第一篇正文之间是概率期**（maisoul 实测连 8 轮未引导出来；单轮极简请求恒不出——探测必须用多轮结构，单轮结论不可信）；v4p 的自然风格就是每轮写正文，引导零风险。**排查口径：planner 分析持续英文/格式散 = 还在引导期，最稳是任务级绑定 v4p 立即锁定；留在 v4f 则等第一篇正文出现后自然收敛（或经 owner 拍板在 analysis_log 预置一篇 MaiBot 格式种子跳过引导期——MaiBot 无此机制，属显式偏离）**。**教训：①回灌里"什么进历史"和"什么给用户看"是两套口径，混用会把展示端的兜底变成上下文的毒药；②探测模型行为必须复刻多轮请求结构，单轮极简探测会得出完全相反的结论（本坑两次修正的教训）**。
+54. **planner 思考文本不得回灌；「思考/正文」是双通道，回灌只认正文（v6.13.6 修复，用户实报"格式差距更大了变成英文"）**：MaiBot 每轮输出 = ReasoningItem（思考）+ AssistantMessageItem（可见正文）+ 工具调用；**思考英文起步、正文中文是常态**（owner 观察一致），两通道文本独立。会话历史里思考块重发恒空、只有可见正文持久化为 few-shot——部署 dump 复核（终版）：冷启动前 2 轮只有英文思考（无正文，什么都不回灌），第 3 轮起每轮产出中文结构化正文（「当前状态/分析/下一步」正是 AssistantMessageItem 的 parts[].text），回灌后格式锁定。maisoul 坑 51 的 thinking 兜底把思考文本也记进回灌 → 英文思考成为强吸引子 → 语言/格式双漂移且自锁。修法：`_planner_cycle` 区分 `visible_analysis`（`_resp_text`，回灌唯一来源——analysis_log 与 in-cycle contexts 都只记它）与展示并集（观察页/防复读/latest_reason 仍取正文∪思考；MaiBot 正文空时卡片无文本，maisoul 显示思考兜底是坑 51 的有意展示差异）。**模型选型口径：v4f 经 AstrBot 在工具轮写正文不稳定（同结构请求有时写有时不写：多轮探测一次出一次不出、实跑多轮不出；MaiBot 8/29 会话引导成功即锁定），v4p 稳定每轮写正文——要立即收敛把 planner 绑 v4p，留在 v4f 则接受引导期漂移（或经 owner 拍板在 analysis_log 预置 MaiBot 格式种子跳过引导期，属显式偏离）**。**教训：回灌里"什么进历史"和"什么给用户看"是两套口径，混用会把展示端的兜底变成上下文的毒药**。
+
+55. **planner 工具轮必须走协议结构；dump 分析的字段陷阱（v6.13.7）**：①工具轮表示：MaiBot 的循环内历史是「assistant（思考空投影 + 正文 + tool_use 块）→ tool_result 块」的标准协议轮；maisoul 曾用纯文本 user 轮回执（"[send_emoji 结果]…"），思考轮干脆没有 assistant 轮 → user→user 连续、模型看不见自己调过工具。修法：assistant 轮始终存在（带 `tool_calls`，正文块仅可见正文非空时），工具结果进 `{"role":"tool","tool_call_id":…}` 轮（AstrBot anthropic 源转 tool_result 块并合并连续 tool 轮；OpenAI 源同构）；续轮判定 = contexts 尾部是否 tool 轮；wait 回执跨轮重建后无配对 tool_use，维持 user 文本轮（孤儿 tool_result 会被协议校验拒收）。②**dump 字段陷阱（坑 54 两次误判的根源）**：MaiBot 的 ReasoningItem 文本在 `text_parts`，AssistantMessageItem 文本在 `parts[].text`——两套字段名，读错一个得到静默空串，曾据此误判"部署版正文恒空"。分析 dump 必须全量打印原始 parts 结构，禁止想当然的字段名。
 
 ## 9. 打包与发布
 
