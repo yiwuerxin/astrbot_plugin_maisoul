@@ -1,8 +1,8 @@
 __pycache__/
 *.py[cod]
 
-# 运行时生成的数据（每个部署各自生成，不入库）
-data_learning.json
+# 运行时生成的数据（每个部署各自生成，不入库；* 覆盖 .tmp/.corrupt 侧车）
+data_learning.json*
 data_monitor.db*
 data_monitor.json.imported
 *.log

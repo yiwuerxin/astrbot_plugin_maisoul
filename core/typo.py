@@ -29,6 +29,29 @@ def _is_chinese_char(char: str) -> bool:
     return "\u4e00" <= char <= "\u9fff"
 
 
+_PINYIN_DICT_CACHE: dict | None = None
+
+
+def _shared_pinyin_dict() -> dict:
+    """全字符拼音索引（0x4E00-0x9FFF 逐字 pinyin，与生成器参数无关）。
+
+    进程级缓存：两万字的逐字扫描是秒级开销，此前挂在生成器 __init__ 里，
+    每次调参重建生成器（get_typo_generator 参数元组变化）都会重跑一遍，
+    调参后的第一条回复明显卡顿。"""
+    global _PINYIN_DICT_CACHE
+    if _PINYIN_DICT_CACHE is None:
+        pinyin_dict = defaultdict(list)
+        for code in range(0x4E00, 0x9FFF):
+            char = chr(code)
+            try:
+                py = pinyin(char, style=Style.TONE3)[0][0]
+                pinyin_dict[py].append(char)
+            except Exception:
+                continue
+        _PINYIN_DICT_CACHE = pinyin_dict
+    return _PINYIN_DICT_CACHE
+
+
 class ChineseTypoGenerator:
     """参数与 MaiBot chinese_typo 配置一一对应。"""
 
@@ -39,7 +62,8 @@ class ChineseTypoGenerator:
         self.tone_error_rate = tone_error_rate
         self.word_replace_rate = word_replace_rate
         self.max_freq_diff = max_freq_diff
-        self.pinyin_dict = self._create_pinyin_dict()
+        # 共享缓存（defaultdict）：只读使用，缺失键经 .get 访问不污染缓存
+        self.pinyin_dict = _shared_pinyin_dict()
         self.char_frequency = self._load_char_frequency()
         self._jieba_dict: dict | None = None
 
@@ -70,18 +94,6 @@ class ChineseTypoGenerator:
         except OSError:
             pass
         return normalized
-
-    @staticmethod
-    def _create_pinyin_dict():
-        pinyin_dict = defaultdict(list)
-        for code in range(0x4E00, 0x9FFF):
-            char = chr(code)
-            try:
-                py = pinyin(char, style=Style.TONE3)[0][0]
-                pinyin_dict[py].append(char)
-            except Exception:
-                continue
-        return pinyin_dict
 
     def _get_jieba_dict(self) -> dict:
         if self._jieba_dict is None:
@@ -125,8 +137,8 @@ class ChineseTypoGenerator:
     def _get_similar_frequency_chars(self, char, py, num_candidates=5):
         homophones = []
         if random.random() < self.tone_error_rate:
-            homophones.extend(self.pinyin_dict[self._get_similar_tone_pinyin(py)])
-        homophones.extend(self.pinyin_dict[py])
+            homophones.extend(self.pinyin_dict.get(self._get_similar_tone_pinyin(py), []))
+        homophones.extend(self.pinyin_dict.get(py, []))
         if not homophones:
             return None
         orig_freq = self.char_frequency.get(char, 0)

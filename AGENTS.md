@@ -95,6 +95,8 @@ astrbot_plugin_maisoul/
 ├── core/                     # 核心业务（不依赖 AstrBot 运行时可单测）
 │   ├── constants.py          # 评分词典/常量，逐条对齐 MaiBot reply_necessity.py；
 │   │                         #   含 OUTPUT_INSTRUCTION（MaiBot 输出指令原文）
+│   ├── apivalid.py           # WebUI 写接口输入校验（纯函数）：config 按 schema
+│   │                         #   类型逐键把关、学习库结构/体积校验（v6.15.4）
 │   ├── states.py             # GroupState（buffer/recent_self/last_replies/replied_targets/
 │   │                         #   pending_since_fire/ext_intervals/firing）+ StateManager
 │   │                         #   方法：record_external / mark_fire / record_self_reply /
