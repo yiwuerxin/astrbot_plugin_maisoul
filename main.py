@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.15.3")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.15.4")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -57,6 +57,16 @@ class MaiSoulPlugin(Star):
         self._cycle_counter: dict[str, int] = {}
         self._group_sessions: set[str] = set()
         self._monitor_sessions: set[str] = set()
+        # fire-and-forget 后台任务（wait 续轮/学习器）的强引用——事件循环只持
+        # 弱引用，不持引用的任务可能在执行中被 GC 静默丢弃（CPython 文档明示）
+        self._bg_tasks: set[asyncio.Task] = set()
+
+    def _spawn(self, coro) -> asyncio.Task:
+        """fire-and-forget：持强引用防任务被 GC 中途丢弃，完成即自动移除。"""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
 
     @staticmethod
     def _persistent_data_dir() -> Path:
@@ -80,7 +90,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.15.3 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.15.4 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -375,7 +385,17 @@ class MaiSoulPlugin(Star):
             if self.config["mode"] == "planner":
                 await self._schedule_planner(event, st, gid, False, is_group)
             else:
-                await self._generate_and_send(event, st, detail, "", "", is_group)
+                # 与 _process_chat 独立模式同构的 firing 闸：到点重查与新消息
+                # 触发撞车时只跑一个，防同群双回复
+                if st.firing:
+                    return
+                st.firing = True
+                try:
+                    await self._generate_and_send(event, st, detail, "", "", is_group)
+                except Exception:
+                    logger.error("maisoul 空窗补偿生成回复失败", exc_info=True)
+                finally:
+                    st.firing = False
 
         st.defer_task = asyncio.create_task(_recheck())
         logger.debug(f"maisoul[{gid}] 空窗补偿重查已排期：{delay:.1f}s 后重评")
@@ -390,7 +410,10 @@ class MaiSoulPlugin(Star):
             logger.warning("maisoul: 未配置可用的模型 Provider，本次跳过发言")
             return
 
-        gid = str(event.get_group_id() or event.unified_msg_origin)
+        # 会话键与 _process_chat/on_llm_* 回声钩子同式（群=group_id，私聊=sender_id，
+        # 均空才回退 umo——坑 23：私聊漏掉 sender_id 会让观察账本落错会话、
+        # 学习库按 item_id=用户ID 的匹配全部失效）
+        gid = str(event.get_group_id() or event.get_sender_id() or event.unified_msg_origin)
         umo = event.unified_msg_origin
         platform = str(event.get_platform_name() or "")
         eff_cfg, pname = await personas.resolve_active(
@@ -631,8 +654,7 @@ class MaiSoulPlugin(Star):
                 except Exception:
                     logger.debug("maisoul: 学习任务失败", exc_info=True)
 
-            import asyncio as _asyncio
-            _asyncio.create_task(_run())
+            self._spawn(_run())
         except Exception:
             logger.debug("maisoul: 学习任务调度失败", exc_info=True)
 
@@ -802,9 +824,11 @@ class MaiSoulPlugin(Star):
             # 历史段 = 聊天记录 + 历史 planner 分析按时间交错（对齐 MaiBot 会话
             # 历史：全部聊天消息含自发消息进 user 轮 <message> 前缀，分析作为
             # assistant 轮回灌，输出格式由此自我强化，坑 52/53）；窗口在合并流
-            # 上截取
+            # 上截取。pending 用对象身份排除（m not in pending_now 是逐条 dict
+            # 值相等比较，O(n²)）
+            pending_ids = {id(m) for m in pending_now}
             contexts, history_msgs = planner.build_history_contexts(
-                [m for m in all_buf if m not in pending_now],
+                [m for m in all_buf if id(m) not in pending_ids],
                 pl.analysis_log, context_limit, is_group)
             history_count = len(history_msgs)
             # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
@@ -1118,7 +1142,7 @@ class MaiSoulPlugin(Star):
                                           initial_feedback=receipt)
 
         try:
-            asyncio.create_task(_resume())
+            return self._spawn(_resume())
         except Exception:
             logger.debug("maisoul: wait 恢复调度失败", exc_info=True)
 
@@ -1335,6 +1359,12 @@ class MaiSoulPlugin(Star):
     # ------------------------------------------------------------------ #
     @filter.command("maisoul")
     async def maisoul_cmd(self, event: AstrMessageEvent):
+        # 管理指令鉴权：开关/模式切换会改持久化配置、sim 驱动完整 LLM 管线——
+        # 仅管理员可用（event.is_admin 即 role=="admin"）。WebUI 聊天页的 webchat
+        # 事件 role 恒 member，但整条链路在 dashboard JWT 鉴权墙内，放行以便调试。
+        if not (event.is_admin() or str(event.get_platform_name() or "") == "webchat"):
+            yield event.plain_result("maisoul 指令仅管理员可用")
+            return
         raw = (event.message_str or "").strip()
         # waking_check 只剥唤醒前缀"/"，CommandFilter 匹配不改写 message_str——
         # 此处 raw 仍带命令名"maisoul"，子命令解析先剥掉它（否则 sim 等子命令
@@ -1383,7 +1413,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.15.3状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.15.4状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1523,4 +1553,8 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.15.3 已卸载")
+        # 取消仍挂起的后台任务（wait 续轮/学习器）：插件已停，续轮不应再触发
+        for task in list(self._bg_tasks):
+            task.cancel()
+        self._bg_tasks.clear()
+        logger.info("maisoul v6.15.4 已卸载")

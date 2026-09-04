@@ -89,15 +89,25 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             return jsonify({"success": True, "data": {"providers": providers}})
 
         async def post_config():
+            # silent=True：无 body/坏 JSON 返回 None 再回落空对象；解析出的
+            # falsey 原值（[]/false/0/""）必须原样进校验——`or {}` 会把它们洗成
+            # 合法空对象绕过类型检查（Sourcery 审查）
             try:
-                payload = await request.get_json() or {}
+                payload = await request.get_json(silent=True)
             except Exception:
+                payload = None
+            if payload is None:
                 payload = {}
-            if not isinstance(payload, dict):
-                return jsonify({"success": False, "error": "invalid payload"}), 400
-            for k, v in payload.items():
-                if k in config:
-                    config[k] = v
+            # 类型校验（core/apivalid.py，按 config.schema 逐键把关）：
+            # 错误类型直接拒绝——写入会让门控/后处理的 float()/int() 逐次抛异常
+            from ..core.apivalid import validate_config_payload
+
+            accepted, err = validate_config_payload(
+                getattr(config, "schema", None), payload, config)
+            if err:
+                return jsonify({"success": False, "error": err}), 400
+            for k, v in accepted.items():
+                config[k] = v
             config.save_config()
             return jsonify({"success": True})
 
@@ -109,12 +119,22 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
         async def post_learning():
             if learning_store is None:
                 return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+            # 同 post_config：falsey 原值直接进校验。`or {}` 会把空列表洗成合法
+            # 空对象，整个学习库被静默清空还返回 200（Sourcery 审查）；空对象 {}
+            # 本身仍是合法载荷（WebUI 学习页清空全部条目后保存的语义）
             try:
-                payload = await request.get_json() or {}
+                payload = await request.get_json(silent=True)
             except Exception:
+                payload = None
+            if payload is None:
                 payload = {}
-            if not isinstance(payload, dict):
-                return jsonify({"success": False, "error": "invalid payload"}), 400
+            # 结构校验（core/apivalid.py）：非 dict/分库非对象/列表字段错型/体积
+            # 超限整体拒绝——坏形态落盘后注入路径会逐轮抛异常
+            from ..core.apivalid import validate_learning_payload
+
+            err = validate_learning_payload(payload)
+            if err:
+                return jsonify({"success": False, "error": err}), 400
             learning_store.data = payload
             learning_store.save()
             return jsonify({"success": True})
@@ -127,7 +147,7 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             return jsonify({
                 "success": True,
                 "data": {
-                    "version": "6.15.3",
+                    "version": "6.15.4",
                     "mode": config.get("mode"),
                     "enable": config.get("enable"),
                     "maid_bridge": bool(config.get("maid_bridge", True)),
