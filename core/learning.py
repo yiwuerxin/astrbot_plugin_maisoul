@@ -260,10 +260,8 @@ async def _vector_recall_pool(store: "LearningStore", key: str, pool: list[dict]
             e["emb"] = [float(x) for x in vec]
             e["emb_model"] = embedding_model
             e["emb_fp"] = fp
-        try:
-            store.save()
-        except Exception:
-            pass
+        # 嵌入缓存落盘失败只 warning（save 内处理），不影响本次召回
+        store.save()
     query_vec = (await embedding.get_embeddings([query_text]))[0]
     dim = len(query_vec)
     scored = []
@@ -356,20 +354,45 @@ class LearningStore:
 
     def __init__(self, path: Path = _DATA_FILE):
         self.path = path
+        self.data = self._load()
+
+    def _load(self) -> dict:
+        """读库。损坏（半截 JSON / 非 dict 结构）时备份原文件为 .corrupt 后从
+        空库启动——直接静默清零会无痕迹地丢掉全部学习数据（且半截文件留着
+        下次启动还是损坏）。"""
         try:
-            self.data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
-            self.data = {}
+            logger.warning("maisoul: 学习库读取失败，原文件已备份为 .corrupt，从空库启动",
+                           exc_info=True)
+            self._backup_corrupt()
+            return {}
+        if not isinstance(data, dict):
+            logger.warning(f"maisoul: 学习库结构非法（{type(data).__name__}），"
+                           "原文件已备份为 .corrupt，从空库启动")
+            self._backup_corrupt()
+            return {}
+        return data
+
+    def _backup_corrupt(self) -> None:
+        try:
+            self.path.replace(self.path.parent / (self.path.name + ".corrupt"))
+        except OSError:
+            logger.debug("maisoul: 学习库损坏备份失败", exc_info=True)
 
     def _bucket(self, key: str) -> dict:
         return self.data.setdefault(key, {"expressions": [], "jargons": []})
 
     def save(self):
+        """原子写：先落临时文件再 rename——直接 write_text 在写中途崩溃会留下
+        半截 JSON，下次启动被当作损坏清零（配合 _load 的备份分支兜底）。"""
         try:
-            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=1),
-                                 encoding="utf-8")
+            tmp = self.path.parent / (self.path.name + ".tmp")
+            tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=1),
+                           encoding="utf-8")
+            tmp.replace(self.path)
         except OSError:
-            pass
+            logger.warning("maisoul: 学习库保存失败", exc_info=True)
 
     # ---------------- 表达 ---------------- #
     def expressions(self, key: str) -> list[dict]:

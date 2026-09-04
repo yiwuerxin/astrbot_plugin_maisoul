@@ -34,6 +34,8 @@ from sqlalchemy import Column, DateTime, Float, Index, Integer, Text, create_eng
 from sqlmodel import Field, Session, SQLModel, select
 from sqlalchemy.orm import sessionmaker
 
+from astrbot.api import logger
+
 _DATA_FILE = Path(__file__).resolve().parent.parent / "data_monitor.db"
 
 MONITOR_EVENT_SCHEMA_VERSION = 1
@@ -124,7 +126,8 @@ class MonitorStore:
                 session.commit()
             legacy.rename(legacy.with_suffix(".json.imported"))
         except Exception:
-            pass
+            logger.debug("maisoul: 旧 JSON 观察账本迁移失败（保留原文件，不影响运行）",
+                         exc_info=True)
 
     def record(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         """写入一条麦麦观察时间线事件，并返回带 event_id 的清洗后 payload。"""
@@ -298,7 +301,8 @@ class Monitor:
                 broadcast_data = self.store.record(event, data)
             self.bus.publish(event, broadcast_data)
         except Exception:
-            pass
+            # 观察账本写入失败不阻断聊天管线，但必须留痕（高频路径用 debug）
+            logger.debug(f"maisoul: 麦麦观察事件写入失败: {event}", exc_info=True)
 
     def notify(self, event: str, data: dict[str, Any]) -> None:
         """同步上下文的发射口（本实现全程同步：落账本 + 入队广播）。"""
