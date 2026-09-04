@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.6")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.7")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.6 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.7 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -772,13 +772,18 @@ class MaiSoulPlugin(Star):
             jargon_key = learning.share_key(eff_cfg, "jargon_groups", platform, gid)
             jargon_recent = [m.get("text") or "" for m in list(st.buffer)[-context_limit:]]
             injected_jargons: set[str] = set()
-            tool_feedback = initial_feedback  # wait 回执等一次性前置（首轮生效）
+            # wait 回执等一次性前置（跨轮重建后无配对的 tool_use，维持 user 文本轮，
+            # 对齐差异记录于坑 55）
+            tool_feedback = initial_feedback
             turn_start = len(contexts)  # 本轮循环产生的消息起点（折叠用）
 
             for round_index in range(planner.MAX_INTERNAL_ROUNDS):
                 planner.fold_old_turns(contexts, turn_start)
                 pending = self._drain_pending(st, pl)
-                if not pending and round_index > 0 and not tool_feedback:
+                # contexts 尾部是工具结果轮（role=tool）时视为有待续轮（对齐
+                # tool_continue：工具结果回填后不要求新消息即继续）
+                tail_is_tool = bool(contexts) and contexts[-1].get("role") == "tool"
+                if not pending and round_index > 0 and not tool_feedback and not tail_is_tool:
                     end_reason = "no_new_message"
                     break  # 无新消息且无待回填的工具结果 → 本轮结束
                 if pending:
@@ -882,8 +887,6 @@ class MaiSoulPlugin(Star):
                 logger.debug(f"maisoul planner[{gid}]: 正文 {len(self._resp_text(resp))} 字 / "
                              f"思考 {len(reasoning)} 字 / 工具 "
                              f"{len(getattr(resp, 'tools_call_name', None) or [])} 个")
-                if visible_analysis:
-                    contexts.append({"role": "assistant", "content": visible_analysis})
                 deps.latest_reason = analysis
                 planner_content = analysis
 
@@ -894,6 +897,20 @@ class MaiSoulPlugin(Star):
                      "arguments": (args_list[i] if i < len(args_list)
                                    and isinstance(args_list[i], dict) else {})}
                     for i, n in enumerate(names)]
+                # 对齐 MaiBot 输出项粒度：工具轮的 assistant 轮始终存在（带
+                # tool_calls，正文块仅在可见正文非空时；思考块不重发，坑 54）。
+                # 旧版工具结果走纯文本 user 轮，模型看不见自己调过工具——冷启动
+                # 可见正文引导失败的结构根因（坑 55）
+                if names or visible_analysis:
+                    assistant_turn: dict = {"role": "assistant",
+                                            "content": visible_analysis}
+                    if names:
+                        assistant_turn["tool_calls"] = [
+                            {"id": c["id"], "type": "function",
+                             "function": {"name": c["name"],
+                                          "arguments": c["arguments"]}}
+                            for c in planner_calls]
+                    contexts.append(assistant_turn)
                 if not names:
                     if is_group:
                         pl.record_idle_cycle(eff_cfg)
@@ -953,7 +970,11 @@ class MaiSoulPlugin(Star):
                             "success": "失败" not in str(result) and "不存在" not in str(result),
                             "duration_ms": (time.time() - tool_started) * 1000,
                             "summary": str(result)[:2000]})
-                        tool_feedback += f"[send_emoji 结果] {result}\n"
+                        # 工具结果进 tool 轮（anthropic 源转 tool_result 块并合并
+                        # 连续 tool 轮，对齐 MaiBot 的 ToolResultMessage，坑 55）
+                        contexts.append({"role": "tool",
+                                         "tool_call_id": f"{cycle_id}-{round_index}-{i}",
+                                         "content": str(result)})
                         continue
                     if name == "tool_search":
                         result = deps.on_tool_search(args)
@@ -965,7 +986,9 @@ class MaiSoulPlugin(Star):
                             "duration_ms": (time.time() - tool_started) * 1000,
                             "summary": str(result)[:2000]})
                         logger.info(f"maisoul[{gid}] planner tool_search: {result[:80]}")
-                        tool_feedback += f"[tool_search 结果]\n{result}\n"
+                        contexts.append({"role": "tool",
+                                         "tool_call_id": f"{cycle_id}-{round_index}-{i}",
+                                         "content": str(result)})
                         continue
                     deferred_item = next(
                         (it for it in deps.deferred_pool if it["name"] == name), None)
@@ -985,7 +1008,9 @@ class MaiSoulPlugin(Star):
                             "duration_ms": (time.time() - tool_started) * 1000,
                             "summary": str(result)[:2000]})
                         logger.info(f"maisoul[{gid}] planner deferred {name}: {str(result)[:80]}")
-                        tool_feedback += f"[{name} 结果]\n{result}\n"
+                        contexts.append({"role": "tool",
+                                         "tool_call_id": f"{cycle_id}-{round_index}-{i}",
+                                         "content": str(result)})
                         continue
                     tool_records.append({
                         "tool_call_id": f"{cycle_id}-{round_index}-{i}",
@@ -993,7 +1018,10 @@ class MaiSoulPlugin(Star):
                         "tool_call_source": "planner", "tool_call_source_label": "",
                         "success": False, "duration_ms": (time.time() - tool_started) * 1000,
                         "summary": "未知工具"})
-                    tool_feedback += f"[{name}: 未知工具（若是 deferred 工具，请先调用 tool_search 发现它）]\n"
+                    contexts.append({
+                        "role": "tool",
+                        "tool_call_id": f"{cycle_id}-{round_index}-{i}",
+                        "content": f"未知工具（若是 deferred 工具，请先调用 tool_search 发现它）"})
             pl.agent_state = "idle"
             self._monitor_stage(gid, monitor.STAGE_WAITING, "本轮处理结束",
                                 agent_state=pl.agent_state)
@@ -1289,7 +1317,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.6状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.7状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1429,4 +1457,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.6 已卸载")
+        logger.info("maisoul v6.13.7 已卸载")
