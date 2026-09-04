@@ -1555,7 +1555,7 @@ function moBuildReasonDoc(selEv){
 function rrToggle(box){const b=box.querySelector('.rr-hide');if(b)b.classList.toggle('rr-hide');box.dataset.state=box.dataset.state==='closed'?'open':'closed'}
 function rrFilter(){const a=(document.getElementById('rr_actfilter').value||'').toLowerCase();const s=(document.getElementById('rr_search').value||'').toLowerCase();document.querySelectorAll('.rr-rec').forEach(r=>{const t=r.textContent.toLowerCase();r.style.display=(!a||t.includes(a))&&(!s||t.includes(s))?'':'none'})}
 const sel=document.querySelector('.rr-rec.open');if(sel)sel.scrollIntoView({block:'start'});
-<\/script></body></html>`;
+<\/script><\/body><\/html>`;
   return doc;
 }
 function moOnScroll(el){MO.autoScroll=el.scrollHeight-el.scrollTop-el.clientHeight<80;moRenderStagebar()}
