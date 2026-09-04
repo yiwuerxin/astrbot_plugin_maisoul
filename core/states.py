@@ -80,6 +80,12 @@ class GroupState:
             record["quote"] = str(quote).strip()
         self.buffer.append(record)
         self.last_replies.extend(segments)
+        # 与 replied_targets(deque 30)对齐裁剪防重复提醒字典无界增长——
+        # 防重复查询走 recently_replied(120s 窗)，越界条目永远不会再被读到
+        alive = {mid for mid, _ in self.replied_targets if mid}
+        for mid in list(self.reply_by_target):
+            if mid not in alive:
+                del self.reply_by_target[mid]
 
     def recent_window(self, seconds: float = 300.0) -> int:
         now = time.time()
