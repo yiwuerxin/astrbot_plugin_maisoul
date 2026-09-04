@@ -422,6 +422,17 @@ def test_typo():
     outs = {hot.create_typo_sentence("今天天气真的很好啊")[0] for _ in range(20)}
     check("满概率: 大概率产生错字", len(outs) > 1, str(outs))
     check("字频表已加载", len(gen.char_frequency) > 5000, str(len(gen.char_frequency)))
+    # 拼音字典进程级缓存（v6.15.4）：与参数无关的全字符索引只建一次，
+    # 生成器重建（调参）复用同一对象；.get 读取不往共享 defaultdict 塞空键
+    from astrbot_plugin_maisoul.core import typo as typo_mod
+    shared1 = typo_mod._shared_pinyin_dict()
+    gen2 = ChineseTypoGenerator(error_rate=0.5, min_freq=9,
+                                tone_error_rate=0.1, word_replace_rate=0.0)
+    check("拼音缓存: 生成器重建复用同一字典", gen2.pinyin_dict is shared1)
+    check("拼音缓存: 索引规模完整", len(shared1) > 300, str(len(shared1)))
+    shared1.get("__不存在的音节__", None)
+    check("拼音缓存: .get 读取不污染缓存",
+          "__不存在的音节__" not in typo_mod._shared_pinyin_dict())
 
 
 def test_prompt():
@@ -611,6 +622,16 @@ def test_states():
           isinstance(mc.chain[1], _Plain) and mc.chain[1].text == "你好")
     check("引用链: toDict 为 OneBot reply 段",
           mc.chain[0].toDict() == {"type": "reply", "data": {"id": "m9"}})
+
+    # 防重复提醒字典随 replied_targets(deque 30)对齐裁剪（v6.15.4，防无界增长）
+    st2 = GroupState()
+    for i in range(40):
+        st2.record_self_reply(f"t{i}", [f"回复{i}"], "麦麦")
+    alive = {mid for mid, _ in st2.replied_targets if mid}
+    check("防重复字典: 随 deque 裁剪",
+          set(st2.reply_by_target) == alive and len(alive) <= 30,
+          f"dict={len(st2.reply_by_target)} deque={len(alive)}")
+    check("防重复字典: 最近条目保留", "t39" in st2.reply_by_target)
 
 
 class _FakeTool:
@@ -1049,6 +1070,56 @@ def test_learning():
     idx_end = fm.find(prompt.REPLY_INSTRUCTION)
     check("final: 块顺序对齐 MaiBot",
           0 < idx_rec < idx_expr < idx_jar < idx_ref < idx_kwr < idx_end, fm)
+
+    # 学习库损坏防护（v6.15.4）：坏 JSON / 非 dict 结构 → 备份 .corrupt 后空库启动
+    bad = pathlib.Path(tempfile.mkdtemp()) / "bad.json"
+    bad.write_text('{"global": {"expressions": [', encoding="utf-8")  # 半截 JSON
+    store_bad = learning.LearningStore(path=bad)
+    check("损坏防护: 半截 JSON → 空库启动", store_bad.data == {})
+    check("损坏防护: 原文件备份为 .corrupt",
+          (bad.parent / "bad.json.corrupt").exists() and not bad.exists())
+    bad2 = pathlib.Path(tempfile.mkdtemp()) / "bad2.json"
+    bad2.write_text('["不是对象"]', encoding="utf-8")
+    check("损坏防护: 非 dict 结构 → 空库启动",
+          learning.LearningStore(path=bad2).data == {})
+    check("损坏防护: 结构非法同样备份",
+          (bad2.parent / "bad2.json.corrupt").exists())
+
+    # 原子写：保存后无 .tmp 残留、落盘内容可回读
+    store_bad.add_expression("global", "情境", "风格", True)
+    check("原子写: 无 .tmp 残留", not (bad.parent / "bad.json.tmp").exists())
+    check("原子写: 落盘可回读",
+          len(learning.LearningStore(path=bad).expressions("global")) == 1)
+
+    # WebUI 写接口校验（core/apivalid.py，v6.15.4）
+    from astrbot_plugin_maisoul.core import apivalid
+    schema = {"talk_value": {"type": "float"}, "enable": {"type": "bool"},
+              "aliases": {"type": "list"}, "bot_name": {"type": "string"}}
+    cur = {"talk_value": 1.0, "enable": True, "aliases": [], "bot_name": "麦麦"}
+    ok, err = apivalid.validate_config_payload(
+        schema, {"talk_value": 0.5, "new_key": 1}, cur)
+    check("config校验: 合法值通过且新键被白名单挡住",
+          ok == {"talk_value": 0.5} and err is None, f"{ok} {err}")
+    _, err = apivalid.validate_config_payload(schema, {"talk_value": "abc"}, cur)
+    check("config校验: 类型不符拒绝", err is not None and "talk_value" in err, str(err))
+    _, err = apivalid.validate_config_payload(schema, {"enable": 1}, cur)
+    check("config校验: int 不冒充 bool", err is not None)
+    _, err = apivalid.validate_config_payload(schema, {"aliases": "x,y"}, cur)
+    check("config校验: list 不收字符串", err is not None)
+    _, err = apivalid.validate_config_payload(None, {"talk_value": "abc"}, cur)
+    check("config校验: 无 schema 元数据时保持宽松", err is None)
+    check("学习库校验: 合法结构通过", apivalid.validate_learning_payload(
+        {"global": {"expressions": [{"situation": "s"}], "jargons": []}}) is None)
+    check("学习库校验: 顶层非 dict 拒绝",
+          apivalid.validate_learning_payload([1]) is not None)
+    check("学习库校验: 分库非对象拒绝",
+          apivalid.validate_learning_payload({"global": ["x"]}) is not None)
+    check("学习库校验: 字段错型拒绝",
+          apivalid.validate_learning_payload(
+              {"global": {"expressions": "x"}}) is not None)
+    big = {"global": {"expressions": [{"situation": "x" * 100}] * 100000}}
+    check("学习库校验: 体积超限拒绝",
+          apivalid.validate_learning_payload(big) is not None)
 
 
 def test_planner():
