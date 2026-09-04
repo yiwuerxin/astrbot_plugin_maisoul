@@ -95,9 +95,16 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                 payload = {}
             if not isinstance(payload, dict):
                 return jsonify({"success": False, "error": "invalid payload"}), 400
-            for k, v in payload.items():
-                if k in config:
-                    config[k] = v
+            # 类型校验（core/apivalid.py，按 config.schema 逐键把关）：
+            # 错误类型直接拒绝——写入会让门控/后处理的 float()/int() 逐次抛异常
+            from ..core.apivalid import validate_config_payload
+
+            accepted, err = validate_config_payload(
+                getattr(config, "schema", None), payload, config)
+            if err:
+                return jsonify({"success": False, "error": err}), 400
+            for k, v in accepted.items():
+                config[k] = v
             config.save_config()
             return jsonify({"success": True})
 
@@ -113,8 +120,13 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                 payload = await request.get_json() or {}
             except Exception:
                 payload = {}
-            if not isinstance(payload, dict):
-                return jsonify({"success": False, "error": "invalid payload"}), 400
+            # 结构校验（core/apivalid.py）：非 dict/分库非对象/列表字段错型/体积
+            # 超限整体拒绝——坏形态落盘后注入路径会逐轮抛异常
+            from ..core.apivalid import validate_learning_payload
+
+            err = validate_learning_payload(payload)
+            if err:
+                return jsonify({"success": False, "error": err}), 400
             learning_store.data = payload
             learning_store.save()
             return jsonify({"success": True})
@@ -127,7 +139,7 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             return jsonify({
                 "success": True,
                 "data": {
-                    "version": "6.15.3",
+                    "version": "6.15.4",
                     "mode": config.get("mode"),
                     "enable": config.get("enable"),
                     "maid_bridge": bool(config.get("maid_bridge", True)),
