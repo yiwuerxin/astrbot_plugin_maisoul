@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.14.0")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.14.1")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.14.0 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.14.1 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -127,6 +127,22 @@ class MaiSoulPlugin(Star):
         # 私聊不做唤醒放行——AstrBot 对私聊/webchat 恒置
         # is_at_or_wake_command=True，且 MaiBot 语义中私聊消息本身就全部进入管线。
         escape = text.startswith("/") or event.get_extra("heartflow_triggered")
+        if not escape:
+            # 指令双处理防线：AstrBot 指令不止 "/" 一种触发形态——私聊里裸指令名
+            # （"reset new"）、群聊「唤醒名 + 指令」（"<唤醒名> reset new"，waking_check
+            # 剥前缀后 CommandFilter 照样命中）都会激活指令 handler；指令执行后
+            # 不 stop_event，maisoul 若不识别会把它再当聊天跑一轮（双响应）。
+            # 框架在 filter 阶段已算好 activated_handlers：其中有指令类过滤器
+            # （CommandFilter）即视为指令，放行
+            try:
+                from astrbot.core.star.filter.command import CommandFilter as _CF
+                for _h in (event.get_extra("activated_handlers") or []):
+                    if any(isinstance(_f, _CF)
+                           for _f in (getattr(_h, "event_filters", None) or [])):
+                        escape = True
+                        break
+            except Exception:
+                pass
         explicit = False
         if is_group and event.is_at_or_wake_command:
             if self.config.get("escape_at_wake"):
@@ -675,6 +691,7 @@ class MaiSoulPlugin(Star):
         self._monitor_stage(gid, monitor.STAGE_LOOP_START, f"循环 {cycle_id}",
                             agent_state=pl.agent_state)
         if send_fn is not None:
+            done.close()  # webchat 分支返回完整循环协程；预建的空协程关闭，防未 await 告警
             return self._planner_cycle(umo, platform, gid, st, is_group, send_fn=send_fn,
                                       event=event)
         pl.running_task = asyncio.create_task(
@@ -988,6 +1005,12 @@ class MaiSoulPlugin(Star):
                         if "休息" in message:
                             pl.record_idle_cycle(eff_cfg)
                             pl.agent_state = "idle"
+                        else:
+                            # wait 到期必续轮（坑 26）：调度到期回执再跑一轮——
+                            # 缺失会让会话挂在 wait 直到下一条消息才动
+                            self._schedule_wait_resume(
+                                st, eff_cfg, gid,
+                                max(0, int(args.get("seconds", 0) or 0)))
                         self._monitor_stage(gid, monitor.STAGE_WAITING, "本轮处理结束",
                                             agent_state=pl.agent_state)
                         finalize("wait", str(message)[:120])
@@ -1359,7 +1382,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.14.0状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.14.1状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1499,4 +1522,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.14.0 已卸载")
+        logger.info("maisoul v6.14.1 已卸载")

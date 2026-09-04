@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.14.0：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议结构对齐与 reply 后续轮（坑 55，v4f 无需换模型即收敛中文结构化正文）；表达方式 vector_intent 语义召回（嵌入任务槽 + 向量缓存 + 回落）。
+> 当前版本 v6.14.1：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议结构对齐与 reply 后续轮（坑 55，v4f 无需换模型即收敛中文结构化正文）；表达方式 vector_intent 语义召回（嵌入任务槽 + 向量缓存 + 回落）。
 
 ---
 
@@ -607,6 +607,8 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 54. **planner 思考文本不得回灌；「思考/正文」是双通道，回灌只认正文（v6.13.6 修复，用户实报"格式差距更大了变成英文"）**：MaiBot 每轮输出 = ReasoningItem（思考）+ AssistantMessageItem（可见正文）+ 工具调用；**思考英文起步、正文中文是常态**（owner 观察一致），两通道文本独立。会话历史里思考块重发恒空、只有可见正文持久化为 few-shot——部署 dump 复核（终版）：冷启动前 2 轮只有英文思考（无正文，什么都不回灌），第 3 轮起每轮产出中文结构化正文（「当前状态/分析/下一步」正是 AssistantMessageItem 的 parts[].text），回灌后格式锁定。maisoul 坑 51 的 thinking 兜底把思考文本也记进回灌 → 英文思考成为强吸引子 → 语言/格式双漂移且自锁。修法：`_planner_cycle` 区分 `visible_analysis`（`_resp_text`，回灌唯一来源——analysis_log 与 in-cycle contexts 都只记它）与展示并集（观察页/防复读/latest_reason 仍取正文∪思考；MaiBot 正文空时卡片无文本，maisoul 显示思考兜底是坑 51 的有意展示差异）。**模型口径（v6.13.8 终版）：v4f 工具轮纯思考不出正文、收尾轮（无工具轮）稳定产出中文结构化正文**——正文来源是 reply/wait 之后的收尾反思轮；maisoul 曾在 reply 后立即结束循环（收尾轮不存在 → 正文永远无来源，才显得"v4f 不出正文"），v6.13.8 对齐 reply 续轮后 v4f 实测连续多轮稳定产出「分析：/当前判断：/下一步」式中文正文并跨轮回灌成功，无需换模型。**教训：①回灌里"什么进历史"和"什么给用户看"是两套口径，混用会把展示端的兜底变成上下文的毒药；②"模型不出正文"的结论，先查自己有没有给它出正文的轮次**。
 
 55. **planner 工具轮必须走协议结构 + reply 后循环继续；dump 分析的字段陷阱（v6.13.7/8）**：①工具轮表示：MaiBot 的循环内历史是「assistant（思考空投影 + 正文 + tool_use 块）→ tool_result 块」的标准协议轮；maisoul 曾用纯文本 user 轮回执（"[send_emoji 结果]…"），思考轮干脆没有 assistant 轮 → user→user 连续、模型看不见自己调过工具。修法：assistant 轮始终存在（带 `tool_calls`，正文块仅可见正文非空时），工具结果进 `{"role":"tool","tool_call_id":…}` 轮（AstrBot anthropic 源转 tool_result 块并合并连续 tool 轮；OpenAI 源同构）；续轮判定 = contexts 尾部是否 tool 轮；wait 回执跨轮重建后无配对 tool_use，维持 user 文本轮（孤儿 tool_result 会被协议校验拒收）。②**reply 后必须续轮（v6.13.8，owner 实测"我不喜欢你"提示定位）**：MaiBot 的 reply 正常执行后 `should_pause=False` 继续循环（reasoning_engine 只在未生成可见消息时告警继续），模型下一轮做收尾分析（分析自己刚回完的状态，通常无工具结束）——**v4f 的可见中文正文就产自这类收尾轮**，写入历史成为格式锚点；maisoul 曾 reply 后立即 finalize return，收尾轮不存在 → 正文永远无来源。修法：reply 结果进 tool 轮后 `continue`，由无工具分支自然收尾。③**dump 字段陷阱（坑 54 两次误判的根源）**：MaiBot 的 ReasoningItem 文本在 `text_parts`，AssistantMessageItem 文本在 `parts[].text`——两套字段名，读错一个得到静默空串，曾据此误判"部署版正文恒空"。分析 dump 必须全量打印原始 parts 结构，禁止想当然的字段名。
+
+56. **wait 到期续轮曾整体丢失；指令不止 "/" 一种触发形态（v6.14.1，owner 问"reset new 会在插件里执行正确吗"带出）**：①wait 分支自某次重构后从不调用 `_schedule_wait_resume`（定义在、调用点零）——模型调 wait 后会话挂到下一条消息/@ 才动，坑 26 的「到期必续轮+完成回执」语义名存实亡；修=非休息路径调度续轮（实测 45s wait 到期后自动带回执续轮）。②AstrBot 指令的触发形态：私聊裸指令名（"reset new"，friend_message_needs_wake_prefix=false 时 CommandFilter 直接命中）、群聊「唤醒名+指令」（"<唤醒名> reset new"，waking_check 剥名前缀后命中）——都不以 "/" 开头，maisoul 的 startswith("/") 放行识别不了；且指令执行后框架不 stop_event（handler 间只查 is_stopped），maisoul 会把指令再当聊天跑一轮（双响应实测复现：reset 确认+决策循环同时出现）。修=escape 增查 `activated_handlers` 里有无 CommandFilter 类过滤器（框架 filter 阶段已算好，指令必在列）；实测裸 reset 后决策循环 0 次。③webchat 分支提前 return 使预建 `done = asyncio.sleep(0)` 未 await——每次 webchat planner 路径一条 RuntimeWarning，close 掉。
 
 ## 9. 打包与发布
 
