@@ -60,7 +60,9 @@ def validate_learning_payload(payload) -> str | None:
             if v is not None and not isinstance(v, list):
                 return f"分库 {key}.{field} 必须是数组"
     try:
-        size = len(json.dumps(payload, ensure_ascii=False))
+        # 与 LearningStore.save 的落盘格式同构（indent=1）——用紧凑式测量会
+        # 低估磁盘体积约两成，贴近上限的载荷落盘后超限（Sourcery 审查）
+        size = len(json.dumps(payload, ensure_ascii=False, indent=1))
     except (TypeError, ValueError):
         return "学习库内容无法序列化为 JSON"
     if size > MAX_LEARNING_PAYLOAD_CHARS:

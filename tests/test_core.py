@@ -1084,6 +1084,14 @@ def test_learning():
           learning.LearningStore(path=bad2).data == {})
     check("损坏防护: 结构非法同样备份",
           (bad2.parent / "bad2.json.corrupt").exists())
+    # 嵌套错型（合法 JSON + 顶层 dict 但分库非对象）同样备份+空库
+    # （Sourcery 审查：_bucket() 会返回 list，.get 抛 AttributeError）
+    bad3 = pathlib.Path(tempfile.mkdtemp()) / "bad3.json"
+    bad3.write_text('{"global": []}', encoding="utf-8")
+    check("损坏防护: 分库非对象 → 空库启动",
+          learning.LearningStore(path=bad3).data == {})
+    check("损坏防护: 嵌套错型同样备份",
+          (bad3.parent / "bad3.json.corrupt").exists())
 
     # 原子写：保存后无 .tmp 残留、落盘内容可回读
     store_bad.add_expression("global", "情境", "风格", True)

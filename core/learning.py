@@ -35,6 +35,8 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from . import apivalid
+
 _DATA_FILE = Path(__file__).resolve().parent.parent / "data_learning.json"
 
 MAX_JARGON_REFERENCE_MATCHES = 10  # MAX_JARGON_REFERENCE_MATCHES 原值
@@ -357,9 +359,11 @@ class LearningStore:
         self.data = self._load()
 
     def _load(self) -> dict:
-        """读库。损坏（半截 JSON / 非 dict 结构）时备份原文件为 .corrupt 后从
-        空库启动——直接静默清零会无痕迹地丢掉全部学习数据（且半截文件留着
-        下次启动还是损坏）。"""
+        """读库。损坏（解析失败 / 结构非法——含分库非对象等嵌套错型）时备份
+        原文件为 .corrupt 后从空库启动——直接静默清零会无痕迹地丢掉全部学习
+        数据。结构口径与 WebUI 写入共用 apivalid.validate_learning_payload：
+        合法 JSON 但分库错型（如 {"global": []}）同样会让 _bucket().get 抛
+        AttributeError 打崩注入管线，一并视为损坏（Sourcery 审查）。"""
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
@@ -367,8 +371,9 @@ class LearningStore:
                            exc_info=True)
             self._backup_corrupt()
             return {}
-        if not isinstance(data, dict):
-            logger.warning(f"maisoul: 学习库结构非法（{type(data).__name__}），"
+        err = apivalid.validate_learning_payload(data)
+        if err is not None:
+            logger.warning(f"maisoul: 学习库结构非法（{err}），"
                            "原文件已备份为 .corrupt，从空库启动")
             self._backup_corrupt()
             return {}
