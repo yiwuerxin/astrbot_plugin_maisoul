@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.13.5：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）。
+> 当前版本 v6.13.6：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）。
 
 ---
 
@@ -597,11 +597,13 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 
 50. **运行时数据必须存 AstrBot 持久化目录，不能放插件目录**（v6.12.3 修复，用户实报）：AstrBot `uninstall_plugin` **无条件 `remove_dir(整个插件目录)`**，卸载弹窗的勾选框只控制配置文件（`data/config/<插件>_config.json`）与 `data/plugin_data/<插件名>/` 的清理——观察账本 `data_monitor.db`、学习库 `data_learning.json` 放插件目录里时，"未勾删除数据"的卸载也会连带删光（实机故障：人格在配置文件里幸存、麦麦观察数据全丢，正是这个不对称）。修法：`main._persistent_data_dir()` 经 `StarTools.get_data_dir("astrbot_plugin_maisoul")` 解析 `data/plugin_data/astrbot_plugin_maisoul/`，store 显式传路径；首次运行把插件目录旧文件（含 SQLite -wal/-shm 侧车与 .imported 遗留）搬过去。`data_char_frequency.json` 是随包分发的静态依赖，留在插件目录（删了重装即回）。
 
-51. **`_resp_text` 提取 result_chain 同样禁止 `str()` 组件**（v6.13.3 修复，用户实报观察页 Planner 思考显示 `type=<ComponentType.Plain: 'Plain'> text=''`）：纯工具调用轮模型无正文，completion_text 为空 → 走 result_chain 分支，链上常是一个空 `Plain`，`"".join(str(c) ...)` 把 repr 当成思考文本，且非空结果顶掉了 `reasoning_content` 兜底——thinking 块的真实分析被 repr 冒充。修法：逐组件取 `.text` 拼接，图片等无文本段贡献空串；空结果让位给 reasoning_content。**通用教训：一切"对象转文本"的边界（生态注入/响应提取/展示 join）都取 `.text`，禁止 str() 整个对象**。
+51. **`_resp_text` 提取 result_chain 同样禁止 `str()` 组件**（v6.13.3 修复，用户实报观察页 Planner 思考显示 `type=<ComponentType.Plain: 'Plain'> text=''`）：纯工具调用轮模型无正文，completion_text 为空 → 走 result_chain 分支，链上常是一个空 `Plain`，`"".join(str(c) ...)` 把 repr 当成思考文本，且非空结果顶掉了 `reasoning_content` 兜底——thinking 块的真实分析被 repr 冒充。修法：逐组件取 `.text` 拼接，图片等无文本段贡献空串；空结果让位给 reasoning_content。**通用教训：一切"对象转文本"的边界（生态注入/响应提取/展示 join）都取 `.text`，禁止 str() 整个对象**。（v6.13.6 补注：thinking 兜底只用于**展示**——回灌走可见正文，见坑 54。）
 
 52. **planner 输出格式漂移的根因是"分析不回灌"，不是提示词**（v6.13.4 修复，用户实报"两边观察页 planner 输出规范完全不一致"的第二层）：部署版 MaiBot 的 planner 分析呈「当前状态/分析/下一步」结构，但其 `maisaka_chat.prompt` 原文**没有任何格式指令**（已抓部署容器 prompt 与请求 dump 实锤）——该结构是模型自发产生、再由会话历史回灌自我强化的：`build_model_output_context_messages` 把每轮 planner 输出写进 `_chat_history`，后续每次请求都带着这些旧分析（assistant 轮）作 few-shot 示例，格式即锁死。maisoul 提示词/reminder/模型均与部署版一致，但 contexts 每轮从聊天记录重建、分析不留存 → 每轮对格式都是零样本，同一模型写得随意（甚至整段漂英文）。修法见 §7.1「历史分析跨轮回灌」。**教训：对标"输出规范"不能只 diff 提示词——请求的完整消息列表（含回灌的历史输出）才是行为规格；MaiBot 侧的权威取材是 `logs/maisaka_prompt/planner/*.json` 请求 dump，不是只有 prompt 文件**。
 
 53. **planner 请求结构五处偏离（v6.13.5 修复，v6.13.2 两处误对齐的纠正）**：回灌修完后格式仍有差距，逐项 diff 部署请求 dump 发现——① 消息前缀：部署版是 `planner_messages.build_planner_prefix` 的 `<message msg_id="…" [quote="…"] time="…" user="…" [group_card="…"] [is_self_message="true"]>\n内容`（无闭合标签），v6.13.2 抄的 `HH:MM:SS[msg_id:x][说话人]内容` 是 `format_speaker_content` 的**可见文本**格式，planner 请求根本不用（同一文件里两种格式，用途不同——抄之前必须确认函数挂在哪条调用链上）；② 自发消息进 **user 轮**带 `is_self_message="true"`（v6.13.2 误放 assistant 轮）；③ 尾部结构：部署版每条注入是**独立 user 轮**（`<system-reminder>` deferred 提醒 → `时间：YYYY-MM-DD HH:MM:SS` 每请求一条 → `当前聊天额外注意事项`（chat_prompts 命中，尾部消息而非系统提示词）→ 末尾提醒），maisoul 曾全部 `\n\n` 拼进一个 user turn 且缺时间消息；实现 = 尾部轮临时 append 进 contexts、请求完 `del`（text_chat 的 prompt 参数固定给末尾提醒原文）；④ fetch_history 是 focus 专属（见坑 30）；⑤ 自发消息回写只存首段 80 字 → planner 上下文里自发消息被截断，改存全文（quote 属性一并接通：入站消息提 Reply 组件、自发回写带发送侧引用目标）。**通用教训：功能名相同 ≠ 格式相同，"对齐 MaiBot"的验收物是逐消息 diff 请求 dump（含属性顺序与转义），不是函数名对上就算数**。
+
+54. **planner 思考文本不得回灌；英文漂移的完整因果链（v6.13.6 修复，用户实报"格式差距更大了变成英文"）**：MaiBot 会话历史里的 ReasoningItem（思考块）**重发时恒为空**，只有 AssistantMessageItem（可见正文）持久化为 few-shot——部署版 dump 实锤：其会话冷启动前两轮也是英文思考，因思考不回灌而自然蒸发，第 3 轮起可见中文正文出现并锁定「当前状态/分析/下一步」。maisoul 坑 51 的 thinking 兜底把思考文本也记进回灌 → 英文思考成为强吸引子 → 语言/格式双漂移且自锁。修法：`_planner_cycle` 区分 `visible_analysis`（`_resp_text`，回灌唯一来源——analysis_log 与 in-cycle contexts 都只记它）与展示并集（观察页/防复读/latest_reason 仍取正文∪思考）。**部署侧配套根因（不在插件代码里）**：AstrBot provider 条目若开 `reasoning: true`（如 anthropic 源的 deepseek-v4-flash），thinking 模式下工具轮可见正文恒空 → 永远没有正文锚点、每轮 zero-shot；临时切到 `reasoning=null` 的模型（deepseek-v4-pro）实测第 2 轮即产出结构化中文。给 owner 的排查口径：planner 分析持续英文/格式散 → 先查所用 provider 的 reasoning 开关（关掉，或经任务级模型绑定换无 reasoning 条目），插件侧语义已与 MaiBot 对齐。**教训：回灌机制里"什么进历史"和"什么给用户看"是两套口径，混用会把展示端的兜底变成上下文的毒药**。
 
 ## 9. 打包与发布
 
