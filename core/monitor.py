@@ -404,12 +404,15 @@ class Monitor:
                                planner_interrupted: bool = False,
                                end_reason: str = "",
                                end_detail: str = "",
-                               eco_injection: str = "") -> None:
+                               eco_injection: str = "",
+                               planner_system_prompt: str = "") -> None:
         """广播一轮 planner 结束后的最终聚合事件（MaiBot 原事件名与嵌套结构）。
 
         token 用量来自 AstrBot LLMResponse.usage（TokenUsage：input_other+
         input_cached=输入、output=输出），在 _planner_cycle 逐轮累计。
         native_tool_calls / prompt_html_uri 是 MaiBot Provider 专属，缺省即省。
+        system_prompt / messages[].tool_calls 是 maisoul 扩展（推理过程页复刻
+        部署版 ReasoningLogViewerPage 需要，MaiBot 从 dump 文件取）。
         """
         self._broadcast("planner.finalized", {
             "session_id": session_id,
@@ -419,6 +422,7 @@ class Monitor:
                 planner_request_messages,
                 planner_selected_history_count,
                 planner_tool_count,
+                planner_system_prompt or None,
             ),
             "planner": _serialize_planner_block(
                 planner_content,
@@ -441,16 +445,26 @@ class Monitor:
         })
 
 
-def _serialize_request_block(messages, selected_history_count, tool_count):
+def _serialize_request_block(messages, selected_history_count, tool_count,
+                             system_prompt=None):
     if messages is None and selected_history_count is None and tool_count is None:
         return None
-    return {
-        "messages": [{"role": str(m.get("role", "unknown")),
-                      "content": m.get("content")}
-                     for m in list(messages or []) if isinstance(m, dict)],
-        "selected_history_count": int(selected_history_count or 0),
+    out = {
+        "messages": [], "selected_history_count": int(selected_history_count or 0),
         "tool_count": int(tool_count or 0),
     }
+    for m in list(messages or []):
+        if not isinstance(m, dict):
+            continue
+        item = {"role": str(m.get("role", "unknown")), "content": m.get("content")}
+        if m.get("tool_calls"):
+            item["tool_calls"] = m["tool_calls"]
+        if str(m.get("role")) == "tool" and m.get("tool_call_id"):
+            item["tool_call_id"] = str(m["tool_call_id"])
+        out["messages"].append(item)
+    if system_prompt:
+        out["system_prompt"] = str(system_prompt)
+    return out
 
 
 def _serialize_planner_block(content, tool_calls, prompt_tokens,
