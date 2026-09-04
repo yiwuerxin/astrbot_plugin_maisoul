@@ -59,7 +59,12 @@ class GroupState:
             self.defer_task.cancel()
             self.defer_task = None
 
-    def record_self_reply(self, msg_id: str, segments: list[str], bot_name: str) -> None:
+    def record_self_reply(self, msg_id: str, segments: list[str], bot_name: str,
+                          quote: str = "") -> None:
+        """自发回写。segments 全文拼接进缓冲（对齐 MaiBot 保存完整可见文本，
+        旧版只存首段前 80 字，planner 上下文里自发消息被截断，v6.13.5 修正）；
+        quote=本次回复引用的目标 msg_id（发送侧带 Reply 时传入，渲染进
+        <message quote="…"> 属性）。"""
         now = time.time()
         self.last_fire_ts = now
         self.recent_self.append(now)
@@ -68,9 +73,12 @@ class GroupState:
         self.cancel_defer()
         if msg_id:
             self.reply_by_target[msg_id] = "\n".join(segments)
-        self.buffer.append({"name": bot_name, "sid": "self", "msg_id": "",
-                            "text": segments[0][:80] if segments else "",
-                            "at_bot": False, "reply_bot": False, "ts": now})
+        record = {"name": bot_name, "sid": "self", "msg_id": "",
+                  "text": "\n".join(segments),
+                  "at_bot": False, "reply_bot": False, "ts": now}
+        if str(quote or "").strip():
+            record["quote"] = str(quote).strip()
+        self.buffer.append(record)
         self.last_replies.extend(segments)
 
     def recent_window(self, seconds: float = 300.0) -> int:
