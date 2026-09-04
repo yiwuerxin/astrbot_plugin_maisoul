@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.7")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.8")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.7 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.8 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -939,11 +939,14 @@ class MaiSoulPlugin(Star):
                         logger.info(f"maisoul[{gid}] planner reply: {result[:80]}")
                         pl.reset_backoff()
                         pl.consecutive_wait_count = 0
-                        pl.agent_state = "idle"
-                        self._monitor_stage(gid, monitor.STAGE_WAITING, "本轮处理结束",
-                                            agent_state=pl.agent_state)
-                        finalize("reply", str(result)[:120])
-                        return
+                        # 对齐 MaiBot：reply 正常执行后不暂停循环（tool_continue，
+                        # reasoning_engine 只在未生成可见消息时告警后继续）——
+                        # 模型下一轮做收尾分析（通常无工具结束），该轮产出的
+                        # 可见中文正文进回灌，是格式锁定的来源（坑 55）
+                        contexts.append({"role": "tool",
+                                         "tool_call_id": f"{cycle_id}-{round_index}-{i}",
+                                         "content": str(result)})
+                        continue
                     if name == "wait":
                         message = deps.on_wait(args)
                         tool_records.append({
@@ -1317,7 +1320,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.7状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.8状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1457,4 +1460,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.7 已卸载")
+        logger.info("maisoul v6.13.8 已卸载")
