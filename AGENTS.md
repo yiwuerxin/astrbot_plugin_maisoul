@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.13.3：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）。
+> 当前版本 v6.13.4：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）。
 
 ---
 
@@ -253,7 +253,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
 - **加 MaiBot 工具等价物**：装好对应 AstrBot 插件 → 在 `chat_tools` 默认值与页面说明中加入工具名 → MAIBOT_TOOL_EQUIVALENTS 补映射记录。
 - **调"话痨程度"**：talk_value（全局）或 talk_value_rules（按群/时段）；单群用 chat_prompts 给语气要求。
 - **排查为何不说话**：`docker logs <astrbot容器> | grep maisoul` 看门控明细（频率/模式/pending/阈值/空窗补偿/评分）与 planner 决策日志（LLM 返回 tools=…/reply/wait/无动作结束/学习）。
-- **不接 QQ 测试整条管线**：WebUI 聊天页直接发消息（webchat=私聊事件，v6.6 起被接管）；或聊天里发 `/maisoul sim <文本>` 强制走私聊全管线并输出门控明细；或调 dashboard API：
+- **不接 QQ 测试整条管线**：WebUI 聊天页直接发消息（webchat=私聊事件，v6.6 起被接管）；或聊天里发 `/maisoul sim <文本>` 强制走私聊全管线并输出门控明细（v6.13.4 修复：waking_check 只剥唤醒前缀、CommandFilter 不改写 message_str，handler 里 raw 仍带命令名"maisoul"——子命令解析须先剥命令名，否则 sim 恒落状态分支）；或调 dashboard API：
   ```bash
   curl -X POST -H "Authorization: Bearer <JWT>" -H "Content-Type: application/json" \
        -d '{"session_id":"webchat!<用户名>!<uuid>","message":"晚上好","stream":false}' \
@@ -327,6 +327,16 @@ behavior_style 分工已改回 MaiBot 语义：只进 planner 系统提示词（
 运行期修正（v6.6.x，均为对齐 MaiBot 行为的补齐）：
 - planner 请求首轮以 contexts 注入最近历史（群 40/私聊 60 条，对齐 chat_history 传参），
   fetch_history 返回"尚未进入上下文"的更早消息（新到旧，上限 50）
+- **历史分析跨轮回灌（v6.13.4，坑 52）**：contexts 初始段 = 聊天记录 + 历史
+  planner 分析按时间戳交错（`planner.build_history_contexts`，分析进 assistant
+  轮；2× 稳定窗在合并流上截取，进入窗口的聊天消息作为 fetch 去重种子）；
+  每轮分析记入 `PlannerState.analysis_log`（deque 200）供下一轮回灌——对齐
+  MaiBot `build_model_output_context_messages` 把 planner 输出写会话历史、
+  `select_llm_context_messages` 在合并流上选窗的机制。这是部署版 planner
+  分析呈「当前状态/分析/下一步」结构的来源（提示词并无此格式要求，模型
+  自发 + 看到自己历史分析而自我强化）；maisoul 此前每轮重建不回灌，格式
+  零样本漂移（中英混杂、随笔式）。工具调用/结果轮仍只在循环内存活
+  （fold_old_turns 折叠，见 §7.2 工程差异）。
 - 工具结果轮（tool_continue）不要求新消息即继续，直到 reply/wait/无工具/轮数上限
 - contexts 顺序 user→assistant；wait 到期有积压自动续轮
 - v6.13.2 planner 请求三处保真补齐（用户实报"两边观察页输出规范完全不一致"根因）：
@@ -583,6 +593,8 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 50. **运行时数据必须存 AstrBot 持久化目录，不能放插件目录**（v6.12.3 修复，用户实报）：AstrBot `uninstall_plugin` **无条件 `remove_dir(整个插件目录)`**，卸载弹窗的勾选框只控制配置文件（`data/config/<插件>_config.json`）与 `data/plugin_data/<插件名>/` 的清理——观察账本 `data_monitor.db`、学习库 `data_learning.json` 放插件目录里时，"未勾删除数据"的卸载也会连带删光（实机故障：人格在配置文件里幸存、麦麦观察数据全丢，正是这个不对称）。修法：`main._persistent_data_dir()` 经 `StarTools.get_data_dir("astrbot_plugin_maisoul")` 解析 `data/plugin_data/astrbot_plugin_maisoul/`，store 显式传路径；首次运行把插件目录旧文件（含 SQLite -wal/-shm 侧车与 .imported 遗留）搬过去。`data_char_frequency.json` 是随包分发的静态依赖，留在插件目录（删了重装即回）。
 
 51. **`_resp_text` 提取 result_chain 同样禁止 `str()` 组件**（v6.13.3 修复，用户实报观察页 Planner 思考显示 `type=<ComponentType.Plain: 'Plain'> text=''`）：纯工具调用轮模型无正文，completion_text 为空 → 走 result_chain 分支，链上常是一个空 `Plain`，`"".join(str(c) ...)` 把 repr 当成思考文本，且非空结果顶掉了 `reasoning_content` 兜底——thinking 块的真实分析被 repr 冒充。修法：逐组件取 `.text` 拼接，图片等无文本段贡献空串；空结果让位给 reasoning_content。**通用教训：一切"对象转文本"的边界（生态注入/响应提取/展示 join）都取 `.text`，禁止 str() 整个对象**。
+
+52. **planner 输出格式漂移的根因是"分析不回灌"，不是提示词**（v6.13.4 修复，用户实报"两边观察页 planner 输出规范完全不一致"的第二层）：部署版 MaiBot 的 planner 分析呈「当前状态/分析/下一步」结构，但其 `maisaka_chat.prompt` 原文**没有任何格式指令**（已抓部署容器 prompt 与请求 dump 实锤）——该结构是模型自发产生、再由会话历史回灌自我强化的：`build_model_output_context_messages` 把每轮 planner 输出写进 `_chat_history`，后续每次请求都带着这些旧分析（assistant 轮）作 few-shot 示例，格式即锁死。maisoul 提示词/reminder/模型均与部署版一致，但 contexts 每轮从聊天记录重建、分析不留存 → 每轮对格式都是零样本，同一模型写得随意（甚至整段漂英文）。修法见 §7.1「历史分析跨轮回灌」。**教训：对标"输出规范"不能只 diff 提示词——请求的完整消息列表（含回灌的历史输出）才是行为规格；MaiBot 侧的权威取材是 `logs/maisaka_prompt/planner/*.json` 请求 dump，不是只有 prompt 文件**。
 
 ## 9. 打包与发布
 

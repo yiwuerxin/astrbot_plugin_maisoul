@@ -1162,6 +1162,51 @@ def test_planner():
     P.fold_old_turns(ctx2, 0)
     check("折叠: 未超限不动", ctx2 == [{"role": "user", "content": "只有一组"}])
 
+    # v6.13.4：历史分析跨轮回灌（对齐 MaiBot 会话历史机制——planner 输出
+    # 写入 _chat_history，后续轮次作为 assistant 轮回灌，格式由此自我强化）
+    _day1 = 1788000000.0  # 固定基准时间戳（同一天内）
+    chat_hist = [
+        {"name": "张三", "sid": "u1", "msg_id": "m1", "text": "早", "ts": _day1},
+        {"name": "麦麦", "sid": "self", "msg_id": "", "text": "早啊", "ts": _day1 + 10},
+    ]
+    ana_log = [{"ts": _day1 + 20,
+                "text": "当前状态：对方刚打招呼。\n分析：友好回应即可。"}]
+    chat_new = [{"name": "张三", "sid": "u1", "msg_id": "m2", "text": "在吗", "ts": _day1 + 30}]
+    ctxs, inc = P.build_history_contexts(chat_hist + chat_new, ana_log, 10)
+    check("回灌: 交错顺序 user→assistant(自己)→assistant(分析)→user",
+          [c["role"] for c in ctxs] == ["user", "assistant", "assistant", "user"],
+          str([c["role"] for c in ctxs]))
+    check("回灌: 分析文本原样进 assistant 轮",
+          ctxs[2]["content"] == "当前状态：对方刚打招呼。\n分析：友好回应即可。")
+    check("回灌: 自己旧发言进 assistant 轮纯文本", ctxs[1]["content"] == "早啊")
+    check("回灌: included_chat 为进入窗口的聊天消息（fetch 去重种子）",
+          [m.get("msg_id") for m in inc] == ["m1", "", "m2"])
+    ctxs_w, inc_w = P.build_history_contexts(chat_hist + chat_new, ana_log, 2)
+    check("回灌: 窗口在合并流上截取（聊天+分析一起数）",
+          [c["role"] for c in ctxs_w] == ["assistant", "user"]
+          and ctxs_w[0]["content"].startswith("当前状态")
+          and [m.get("msg_id") for m in inc_w] == ["m2"],
+          str([c["role"] for c in ctxs_w]))
+    _day2 = _day1 + 86400  # 次日
+    ctxs_d, _ = P.build_history_contexts(
+        chat_hist, [{"ts": _day2, "text": "新一天的分析"}], 10)
+    check("回灌: 跨日插时间行（分析跨日同样触发）",
+          any(c["role"] == "user" and c["content"].startswith("时间：")
+              for c in ctxs_d) and ctxs_d[-1]["content"] == "新一天的分析",
+          str(ctxs_d))
+    ctxs_e, inc_e = P.build_history_contexts(
+        chat_hist, [{"ts": _day1, "text": ""}, {"ts": _day1, "text": "  "}], 10)
+    check("回灌: 空文本分析过滤、同 ts 聊天在前",
+          [c["role"] for c in ctxs_e] == ["user", "assistant"]
+          and [m.get("msg_id") for m in inc_e] == ["m1", ""])
+    ctxs_none, inc_none = P.build_history_contexts(chat_hist, [], 10)
+    check("回灌: 无分析时退化为纯聊天历史",
+          [c["role"] for c in ctxs_none] == ["user", "assistant"]
+          and [m.get("msg_id") for m in inc_none] == ["m1", ""])
+    ps_log = P.PlannerState()
+    check("PlannerState: analysis_log 默认有界",
+          hasattr(ps_log, "analysis_log") and ps_log.analysis_log.maxlen == 200)
+
     # v6.9.8：过滤词（对齐 check_ban_words/check_ban_regex）
     check("过滤: 子串命中", trigger.hit_ban_filter("这个广告真烦", ["广告"], []))
     check("过滤: 正则命中", trigger.hit_ban_filter("领红包加微信123", [], [r"微信\d+"]))
