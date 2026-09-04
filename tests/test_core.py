@@ -566,7 +566,10 @@ def test_states():
     check("触发后积压清零+防重复", st.pending_since_fire == 0 and st.recently_replied("m1"))
     check("防重复: 其他消息不命中", not st.recently_replied("mX"))
     st.record_self_reply("m2", ["段落一", "段落二"], "麦麦")
-    check("自发回写: 缓冲与防复读", st.buffer[-1]["text"] == "段落一" and "段落二" in st.last_replies)
+    check("自发回写: 缓冲存全文与防复读",
+          st.buffer[-1]["text"] == "段落一\n段落二" and "段落二" in st.last_replies)
+    st.record_self_reply("m3", ["引用回复"], "麦麦", quote="m1")
+    check("自发回写: quote 目标进记录", st.buffer[-1].get("quote") == "m1")
     check("状态输出字段", set(sm.status_all()["g1"]) == {"buffer", "pending", "recent_self", "last_fire_ago", "persona"})
 
     # 间隔样本统计四规则（对齐 runtime：30min 窗 / <5s 连发不采样 / 均值下限 30s / 回退 30s）
@@ -1052,8 +1055,8 @@ def test_planner():
     print("[Planner 决策层]")
     from astrbot_plugin_maisoul.core import planner as P
 
-    # fetch_history：对齐 MaiBot _get_focus_fetch_history_messages —— 按 msg_id 去重，
-    # 召回过的不再返回（否则模型拿重复内容会无限重试）
+    # fetch_history 已移除（v6.13.5）：MaiBot focus 模式专属工具，部署版
+    # focus_mode=false 不暴露——工具集与请求结构均不得出现
     st = GroupState()
     for i in range(6):
         st.record_external({"name": f"u{i}", "sid": str(i), "msg_id": f"m{i}",
@@ -1063,19 +1066,14 @@ def test_planner():
         async def _planner_send_emoji(self, deps): return ""
     deps = P.PlannerDeps(_PluginStub(), st, {}, None, "qq", "g1", True)
     pl = st.planner_state()
-    pl.context_msg_ids = {"m4", "m5"}  # 模拟已进上下文的历史
-    r1 = deps.on_fetch_history({"num": 3})
-    check("fetch: 只返回未进上下文的（从新到旧）",
-          "m3" in r1 and "m2" in r1 and "m1" in r1 and "m4" not in r1 and "m5" not in r1, r1[:120])
-    r2 = deps.on_fetch_history({"num": 3})
-    check("fetch: 二次调用不重复（去重后拿更早的）",
-          "m0" in r2 and "m3" not in r2 and "召回消息数: 1" in r2, r2[:120])
-    r3 = deps.on_fetch_history({"num": 3})
-    check("fetch: 取尽后明确告知 0 条", "召回消息数: 0" in r3 and "没有尚未进入上下文" in r3)
-    check("fetch: 汇报格式对齐 MaiBot",
-          r1.startswith("已从当前聊天 chat_id=g1 获取尚未进入上下文的消息。")
-          and "平台: qq" in r1 and "类型: group" in r1
-          and "召回顺序为从新到旧" in r1 and "msg_id=" in r1)
+    if _HAS_REAL_ASTRBOT:  # ToolSet 构造依赖框架（CI 离线跳过）
+        tool_names = sorted(t.name for t in P.build_planner_toolset(deps).tools)
+        check("工具集: fetch_history 不再暴露（focus 专属）",
+              "fetch_history" not in tool_names
+              and tool_names == ["reply", "send_emoji", "tool_search", "wait"],
+              str(tool_names))
+    check("PlannerState: context_msg_ids 已随 fetch 移除",
+          not hasattr(pl, "context_msg_ids"))
 
     sysp = P.build_planner_system(
         {"bot_name": "麦麦", "behavior_style": "大二学生"},
@@ -1162,6 +1160,73 @@ def test_planner():
     P.fold_old_turns(ctx2, 0)
     check("折叠: 未超限不动", ctx2 == [{"role": "user", "content": "只有一组"}])
 
+    # v6.13.4/5：历史分析跨轮回灌 + 部署版消息格式（对齐 MaiBot 会话历史——
+    # planner 输出写入 _chat_history 后续作为 assistant 轮回灌；聊天消息含自发
+    # 消息全部进 user 轮 <message> 前缀，planner_messages.build_planner_prefix 原文）
+    _day1 = 1788000000.0  # 固定基准时间戳（同一天内）
+    import datetime as _dtm
+    _t1 = _dtm.datetime.fromtimestamp(_day1).strftime("%H:%M:%S")
+    _t2 = _dtm.datetime.fromtimestamp(_day1 + 10).strftime("%H:%M:%S")
+    chat_hist = [
+        {"name": "张三", "sid": "u1", "msg_id": "m1", "text": "早", "ts": _day1},
+        {"name": "麦麦", "sid": "self", "msg_id": "", "text": "早啊", "ts": _day1 + 10},
+    ]
+    ana_log = [{"ts": _day1 + 20,
+                "text": "当前状态：对方刚打招呼。\n分析：友好回应即可。"}]
+    chat_new = [{"name": "张三", "sid": "u1", "msg_id": "m2", "text": "在吗", "ts": _day1 + 30}]
+    ctxs, inc = P.build_history_contexts(chat_hist + chat_new, ana_log, 10)
+    check("回灌: 交错顺序 user(消息)→user(自发)→assistant(分析)→user",
+          [c["role"] for c in ctxs] == ["user", "user", "assistant", "user"],
+          str([c["role"] for c in ctxs]))
+    check("回灌: 消息前缀 = build_planner_prefix 原文格式",
+          ctxs[0]["content"] == f'<message msg_id="m1" time="{_t1}" user="张三" group_card="张三">\n早',
+          ctxs[0]["content"])
+    check("回灌: 自发消息 user 轮 + is_self_message、无 group_card",
+          ctxs[1]["content"] == f'<message msg_id="" time="{_t2}" user="麦麦" is_self_message="true">\n早啊',
+          ctxs[1]["content"])
+    check("回灌: 分析文本原样进 assistant 轮",
+          ctxs[2]["content"] == "当前状态：对方刚打招呼。\n分析：友好回应即可。")
+    check("回灌: included_chat 为进入窗口的聊天消息",
+          [m.get("msg_id") for m in inc] == ["m1", "", "m2"])
+    ctxs_w, inc_w = P.build_history_contexts(chat_hist + chat_new, ana_log, 2)
+    check("回灌: 窗口在合并流上截取（聊天+分析一起数）",
+          [c["role"] for c in ctxs_w] == ["assistant", "user"]
+          and ctxs_w[0]["content"].startswith("当前状态")
+          and [m.get("msg_id") for m in inc_w] == ["m2"],
+          str([c["role"] for c in ctxs_w]))
+    _day2 = _day1 + 86400  # 次日
+    ctxs_d, _ = P.build_history_contexts(
+        chat_hist, [{"ts": _day2, "text": "新一天的分析"}], 10)
+    check("回灌: 跨日插时间行（分析跨日同样触发）",
+          any(c["role"] == "user" and c["content"].startswith("时间：")
+              for c in ctxs_d) and ctxs_d[-1]["content"] == "新一天的分析",
+          str(ctxs_d))
+    ctxs_e, inc_e = P.build_history_contexts(
+        chat_hist, [{"ts": _day1, "text": ""}, {"ts": _day1, "text": "  "}], 10)
+    check("回灌: 空文本分析过滤、同 ts 聊天在前",
+          [c["role"] for c in ctxs_e] == ["user", "user"]
+          and [m.get("msg_id") for m in inc_e] == ["m1", ""])
+    ctxs_none, inc_none = P.build_history_contexts(chat_hist, [], 10)
+    check("回灌: 无分析时退化为纯聊天历史",
+          [c["role"] for c in ctxs_none] == ["user", "user"]
+          and [m.get("msg_id") for m in inc_none] == ["m1", ""])
+    # 私聊无 group_card；quote 属性与转义（对齐 build_planner_prefix）
+    ctxs_p, _ = P.build_history_contexts(
+        [{"name": "张三", "sid": "u1", "msg_id": "m9", "text": "hi",
+          "ts": _day1, "quote": "m8"}], [], 10, is_group=False)
+    check("回灌: 私聊无 group_card、quote 属性渲染",
+          ctxs_p[0]["content"] == f'<message msg_id="m9" quote="m8" time="{_t1}" user="张三">\nhi',
+          ctxs_p[0]["content"])
+    esc = P.render_planner_message(
+        {"name": '张"三&', "sid": "u1", "msg_id": "<m>", "text": "内容",
+         "ts": _day1, "quote": "a,b"}, True)
+    check("回灌: 属性值 XML 转义与 quote 去重拼接",
+          esc.startswith('<message msg_id="&lt;m&gt;" quote="a,b" time="')
+          and 'user="张&quot;三&amp;"' in esc and 'group_card="张&quot;三&amp;"' in esc, esc)
+    ps_log = P.PlannerState()
+    check("PlannerState: analysis_log 默认有界",
+          hasattr(ps_log, "analysis_log") and ps_log.analysis_log.maxlen == 200)
+
     # v6.9.8：过滤词（对齐 check_ban_words/check_ban_regex）
     check("过滤: 子串命中", trigger.hit_ban_filter("这个广告真烦", ["广告"], []))
     check("过滤: 正则命中", trigger.hit_ban_filter("领红包加微信123", [], [r"微信\d+"]))
@@ -1192,14 +1257,26 @@ def test_planner():
     ps3.reset_backoff()
     check("退避: 非空闲重置", not ps3.should_delay(bcfg, 1))
 
-    import datetime as _dtm
-    _ts = time.time()
-    blocks = P.render_pending_messages(
-        [{"msg_id": "m1", "name": "张三", "text": "大家好", "ts": _ts}])
-    check("消息前缀对齐 format_speaker_content",
-          blocks == _dtm.datetime.fromtimestamp(_ts).strftime("%H:%M:%S") + "[msg_id:m1][张三]大家好", blocks)
     check("末尾提醒原文", P.PLANNER_FINAL_USER_REMINDER.format(bot_name="麦麦")
           == "你需要输出对麦麦发言的分析，视情况输出文本内容的分析，思考是否进行工具调用")
+
+    # v6.13.5：注意事项拆分（通用进系统提示词，chat_prompts 命中进尾部消息）
+    from astrbot_plugin_maisoul.core import prompt as _pp
+    acfg = {"group_chat_prompt": "群里要简短",
+            "chat_prompts": [{"platform": "qq", "item_id": "g1",
+                              "rule_type": "group", "prompt": "这个群爱聊游戏"}]}
+    sys_blk = _pp.build_attention_block(acfg, "g1", "qq", True, include_chat_prompt=False)
+    check("注意事项: planner 系统提示词只含通用项",
+          sys_blk == "在该聊天中的注意事项：\n通用注意事项：\n群里要简短\n", sys_blk)
+    tail = _pp.chat_attention_tail(acfg, "g1", "qq", True)
+    check("注意事项: chat_prompts 命中 → 尾部消息原文格式",
+          tail == "当前聊天额外注意事项：\n这个群爱聊游戏", tail)
+    check("注意事项: 未命中尾部为空",
+          _pp.chat_attention_tail(acfg, "gX", "qq", True) == "")
+    merged_blk = _pp.build_attention_block(acfg, "g1", "qq", True)
+    check("注意事项: replyer 默认合并形态不变",
+          "通用注意事项：\n群里要简短" in merged_blk
+          and "当前聊天额外注意事项：\n这个群爱聊游戏" in merged_blk)
 
     # 表达 LLM 选择（expression_select 路径）
     import pathlib

@@ -7,18 +7,21 @@
   _try_enter_wait_state 连续上限；_resume_from_wait_for_proactive_trigger）
 - maisaka/idle_backoff.py（连续空闲指数退避 base*2^n，封顶 cap；非空闲重置；
   pending ≥ bypass 绕过）
-- maisaka/builtin_tool/{reply,wait,send_emoji,fetch_history,tool_search}.py（工具声明原文；
+- maisaka/builtin_tool/{reply,wait,send_emoji,tool_search}.py（工具声明原文；
   v6.9.7 起 tool_search + deferred 池 = MaiBot「第三方工具默认 deferred」机制，
-  由 main._planner_cycle 每轮轮转可见集并注入 <system-reminder> 提醒）
+  由 main._planner_cycle 每轮轮转可见集并注入 <system-reminder> 提醒；
+  fetch_history 是 focus 模式专属，部署版不暴露，v6.13.5 起移除）
 - chat/replyer（reply 工具执行 → 三件套生成 + 后处理 + 打字发送；v6.9.7 起
   replyer 为纯生成器不带工具，管家/生态工具全部在 planner 侧经 tool_search 发现）
 
 循环语义（对齐 reasoning_engine 的可运行核心）：
-- 评分门通过后进入 Planner：system=maisaka_chat 原文，user=待处理消息
-  （HH:MM:SS[msg_id:x][说话人] 前缀，对齐 maisaka/context/message_adapter.format_speaker_content）
+- 评分门通过后进入 Planner：system=maisaka_chat 原文，聊天消息（含自发消息）
+  逐条进 user 轮（<message msg_id time user [quote] [group_card]
+  [is_self_message]> 前缀，对齐 maisaka/context/planner_messages.build_planner_prefix）
 - 每轮可调用工具；reply → 走 replyer 并结束本轮；wait → 进入等待（群聊期间
   新消息不唤醒；@/提及必回为主动触发可唤醒）；send_emoji → 表情包后继续；
-  fetch_history → 返回更多记录后继续；无工具 → 本轮空闲结束
+  无工具 → 本轮空闲结束（fetch_history 为 MaiBot focus 模式专属工具，部署版
+  focus_mode=false 不暴露，maisoul 同样不暴露，v6.13.5）
 - 连续 wait 上限（默认 3）后视为对话休息；空闲结束累积退避
 - 思考中的 Planner 可被新消息打断重思（planner_interrupt_max_consecutive_count，
   默认 0=不打断，消息留待本轮循环的后续轮次）
@@ -29,7 +32,9 @@
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime as _dt
 
 from astrbot.api import logger
 
@@ -121,6 +126,54 @@ def fold_old_turns(contexts: list[dict], turn_start: int,
         "role": "user",
         "content": FOLDED_TOOL_HISTORY_PREFIX + "\n" + "\n".join(lines)}]
 
+
+def build_history_contexts(history_msgs: list[dict], analyses,
+                           context_limit: int,
+                           is_group: bool = True) -> tuple[list[dict], list[dict]]:
+    """合并聊天历史与历史 planner 分析，按时间戳交错构建 contexts 初始段。
+
+    对齐 MaiBot 会话历史机制：build_model_output_context_messages 把 planner
+    每轮输出写入 _chat_history，select_llm_context_messages 在「聊天消息+分析+
+    工具结果」合并流上从新往旧按 2× 稳定窗选取——模型每轮都能看到自己先前
+    轮次的分析（assistant 轮），输出结构由此自我强化。这是部署版 planner 分析
+    呈「当前状态/分析/下一步」格式的来源（提示词并无此要求）；maisoul 此前
+    每轮从聊天记录重建、分析不回灌，格式零样本漂移（v6.13.4 补齐）。
+
+    角色分工对齐部署版请求 dump：全部聊天消息（含自发消息，带
+    is_self_message="true"）进 user 轮（<message> 前缀），只有 planner 分析
+    进 assistant 轮（v6.13.5 修正——旧版自发消息进 assistant 轮是误对齐）。
+    窗口在合并流上截取（对齐 MaiBot 按合并条数计数）；返回
+    (contexts, included_chat_msgs)，后者为进入窗口的聊天消息。
+    跨日时间行规则与旧实现一致（相邻项跨天时插入「时间：YYYY-MM-DD HH:MM:SS」）。
+    """
+    merged: list[dict] = [
+        {"kind": "chat", "ts": float(m.get("ts") or 0), "msg": m}
+        for m in history_msgs if str(m.get("text") or "").strip()]
+    merged += [
+        {"kind": "analysis", "ts": float(a.get("ts") or 0),
+         "text": str(a.get("text") or "").strip()}
+        for a in analyses if str(a.get("text") or "").strip()]
+    # 稳定排序：同 ts 时聊天消息在前（先插入，分析是响应、天然晚于触发消息）
+    merged.sort(key=lambda x: x["ts"])
+    if context_limit > 0:
+        merged = merged[-context_limit:]
+    contexts: list[dict] = []
+    included_chat: list[dict] = []
+    _last_day = None
+    for item in merged:
+        day = _dt.fromtimestamp(item["ts"]).date()
+        if _last_day is not None and day != _last_day:
+            contexts.append({"role": "user", "content": (
+                f"时间：{_dt.fromtimestamp(item['ts']).strftime('%Y-%m-%d %H:%M:%S')}")})
+        _last_day = day
+        if item["kind"] == "analysis":
+            contexts.append({"role": "assistant", "content": item["text"]})
+            continue
+        contexts.append({"role": "user",
+                         "content": render_planner_message(item["msg"], is_group)})
+        included_chat.append(item["msg"])
+    return contexts, included_chat
+
 REPLY_TOOL_SPEC = {
     "type": "object",
     "properties": {
@@ -141,12 +194,8 @@ WAIT_TOOL_SPEC = {
     "properties": {"seconds": {"type": "integer", "description": "等待秒数。"}},
     "required": ["seconds"],
 }
-FETCH_HISTORY_SPEC = {
-    "type": "object",
-    "properties": {"num": {"type": "integer",
-                           "description": "获取消息数量；不填默认 10，最多 50。",
-                           "minimum": 1, "maximum": 50}},
-}
+# fetch_history 不暴露：MaiBot focus 模式专属工具（_is_builtin_tool_enabled_by_config
+# 要求 experimental.focus_mode，部署版 false → 工具集里没有它），v6.13.5 移除
 # tool_search 声明 = MaiBot builtin_tool/tool_search.py 原文
 TOOL_SEARCH_SPEC = {
     "type": "object",
@@ -241,21 +290,50 @@ def build_planner_system(cfg, attention_block: str) -> str:
     )
 
 
-def render_pending_messages(messages: list[dict]) -> str:
-    """待处理消息 → HH:MM:SS[msg_id:x][说话人]内容（对齐 1.2.3
-    maisaka/context/message_adapter.format_speaker_content 原文格式；
-    旧版 <message> 包裹是历史版本 MaiBot 的格式）。"""
-    from datetime import datetime as _dt
-    blocks = []
-    for m in messages:
-        ts = m.get("ts") or time.time()
-        time_str = _dt.fromtimestamp(float(ts)).strftime("%H:%M:%S")
-        mid = str(m.get("msg_id") or "").strip()
-        mid_prefix = "[msg_id:" + mid + "]" if mid else ""
-        name = str(m.get("name") or "").strip()
-        text = str(m.get("text") or "").strip()
-        blocks.append(time_str + mid_prefix + "[" + name + "]" + text)
-    return "\n".join(blocks)
+def _attr_escape(value: str) -> str:
+    """XML 属性值转义（对齐 xml.sax.saxutils.escape(quote=True)：& < > \" ）。"""
+    return (value.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def _format_quote_ids(quote: str) -> str:
+    """引用目标 ID 列表 → 属性值（对齐 planner_messages._format_quote_ids：去重 + 逗号拼接）。"""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw in str(quote or "").split(","):
+        qid = raw.strip()
+        if not qid or qid in seen:
+            continue
+        seen.add(qid)
+        ids.append(qid)
+    return ",".join(ids)
+
+
+def render_planner_message(m: dict, is_group: bool = True) -> str:
+    """单条消息 → 部署版 planner 前缀格式（对齐 maisaka/context/planner_messages.
+    build_planner_prefix 原文）：<message msg_id="…" [quote="…"] time="…"
+    user="…" [group_card="…"] [is_self_message="true"]>\\n内容（无闭合标签）。
+
+    近似项：quote=消息记录里的引用目标（_record 从 Reply 组件提取）；
+    group_card=群聊时用发送者名（AstrBot 事件侧群名片与昵称同源）；自发消息
+    标 is_self_message，msg_id 恒空（坑 21：发送回执拿不到 message_id）。
+    旧版 HH:MM:SS[msg_id:x][说话人] 是 format_speaker_content 的可见文本
+    格式，不是 planner 请求格式（v6.13.2 误对齐，v6.13.5 修正）。
+    """
+    ts = float(m.get("ts") or time.time())
+    name = str(m.get("name") or "").strip()
+    text = str(m.get("text") or "").strip()
+    attrs = [f'msg_id="{_attr_escape(str(m.get("msg_id") or "").strip())}"']
+    quote = _format_quote_ids(str(m.get("quote") or ""))
+    if quote:
+        attrs.append(f'quote="{_attr_escape(quote)}"')
+    attrs.append(f'time="{_dt.fromtimestamp(ts).strftime("%H:%M:%S")}"')
+    attrs.append(f'user="{_attr_escape(name)}"')
+    if is_group and str(m.get("sid")) != "self":
+        attrs.append(f'group_card="{_attr_escape(name)}"')
+    if str(m.get("sid")) == "self":
+        attrs.append('is_self_message="true"')
+    return f"<message {' '.join(attrs)}>\n" + text
 
 
 # 每轮 Planner 请求末尾的一次性 user 提醒（chat_loop_service.
@@ -277,12 +355,11 @@ class PlannerState:
     running_task: object = None
     interrupt_count: int = 0
     last_analysis: str = ""  # 上一轮 planner 思考（防复读比对用，对齐 _should_replace_reasoning）
+    analysis_log: deque = field(default_factory=lambda: deque(maxlen=200))  # 历史分析 {ts,text}（跨轮回灌，对齐 build_model_output_context_messages 写会话历史；2× 稳定窗外的旧条目随界淘汰）
     discovered_tools: set = field(default_factory=set)  # tool_search 已发现的 deferred 工具（会话级；MaiBot 跟上下文裁切走，此处简化）
     last_event: object = None  # 最近一次真实触发 event（wait 续轮复用：候选列表挂 event 上，换对象=candidate_expired）
     eco_injection: str = ""  # 本轮 replyer 收集的生态注入全文（观察页展示用，轮始清空）
     last_cycle_ts: float = 0.0   # 上一轮消费到的消息时间戳（pending 排水用）
-    context_cutoff_ts: float = 0.0  # 已进入 planner 上下文的历史分界（fetch_history 用）
-    context_msg_ids: set = field(default_factory=set)  # 已在上下文中的 msg_id（fetch_history 去重，对齐 MaiBot history_message_ids）
     umo: str = ""        # wait 恢复续轮所需的发送上下文
     platform: str = ""
     is_group: bool = True
@@ -336,10 +413,11 @@ class PlannerState:
 
 
 def build_planner_toolset(deps) -> "object":
-    """构造 planner 可见工具集（reply/wait/send_emoji/fetch_history/tool_search，
-    前四者声明=MaiBot 原文，tool_search 为 v6.9.7 新增）。已发现的 deferred 工具
-    由调用方追加进 ToolSet。deps 需提供：on_reply / on_wait / on_send_emoji /
-    on_fetch_history / on_tool_search。
+    """构造 planner 可见工具集（reply/wait/send_emoji/tool_search，声明=
+    MaiBot 原文；部署版 focus_mode=false 下 fetch_history/switch_chat 不暴露，
+    对齐 dump 实测的 7 工具集中 maisoul 有对应物的 4 个）。已发现的 deferred
+    工具由调用方追加进 ToolSet。deps 需提供：on_reply / on_wait /
+    on_send_emoji / on_tool_search。
     """
     from astrbot.core.agent.tool import FunctionTool, ToolSet
 
@@ -351,9 +429,6 @@ def build_planner_toolset(deps) -> "object":
 
     async def _send_emoji(**kwargs):
         return await deps.on_send_emoji()
-
-    async def _fetch_history(**kwargs):
-        return deps.on_fetch_history(kwargs)
 
     def _tool_search(**kwargs):
         return deps.on_tool_search(kwargs)
@@ -368,11 +443,6 @@ def build_planner_toolset(deps) -> "object":
     tool_set.add_tool(FunctionTool(
         name="send_emoji", description="发送一个表情包来表达情绪，参与聊天。",
         parameters={"type": "object", "properties": {}}, handler=_send_emoji))
-    tool_set.add_tool(FunctionTool(
-        name="fetch_history",
-        description=("获取当前聊天流中已经存在、但尚未进入 Maisaka 上下文的消息。"
-                     "按从新到旧最多返回 num 条；不能获取其他聊天的信息。"),
-        parameters=FETCH_HISTORY_SPEC, handler=_fetch_history))
     tool_set.add_tool(FunctionTool(
         name="tool_search",
         description="在 deferred tools 列表中按名称或关键词搜索工具，并将命中的工具加入后续轮次的可用工具列表。",
@@ -428,39 +498,3 @@ class PlannerDeps:
         result = tool_search_result_text(hits, set(discovered))
         discovered.update(str(h.get("name")) for h in hits)
         return result
-
-    def on_fetch_history(self, args: dict) -> str:
-        """对齐 MaiBot _get_focus_fetch_history_result：只返回尚未进入上下文的消息。
-
-        按 msg_id 对上下文去重（MaiBot 用 history_message_ids 集合），从新到旧召回，
-        召回过的记入 context_msg_ids——后续调用只会拿到更早/更新的消息，不会重复，
-        模型也就不会反复调用。
-        """
-        try:
-            num = min(50, max(1, int(args.get("num", 10))))
-        except (TypeError, ValueError):
-            num = 10
-        fetched = []
-        for m in reversed(list(self.st.buffer)):  # message_cache 逆序 = 从新到旧
-            mid = str(m.get("msg_id") or "").strip()
-            if not mid or mid in self.st.planner_state().context_msg_ids:
-                continue
-            self.st.planner_state().context_msg_ids.add(mid)
-            fetched.append(m)
-            if len(fetched) >= num:
-                break
-        chat_type = "group" if self.is_group else "private"
-        header = [
-            f"已从当前聊天 chat_id={self.gid} 获取尚未进入上下文的消息。",
-            f"平台: {self.platform}",
-            f"id: {self.gid}",
-            f"类型: {chat_type}",
-            f"请求数量: {num}",
-            f"召回消息数: {len(fetched)}",
-            "召回顺序为从新到旧；可直接用各自 msg_id 引用。",
-        ]
-        if not fetched:
-            return "\n".join(header) + "\n没有尚未进入上下文的消息了。"
-        body = [f"{m.get('name')}(msg_id={m.get('msg_id')}): {m.get('text')}"
-                for m in fetched]
-        return "\n".join(header + body)

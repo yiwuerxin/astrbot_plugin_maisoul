@@ -27,19 +27,37 @@ def select_reply_style(cfg) -> str:
 
 
 def build_attention_block(cfg, chat_id: str | None = None, platform: str | None = None,
-                          is_group: bool = True) -> str:
-    """复刻 _build_group_chat_attention_block：通用注意事项（群聊/私聊各自提示词）+ 额外注意事项。"""
+                          is_group: bool = True,
+                          include_chat_prompt: bool = True) -> str:
+    """复刻 _build_group_chat_attention_block：通用注意事项（群聊/私聊各自提示词）。
+
+    部署版的「当前聊天额外注意事项」（chat_prompts 精确匹配）不在系统提示词里，
+    而是每次请求末尾的独立 user 消息（_build_current_chat_attention_tail_message，
+    v6.13.5 修正）——planner 走 include_chat_prompt=False + chat_attention_tail；
+    replyer 侧沿用合并形态（include_chat_prompt 默认 True，行为不变）。
+    """
     lines = []
     key = "group_chat_prompt" if is_group else "private_chat_prompts"
     prompt = str(cfg.get(key) or "").strip()
     if prompt:
         lines.append(f"通用注意事项：\n{prompt}")
-    extra = _match_chat_prompt(cfg, chat_id, platform, is_group)
-    if extra:
-        lines.append(f"当前聊天额外注意事项：\n{extra}")
+    if include_chat_prompt:
+        extra = _match_chat_prompt(cfg, chat_id, platform, is_group)
+        if extra:
+            lines.append(f"当前聊天额外注意事项：\n{extra}")
     if not lines:
         return ""
     return "在该聊天中的注意事项：\n" + "\n\n".join(lines) + "\n"
+
+
+def chat_attention_tail(cfg, chat_id: str | None, platform: str | None = None,
+                        is_group: bool = True) -> str:
+    """chat_prompts 命中 → 请求末尾的独立 user 消息（对齐部署版
+    _build_current_chat_attention_tail_message 原文格式）。"""
+    extra = _match_chat_prompt(cfg, chat_id, platform, is_group)
+    if not extra:
+        return ""
+    return f"当前聊天额外注意事项：\n{extra}"
 
 
 def _match_chat_prompt(cfg, chat_id: str | None, platform: str | None = None,
