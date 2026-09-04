@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.5")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.6")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.5 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.6 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -860,9 +860,10 @@ class MaiSoulPlugin(Star):
                 logger.info(f"maisoul planner[{gid}]: LLM 返回 tools={list(getattr(resp, 'tools_call_name', None) or [])}")
                 analysis = self._resp_text(resp)
                 reasoning = str(getattr(resp, "reasoning_content", None) or "").strip()
+                visible_analysis = analysis  # 可见正文（回灌唯一来源，坑 54）
                 if not analysis and reasoning:
                     # Claude 等模型在工具调用轮不输出正文，把分析放进 thinking 块；
-                    # MaiBot 的 planner 文本（response.content）对应这里的正文+思考取并集
+                    # 展示取并集（坑 51），但回灌只认可见正文（坑 54）
                     analysis = reasoning
                 if analysis and pl.last_analysis:
                     # 防复读（对齐 _should_replace_reasoning：与上一轮思考相似度>0.9
@@ -873,14 +874,16 @@ class MaiSoulPlugin(Star):
                         analysis = planner.PLANNER_REFLECT_ON_REPEAT
                 if analysis:
                     pl.last_analysis = analysis
-                    # 记入会话历史（对齐 build_model_output_context_messages：
-                    # 下一轮起回灌为 assistant 轮，坑 52）
-                    pl.analysis_log.append({"ts": time.time(), "text": analysis})
+                if visible_analysis:
+                    # 回灌只记可见正文（对齐 MaiBot：思考文本不重发请求——
+                    # ReasoningItem 回灌恒空，纯思考轮不产生 few-shot 示例；
+                    # 思考文本回灌会把输出语言带偏，坑 54）
+                    pl.analysis_log.append({"ts": time.time(), "text": visible_analysis})
                 logger.debug(f"maisoul planner[{gid}]: 正文 {len(self._resp_text(resp))} 字 / "
                              f"思考 {len(reasoning)} 字 / 工具 "
                              f"{len(getattr(resp, 'tools_call_name', None) or [])} 个")
-                if analysis:
-                    contexts.append({"role": "assistant", "content": analysis})
+                if visible_analysis:
+                    contexts.append({"role": "assistant", "content": visible_analysis})
                 deps.latest_reason = analysis
                 planner_content = analysis
 
@@ -1286,7 +1289,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.5状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.6状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1426,4 +1429,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.5 已卸载")
+        logger.info("maisoul v6.13.6 已卸载")
