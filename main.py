@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.4")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.5")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.4 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.5 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -459,7 +459,9 @@ class MaiSoulPlugin(Star):
             await event.send(MessageChain().message("\n\n".join(webchat_buf)))
             for seg_text in webchat_buf:
                 self._emit_sent(gid, seg_text, self._msg_id(event), "reply", event)
-        st.record_self_reply(self._msg_id(event), sent, str(eff_cfg.get("bot_name") or self.config["bot_name"]))
+        st.record_self_reply(self._msg_id(event), sent,
+                             str(eff_cfg.get("bot_name") or self.config["bot_name"]),
+                             quote=quote_id if quoted["done"] else "")
         logger.info(f"maisoul[{gid}] 已发言 {len(sent)} 段（人格={pname}）")
         await self._eco_fire_response(event, "\n".join(sent))
         self._schedule_learning(provider, eff_cfg, st, platform, gid)
@@ -686,7 +688,7 @@ class MaiSoulPlugin(Star):
         planner_llm_ms = 0.0
         planner_prompt_tokens = 0
         planner_completion_tokens = 0
-        tool_count_total = [5]  # 可见内置工具数（tool_search 加入后为 5）+ 已发现 deferred
+        tool_count_total = [4]  # 可见内置工具数（reply/wait/send_emoji/tool_search）+ 已发现 deferred
         planner_content: str | None = None
         planner_calls: list[dict] = []
         request_messages: list[dict] | None = None
@@ -738,9 +740,13 @@ class MaiSoulPlugin(Star):
                                        send_fn=send_fn)
             deps.umo = umo
             deps.deferred_pool = bridge.list_deferred_tools(self.context, eff_cfg)
-            tool_count_total[0] = 5 + len(deps.deferred_pool)
+            tool_count_total[0] = 4 + len(deps.deferred_pool)
+            # 系统提示词的注意事项只放通用项（对齐 _build_group_chat_attention_block）；
+            # chat_prompts 命中改为请求末尾的独立 user 消息（坑 53）
             system_prompt = planner.build_planner_system(
-                eff_cfg, prompt.build_attention_block(eff_cfg, gid, platform, is_group))
+                eff_cfg, prompt.build_attention_block(eff_cfg, gid, platform, is_group,
+                                                      include_chat_prompt=False))
+            attention_tail_msg = prompt.chat_attention_tail(eff_cfg, gid, platform, is_group)
             # 对齐 MaiBot：chat_history 作为上下文消息传给 planner（非本轮 pending 的历史）
             context_key = "max_context_size" if is_group else "max_private_context_size"
             # 2× KV cache 稳定窗（对齐 CONTEXT_SELECTION_CACHE_STABILITY_RATIO=2.0：
@@ -752,19 +758,13 @@ class MaiSoulPlugin(Star):
                            if float(m.get("ts") or 0) > pl.last_cycle_ts
                            and str(m.get("sid")) != "self"]
             # 历史段 = 聊天记录 + 历史 planner 分析按时间交错（对齐 MaiBot 会话
-            # 历史：分析作为 assistant 轮回灌，输出格式由此自我强化，坑 52）；
-            # 窗口在合并流上截取，included 为进入窗口的聊天消息（fetch 去重种子）
+            # 历史：全部聊天消息含自发消息进 user 轮 <message> 前缀，分析作为
+            # assistant 轮回灌，输出格式由此自我强化，坑 52/53）；窗口在合并流
+            # 上截取
             contexts, history_msgs = planner.build_history_contexts(
                 [m for m in all_buf if m not in pending_now],
-                pl.analysis_log, context_limit)
+                pl.analysis_log, context_limit, is_group)
             history_count = len(history_msgs)
-            pl.context_cutoff_ts = min(
-                (float(m.get("ts") or 0) for m in pending_now), default=0.0)
-            # fetch_history 去重基准（对齐 MaiBot history_message_ids）：种子历史 + 本轮 pending
-            pl.context_msg_ids = {
-                str(m.get("msg_id") or "").strip()
-                for m in list(history_msgs) + list(pending_now)
-                if str(m.get("msg_id") or "").strip()}
             # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
             # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
             use_jargon, _ = learning.learning_flags(
@@ -785,11 +785,14 @@ class MaiSoulPlugin(Star):
                     self._monitor_stage(gid, monitor.STAGE_MESSAGE_INTAKE,
                                         f"待处理消息 {len(pending)} 条",
                                         agent_state=pl.agent_state)
-                    pl.context_msg_ids.update(
-                        str(m.get("msg_id") or "").strip()
-                        for m in pending if str(m.get("msg_id") or "").strip())
-                user_content = planner.render_pending_messages(pending) or "（继续观察当前聊天）"
-                # 黑话参考前置（对齐 jargon_context_matcher 的 ReferenceMessage 注入位置）
+                # 工具回执/新消息/黑话参考各进独立 user 轮（对齐部署版请求结构：
+                # 历史末尾依次是消息 → ReferenceMessage → 注入 → 时间 → 注意事项）
+                if tool_feedback:
+                    contexts.append({"role": "user", "content": tool_feedback})
+                    tool_feedback = ""
+                for m in pending:
+                    contexts.append({"role": "user",
+                                     "content": planner.render_planner_message(m, is_group)})
                 if use_jargon:
                     new_terms: list[str] = []
                     jargon_block = learning.jargon_reference_block(
@@ -797,10 +800,7 @@ class MaiSoulPlugin(Star):
                         exclude=injected_jargons or None, matched_out=new_terms)
                     if jargon_block:
                         injected_jargons.update(new_terms)
-                        user_content = f"{jargon_block}\n\n{user_content}"
-                if tool_feedback:
-                    user_content = f"{tool_feedback}\n\n{user_content}"
-                    tool_feedback = ""
+                        contexts.append({"role": "user", "content": jargon_block})
                 round_text = f"第 {round_index + 1} 轮"
                 self._monitor_stage(gid, monitor.STAGE_PLANNER, "组织上下文并请求模型",
                                     round_text=round_text, agent_state=pl.agent_state)
@@ -809,21 +809,24 @@ class MaiSoulPlugin(Star):
                 for item in deps.deferred_pool:
                     if item["name"] in pl.discovered_tools:
                         tools.add_tool(item["tool"])
-                # deferred 提醒只进本次请求、不进 contexts 历史（对齐每轮重建注入）
-                reminder = planner.build_deferred_reminder(
-                    deps.deferred_pool, pl.discovered_tools)
-                # 每轮末尾的一次性 user 提醒（对齐 chat_loop_step 的
-                # final_user_message=PLANNER_FINAL_USER_REMINDER，v6.13.3 补齐）
+                # 尾部注入（对齐 _build_request_messages 的 final_user_messages：
+                # 注入 → 当前时间 → 聊天专属注意事项；末尾提醒作最终 prompt）。
+                # 只进本次请求、轮毕即撤，不留在 contexts 历史
+                image_parts = prompt.image_context_parts(st, eff_cfg)
+                tail_msgs = [x for x in (
+                    planner.build_deferred_reminder(deps.deferred_pool, pl.discovered_tools),
+                    (f"（本次请求附带最近 {len(image_parts)} 张聊天图片，"
+                     "对应聊天记录中的图片占位）" if image_parts else "")) if x]
+                tail_msgs.append(time.strftime("时间：%Y-%m-%d %H:%M:%S"))
+                if attention_tail_msg:
+                    tail_msgs.append(attention_tail_msg)
                 final_reminder = planner.PLANNER_FINAL_USER_REMINDER.format(
                     bot_name=str(eff_cfg.get("bot_name") or "").strip() or "麦麦")
-                request_content = "\n\n".join(
-                    x for x in (user_content, reminder, final_reminder) if x)
-                # 识图上下文（v6.9.9）：最近 N 张聊天图片附给多模态模型（默认关）
-                image_parts = prompt.image_context_parts(st, eff_cfg)
-                if image_parts:
-                    request_content += (f"\n\n（本次请求附带最近 {len(image_parts)} 张"
-                                        "聊天图片，对应聊天记录中的图片占位）")
-                logger.debug(f"maisoul planner[{gid}]: 发起 LLM 请求（第{round_index + 1}轮，prompt {len(request_content)} 字）")
+                tail_base = len(contexts)
+                contexts.extend({"role": "user", "content": t} for t in tail_msgs)
+                request_messages = list(contexts)
+                logger.debug(f"maisoul planner[{gid}]: 发起 LLM 请求"
+                             f"（第{round_index + 1}轮，contexts {len(contexts)} 条）")
                 planner_bind = self._pick_task_model("planner", eff_cfg)
                 if planner_bind is not None:
                     logger.debug(f"maisoul planner[{gid}]: 任务模型 "
@@ -832,7 +835,7 @@ class MaiSoulPlugin(Star):
                 try:
                     resp = await self._task_text_chat(
                         "planner", eff_cfg,
-                        prompt=request_content,
+                        prompt=final_reminder,
                         session_id=f"maisoul_planner_{gid}",
                         system_prompt=system_prompt,
                         func_tool=tools,
@@ -845,6 +848,8 @@ class MaiSoulPlugin(Star):
                         model_name=str(getattr(provider, "id", "") or type(provider).__name__),
                         message=str(e))
                     raise
+                finally:
+                    del contexts[tail_base:]  # 撤销尾部注入（不进历史）
                 planner_llm_ms += (time.time() - llm_started) * 1000
                 # token 用量累计（LLMResponse.usage：input_other+input_cached=输入，output=输出）
                 usage = getattr(resp, "usage", None)
@@ -853,8 +858,6 @@ class MaiSoulPlugin(Star):
                                               + int(getattr(usage, "input_cached", 0) or 0))
                     planner_completion_tokens += int(getattr(usage, "output", 0) or 0)
                 logger.info(f"maisoul planner[{gid}]: LLM 返回 tools={list(getattr(resp, 'tools_call_name', None) or [])}")
-                contexts.append({"role": "user", "content": user_content})
-                request_messages = list(contexts)
                 analysis = self._resp_text(resp)
                 reasoning = str(getattr(resp, "reasoning_content", None) or "").strip()
                 if not analysis and reasoning:
@@ -948,17 +951,6 @@ class MaiSoulPlugin(Star):
                             "duration_ms": (time.time() - tool_started) * 1000,
                             "summary": str(result)[:2000]})
                         tool_feedback += f"[send_emoji 结果] {result}\n"
-                        continue
-                    if name == "fetch_history":
-                        result = deps.on_fetch_history(args)
-                        tool_records.append({
-                            "tool_call_id": f"{cycle_id}-{round_index}-{i}",
-                            "tool_name": "fetch_history", "tool_args": args,
-                            "tool_call_source": "planner", "tool_call_source_label": "",
-                            "success": True,
-                            "duration_ms": (time.time() - tool_started) * 1000,
-                            "summary": str(result).split("\n")[0][:2000]})
-                        tool_feedback += f"[fetch_history 结果]\n{result}\n"
                         continue
                     if name == "tool_search":
                         result = deps.on_tool_search(args)
@@ -1139,7 +1131,9 @@ class MaiSoulPlugin(Star):
             await deps.send_fn("\n\n".join(webchat_buf))
             for seg_text in webchat_buf:
                 self._emit_sent(gid, seg_text, msg_id, "reply", deps.event)
-        st.record_self_reply(msg_id or "", sent, str(eff_cfg.get("bot_name") or self.config["bot_name"]))
+        st.record_self_reply(msg_id or "", sent,
+                             str(eff_cfg.get("bot_name") or self.config["bot_name"]),
+                             quote=quote_id if quoted["done"] else "")
         await self._eco_fire_response(eco_event, "\n".join(sent))
         self._schedule_learning(provider, eff_cfg, st, platform, gid)
         return f"已发送 {len(sent)} 段" + ("（引用回复）" if quote_id else "")
@@ -1292,7 +1286,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.4状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.5状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1324,6 +1318,7 @@ class MaiSoulPlugin(Star):
             "text": text if text else "[图片/表情]",
             "at_bot": self._has_at_bot(event),
             "reply_bot": self._is_reply_to_bot(event),
+            "quote": self._quote_ids(event),  # 引用目标（<message quote="…"> 属性用）
             "ts": time.time(),
             "images": self._extract_image_refs(event),  # 识图上下文用（v6.9.9，只存引用）
         })
@@ -1376,6 +1371,21 @@ class MaiSoulPlugin(Star):
             pass
         return refs
 
+    @staticmethod
+    def _quote_ids(event: AstrMessageEvent) -> str:
+        """消息 Reply 组件的引用目标 ID（去重逗号拼接，对齐
+        extract_quote_ids_from_message_sequence；渲染进 <message quote="…">）。"""
+        ids: list[str] = []
+        try:
+            for seg in event.get_messages():
+                if isinstance(seg, Reply):
+                    qid = str(getattr(seg, "id", "") or "").strip()
+                    if qid and qid not in ids:
+                        ids.append(qid)
+        except Exception:
+            pass
+        return ",".join(ids)
+
     def _has_at_bot(self, event: AstrMessageEvent) -> bool:
         try:
             for seg in event.get_messages():
@@ -1416,4 +1426,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.4 已卸载")
+        logger.info("maisoul v6.13.5 已卸载")

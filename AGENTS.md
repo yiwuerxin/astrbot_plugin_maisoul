@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.13.4：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）。
+> 当前版本 v6.13.5：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）。
 
 ---
 
@@ -121,7 +121,7 @@ astrbot_plugin_maisoul/
 │   ├── planner.py            # Planner 决策层（v6.6，对标 maisaka）：系统提示词
 │   │                         #   maisaka_chat.prompt 逐字原文 / MAX_INTERNAL_ROUNDS=10 /
 │   │                         #   PlannerState(wait 状态机+连续上限+空闲指数退避+打断) /
-│   │                         #   工具声明(reply/wait/send_emoji/fetch_history 原文) /
+│   │                         #   工具声明(reply/wait/send_emoji/tool_search 原文) /
 │   │                         #   render_pending_messages(<message>前缀)
 │   ├── prompt.py             # MaiBot 三件套 prompt 组装：build_identity /
 │   │                         #   select_reply_style(含彩票) / build_attention_block
@@ -314,38 +314,43 @@ WebUI「学习」页可视化管理，学习 API：GET/POST /astrbot_plugin_mais
 > deferred+tool_search 方式接进 planner 时连工具一起恢复原文）
 > （已用 MaiBot 容器原文 diff 验证一致），工具声明 = builtin_tool 原文。
 
-已移植：agent 循环（MAX_INTERNAL_ROUNDS=10，多轮工具调用，send_emoji/fetch_history
+已移植：agent 循环（MAX_INTERNAL_ROUNDS=10，多轮工具调用，send_emoji
 结果回填下一轮，contexts 跨轮累积）；工具 reply（msg_id/set_quote/reply_reference/
 reply_style 枚举——篇幅由 Planner 参数指定，独立模式仍用启发式代选）、wait（连续
 上限 max_consecutive_wait_count=3，超限=对话休息；期间新消息不提前打断）、
-send_emoji（声明无参数=MaiBot 原样，执行桥接 send_meme）、fetch_history；
+send_emoji（声明无参数=MaiBot 原样，执行桥接 send_meme）；
 WAIT/RUNNING 状态机（群聊 wait 不唤醒，@/提及必回主动触发恢复 resume_from_wait）；
 思考打断（planner_interrupt_max_consecutive_count=0 默认不打断）；空闲指数退避
 （base15×2^n 封顶 300、起点 2、积压 6 绕过、reply 重置）；wait 到期有积压自动续轮。
 behavior_style 分工已改回 MaiBot 语义：只进 planner 系统提示词（v6.13.1 起彻底落实——replyer 的 build_system_prompt 与 native 三件套注入不再追加「行动准则参考」块，MaiBot 的 replyer 模板本就没有 behavior_style）。
+fetch_history 已移除（v6.13.5）：MaiBot focus 模式专属工具（要求
+experimental.focus_mode，部署版 false → 请求工具集里没有它），maisoul 同步不暴露。
 
 运行期修正（v6.6.x，均为对齐 MaiBot 行为的补齐）：
-- planner 请求首轮以 contexts 注入最近历史（群 40/私聊 60 条，对齐 chat_history 传参），
-  fetch_history 返回"尚未进入上下文"的更早消息（新到旧，上限 50）
+- planner 请求首轮以 contexts 注入最近历史（群 40/私聊 60 条，对齐 chat_history 传参）
 - **历史分析跨轮回灌（v6.13.4，坑 52）**：contexts 初始段 = 聊天记录 + 历史
   planner 分析按时间戳交错（`planner.build_history_contexts`，分析进 assistant
-  轮；2× 稳定窗在合并流上截取，进入窗口的聊天消息作为 fetch 去重种子）；
-  每轮分析记入 `PlannerState.analysis_log`（deque 200）供下一轮回灌——对齐
-  MaiBot `build_model_output_context_messages` 把 planner 输出写会话历史、
-  `select_llm_context_messages` 在合并流上选窗的机制。这是部署版 planner
-  分析呈「当前状态/分析/下一步」结构的来源（提示词并无此格式要求，模型
-  自发 + 看到自己历史分析而自我强化）；maisoul 此前每轮重建不回灌，格式
-  零样本漂移（中英混杂、随笔式）。工具调用/结果轮仍只在循环内存活
-  （fold_old_turns 折叠，见 §7.2 工程差异）。
+  轮；2× 稳定窗在合并流上截取）；每轮分析记入 `PlannerState.analysis_log`
+  （deque 200）供下一轮回灌——对齐 MaiBot `build_model_output_context_messages`
+  把 planner 输出写会话历史、`select_llm_context_messages` 在合并流上选窗的
+  机制。这是部署版 planner 分析呈「当前状态/分析/下一步」结构的来源（提示词
+  并无此格式要求，模型自发 + 看到自己历史分析而自我强化）；maisoul 此前每轮
+  重建不回灌，格式零样本漂移（中英混杂、随笔式）。工具调用/结果轮仍只在循环
+  内存活（fold_old_turns 折叠，见 §7.2 工程差异）。
 - 工具结果轮（tool_continue）不要求新消息即继续，直到 reply/wait/无工具/轮数上限
 - contexts 顺序 user→assistant；wait 到期有积压自动续轮
-- v6.13.2 planner 请求三处保真补齐（用户实报"两边观察页输出规范完全不一致"根因）：
-  ① 消息渲染格式改 1.2.3 原文 `HH:MM:SS[msg_id:x][说话人]内容`（对齐
-  message_adapter.format_speaker_content；旧 `<message>` 包裹是历史版本格式）；
-  ② 自己的旧发言进 assistant 轮纯文本（对齐 SessionBackedMessage 角色分工）；
+- v6.13.2 planner 请求三处保真补齐（其中 ①② 在 v6.13.5 经请求 dump 复核发现
+  对齐错了对象，已重做，见坑 53）：
+  ① 消息渲染格式 = 部署版 `planner_messages.build_planner_prefix` 原文
+  `<message msg_id="…" [quote="…"] time="…" user="…" [group_card="…"]
+  [is_self_message="true"]>\n内容`（无闭合标签；v6.13.2 曾误对齐
+  format_speaker_content 的可见文本格式 `HH:MM:SS[msg_id:x][说话人]内容`——
+  那是 display 用的，planner 请求不用）；
+  ② 全部聊天消息（含自发消息，带 is_self_message）进 **user 轮**，只有 planner
+  分析进 assistant 轮（v6.13.2 曾误把自发消息放 assistant 轮）；
   ③ 每轮请求末尾追加一次性提醒原文（chat_loop_service.PLANNER_FINAL_USER_
   REMINDER_TEMPLATE："你需要输出对{bot_name}发言的分析，视情况输出文本内容的
-  分析，思考是否进行工具调用"）——此前缺失是 planner 输出规范漂移的主因
+  分析，思考是否进行工具调用"）
 
 v6.7.0 追加：
 - **planner 模式的 replyer 也接聊天工具集**（chat_tools + call_maid + chat_skills 注入，
@@ -557,8 +562,8 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 
 ### 8.5 planner 管线
 
-29. **分工铁律：planner 唯一干活者、replyer 纯嘴**。可见工具 5 个（reply/wait/send_emoji/fetch_history/tool_search）；管家与生态工具全部进 **deferred 池**（tool_search 发现后下一轮可用；打分表 1000/300/200/100/25/10、返回文案、`<system-reminder>` 模板均为 MaiBot 原文；提醒只进当次请求不进 contexts 历史；`PlannerState.discovered_tools` 会话级）。replyer 不带 func_tool（independent/native 模式例外，管家桥留 replyer 侧）。
-30. `fetch_history` 按 msg_id 去重（`PlannerState.context_msg_ids`），取尽明确返回"召回消息数: 0"——否则模型拿重复内容连环调用到 max_rounds。
+29. **分工铁律：planner 唯一干活者、replyer 纯嘴**。可见工具 4 个（reply/wait/send_emoji/tool_search；fetch_history 为 MaiBot focus 专属、v6.13.5 移除）；管家与生态工具全部进 **deferred 池**（tool_search 发现后下一轮可用；打分表 1000/300/200/100/25/10、返回文案、`<system-reminder>` 模板均为 MaiBot 原文；提醒只进当次请求不进 contexts 历史；`PlannerState.discovered_tools` 会话级）。replyer 不带 func_tool（independent/native 模式例外，管家桥留 replyer 侧）。
+30. （v6.13.5 废弃）fetch_history 已整体移除：MaiBot 侧它是 focus 模式专属工具（`_is_builtin_tool_enabled_by_config` 要求 `experimental.focus_mode`，部署版 false），工具集/结果格式/context_msg_ids 去重机制一并删除——部署版 planner 的 7 工具集（wait/reply/query_memory/query_person_profile/send_emoji/send_image/tool_search）里根本没有它。
 31. planner 上下文 2× 稳定窗（`max(base, base×2)`），相邻消息跨日插 `时间：YYYY-MM-DD HH:MM:SS` 行。
 32. 防复读：本轮思考与上轮 difflib 相似度 >0.9 → 替换固定反思文本（`planner.PLANNER_REFLECT_ON_REPEAT`）；上轮存 `PlannerState.last_analysis`。
 33. **黑话参考注 planner 每轮**（`jargon_reference_block` 的 exclude/matched_out 做轮间去重）、**表达习惯注 replyer**——位置不可颠倒。
@@ -595,6 +600,8 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 51. **`_resp_text` 提取 result_chain 同样禁止 `str()` 组件**（v6.13.3 修复，用户实报观察页 Planner 思考显示 `type=<ComponentType.Plain: 'Plain'> text=''`）：纯工具调用轮模型无正文，completion_text 为空 → 走 result_chain 分支，链上常是一个空 `Plain`，`"".join(str(c) ...)` 把 repr 当成思考文本，且非空结果顶掉了 `reasoning_content` 兜底——thinking 块的真实分析被 repr 冒充。修法：逐组件取 `.text` 拼接，图片等无文本段贡献空串；空结果让位给 reasoning_content。**通用教训：一切"对象转文本"的边界（生态注入/响应提取/展示 join）都取 `.text`，禁止 str() 整个对象**。
 
 52. **planner 输出格式漂移的根因是"分析不回灌"，不是提示词**（v6.13.4 修复，用户实报"两边观察页 planner 输出规范完全不一致"的第二层）：部署版 MaiBot 的 planner 分析呈「当前状态/分析/下一步」结构，但其 `maisaka_chat.prompt` 原文**没有任何格式指令**（已抓部署容器 prompt 与请求 dump 实锤）——该结构是模型自发产生、再由会话历史回灌自我强化的：`build_model_output_context_messages` 把每轮 planner 输出写进 `_chat_history`，后续每次请求都带着这些旧分析（assistant 轮）作 few-shot 示例，格式即锁死。maisoul 提示词/reminder/模型均与部署版一致，但 contexts 每轮从聊天记录重建、分析不留存 → 每轮对格式都是零样本，同一模型写得随意（甚至整段漂英文）。修法见 §7.1「历史分析跨轮回灌」。**教训：对标"输出规范"不能只 diff 提示词——请求的完整消息列表（含回灌的历史输出）才是行为规格；MaiBot 侧的权威取材是 `logs/maisaka_prompt/planner/*.json` 请求 dump，不是只有 prompt 文件**。
+
+53. **planner 请求结构五处偏离（v6.13.5 修复，v6.13.2 两处误对齐的纠正）**：回灌修完后格式仍有差距，逐项 diff 部署请求 dump 发现——① 消息前缀：部署版是 `planner_messages.build_planner_prefix` 的 `<message msg_id="…" [quote="…"] time="…" user="…" [group_card="…"] [is_self_message="true"]>\n内容`（无闭合标签），v6.13.2 抄的 `HH:MM:SS[msg_id:x][说话人]内容` 是 `format_speaker_content` 的**可见文本**格式，planner 请求根本不用（同一文件里两种格式，用途不同——抄之前必须确认函数挂在哪条调用链上）；② 自发消息进 **user 轮**带 `is_self_message="true"`（v6.13.2 误放 assistant 轮）；③ 尾部结构：部署版每条注入是**独立 user 轮**（`<system-reminder>` deferred 提醒 → `时间：YYYY-MM-DD HH:MM:SS` 每请求一条 → `当前聊天额外注意事项`（chat_prompts 命中，尾部消息而非系统提示词）→ 末尾提醒），maisoul 曾全部 `\n\n` 拼进一个 user turn 且缺时间消息；实现 = 尾部轮临时 append 进 contexts、请求完 `del`（text_chat 的 prompt 参数固定给末尾提醒原文）；④ fetch_history 是 focus 专属（见坑 30）；⑤ 自发消息回写只存首段 80 字 → planner 上下文里自发消息被截断，改存全文（quote 属性一并接通：入站消息提 Reply 组件、自发回写带发送侧引用目标）。**通用教训：功能名相同 ≠ 格式相同，"对齐 MaiBot"的验收物是逐消息 diff 请求 dump（含属性顺序与转义），不是函数名对上就算数**。
 
 ## 9. 打包与发布
 
