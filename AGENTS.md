@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.13.8：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议结构对齐与 reply 后续轮（坑 55，v4f 无需换模型即收敛中文结构化正文）。
+> 当前版本 v6.14.0：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议结构对齐与 reply 后续轮（坑 55，v4f 无需换模型即收敛中文结构化正文）；表达方式 vector_intent 语义召回（嵌入任务槽 + 向量缓存 + 回落）。
 
 ---
 
@@ -169,6 +169,7 @@ astrbot_plugin_maisoul/
 | splitter_*（enable/max_length/max_sentence_num/max_split_num/enable_kaomoji_protection/enable_overflow_return_all） | response_splitter.* | true/512/8/3/false/false |
 | keyword_rules / regex_rules | keyword_reaction.* | `[]`（规则 {keywords[],regex[],reaction}，reaction 支持 [命名捕获组]） |
 | expression_checked_only / expression_self_reflect / expression_selection_mode / max_expression_learner | expression.* | true / true / legacy / 3 |
+| expression_vector_candidate_pool_size | expression.expression_vector_candidate_pool_size | `50`（vector_intent 每次召回进入精选的候选上限，1~50） |
 | expression_learning_list / expression_groups | expression.learning_list / expression_groups | 默认全局 use+learn / 空 |
 | jargon_learning_list / jargon_groups | jargon.learning_list / jargon_groups | 默认全局 use+learn / 空 |
 | enable_context_optimization | chat.enable_context_optimization | `true`（自己旧发言保留最近 3 条） |

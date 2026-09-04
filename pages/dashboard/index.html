@@ -499,7 +499,7 @@ let FB = null;
 let maisoulTab = 'core';
 function setMsTab(t){maisoulTab=t;render('maisoul')}
 const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理'};
-const PAGE_VERSION = 'v6.13.9';
+const PAGE_VERSION = 'v6.14.0';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -804,8 +804,10 @@ function render(p){
         panel('expr','表达学习','发言后从群聊学习"当 X 时可以用 Y 表达"的语言风格，回复时抽候选注入【表达习惯参考】；学习库满 10 条后启用。',
           switchRow('expression_checked_only',S.expression_checked_only??true,'使用精选表达','仅使用通过 AI 检查的表达')+
           switchRow('expression_self_reflect',S.expression_self_reflect??true,'优化表达方式学习','写入表达方式前先让 AI 检查，减少学到奇怪内容')+
-          field('表达使用方式（expression_selection_mode）','legacy=随手抽取候选；vector_intent 需嵌入模型，未配置自动回落 legacy',
+          field('表达使用方式（expression_selection_mode）','随手=随手抽取候选；超级精细=表达意图与嵌入召回（需在模型管理 embedding 任务配置嵌入模型，未配置自动回落随手）',
             `<select id="expression_selection_mode">${['legacy','vector_intent'].map(m=>`<option value="${m}" ${S.expression_selection_mode===m?'selected':''}>${m==='legacy'?'随手':'超级精细'}</option>`).join('')}</select>`)+
+          field('向量候选上限（expression_vector_candidate_pool_size）','超级精细模式下每次召回进入精选的候选条数上限（1~50）',
+            `<input id="expression_vector_candidate_pool_size" type="number" min="1" max="50" value="${S.expression_vector_candidate_pool_size??50}" class="ui-input">`)+
           field('学习配置（expression_learning_list）','哪些聊天使用/学习表达方式；平台与群号都留空表示全局默认',
             `<div id="elrs">${elRows}</div>${smBtn('outline','plus','添加规则','onclick="addLrRow(\'elrs\')"')}`,null,true)+
           field('表达共享组（expression_groups）','组内聊天共享学到的表达方式',
@@ -1533,6 +1535,10 @@ const MD_TASKS=[
    caps:[{t:'必须',d:'文本理解与选择——从表达库中挑出贴合当前语境的条目'},
          {t:'建议',d:'快且便宜——每次发言前多一次小调用'},
          {t:'建议',d:'非思考模型'}]},
+  {key:'embedding',title:'嵌入模型 (embedding)',short:'嵌入模型',desc:'「超级精细」表达方式（vector_intent）的语义召回用；列表只显示 AstrBot 模型提供商中的嵌入类 Provider，未配置时自动回落随手抽取。',
+   caps:[{t:'必须',d:'嵌入类 Provider（provider_type=embedding）——普通聊天模型不能用于此处'},
+         {t:'建议',d:'维度稳定——候选向量缓存在学习库，模型或维度变化会自动重算'},
+         {t:'按需',d:'仅表达使用方式选「超级精细」时需要；随手模式可不配'}]},
 ];
 const MD_STRATEGIES=[
   {v:'sequential',label:'按顺序优先（sequential）',tip:'优先使用模型列表中靠前的模型，前面的模型不可用时再尝试后面的模型。'},
@@ -1640,7 +1646,7 @@ function mdRefreshRows(){
   if(fd)fd.textContent=MM.search?`找到 ${rows.length} 个结果`:'';
 }
 /* Tab2：任务分配 */
-function mdOptions(){const out=[];MM.providers.forEach(p=>p.models.forEach(m=>out.push({provider:p.id,model:m})));return out}
+function mdOptions(){const out=[];const wantEmb=MM.selTask==='embedding';MM.providers.forEach(p=>{if((p.type==='embedding')!==wantEmb)return;p.models.forEach(m=>out.push({provider:p.id,model:m}))});return out}
 function mdMSListHTML(selected){
   const q=(MM.msQuery||'').toLowerCase();
   const filtered=mdOptions().filter(o=>!q||(o.model+' '+o.provider).toLowerCase().includes(q));
@@ -1740,7 +1746,9 @@ function collect(){
   if(g('reply_trigger_mode')!==null)S.reply_trigger_mode=g('reply_trigger_mode');
   ['multiple_probability','typo_min_freq','splitter_max_length','splitter_max_sentence_num','splitter_max_split_num','max_private_context_size','max_consecutive_wait_count','planner_interrupt_max_consecutive_count','no_action_backoff_start_count','no_action_backoff_bypass_pending_count'].forEach(k=>{if(g(k)!==null)S[k]=num(k,S[k])});
   ['talk_value','private_talk_value','typing_speed','typo_correction_quote_probability','typo_error_rate','typo_tone_error_rate','typo_word_replace_rate','no_action_backoff_base_seconds','no_action_backoff_cap_seconds'].forEach(k=>{if(g(k)!==null)S[k]=num(k,S[k])});
-  ['enable','enable_response_post_process','typo_enable','typo_enable_correction_quote','splitter_enable','splitter_enable_kaomoji_protection','splitter_enable_overflow_return_all','inevitable_at_reply','mentioned_bot_reply','enable_talk_value_rules','enable_reply_quote'].forEach(k=>{S[k]=bool(k,S[k]??true)});
+  ['enable','enable_response_post_process','typo_enable','typo_enable_correction_quote','splitter_enable','splitter_enable_kaomoji_protection','splitter_enable_overflow_return_all','inevitable_at_reply','mentioned_bot_reply','enable_talk_value_rules','enable_reply_quote','expression_checked_only','expression_self_reflect'].forEach(k=>{S[k]=bool(k,S[k]??true)});
+  if(g('expression_selection_mode')!==null)S.expression_selection_mode=g('expression_selection_mode');
+  if(g('expression_vector_candidate_pool_size')!==null)S.expression_vector_candidate_pool_size=Math.min(50,Math.max(1,parseInt(g('expression_vector_candidate_pool_size'))||50));
   const mb=document.getElementById('maid_bridge');if(mb)S.maid_bridge=mb.checked;
   const eaw=document.getElementById('escape_at_wake');if(eaw)S.escape_at_wake=eaw.checked;
   const ei=document.getElementById('eco_injection');if(ei)S.eco_injection=ei.checked;
