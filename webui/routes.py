@@ -127,7 +127,7 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             return jsonify({
                 "success": True,
                 "data": {
-                    "version": "6.15.0",
+                    "version": "6.15.1",
                     "mode": config.get("mode"),
                     "enable": config.get("enable"),
                     "maid_bridge": bool(config.get("maid_bridge", True)),
