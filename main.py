@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.9")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.14.0")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.9 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.14.0 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -271,6 +271,23 @@ class MaiSoulPlugin(Star):
         pick = modelbind.pick_model(candidates, strategy, self._task_model_rr, task)
         return self._resolve_bound_model(pick) if pick else None
 
+    def _embedding_provider(self, eff_cfg):
+        """embedding 任务绑定的嵌入 Provider（vector_intent 表达召回用）。
+
+        嵌入 Provider 走 AstrBot 的 EmbeddingProvider 体系（get_embeddings），
+        同样登记在 inst_map：绑定解析复用 _pick_task_model；未绑定时取第一个
+        可用嵌入实例，无则 None（调用方回落 legacy 抽样）。
+        """
+        try:
+            insts = list(getattr(self.context.provider_manager,
+                                 "embedding_provider_insts", None) or [])
+        except Exception:
+            return None
+        if not insts:
+            return None
+        resolved = self._pick_task_model("embedding", eff_cfg)
+        return resolved if resolved is not None else insts[0]
+
     async def _task_text_chat(self, task: str, cfg, **kwargs):
         """按任务绑定调 text_chat：策略选主候选，异常时依次降级链上后续候选；
         无绑定走 AstrBot 当前默认 Provider。"""
@@ -378,12 +395,19 @@ class MaiSoulPlugin(Star):
         if use_expr:
             observe = learning.build_chat_info(list(st.buffer))
             expr_bind = self._pick_task_model("expression_use", eff_cfg)
+            emb = self._embedding_provider(eff_cfg)
             expr_block = await learning.select_expression_habits_block(
                 expr_bind[0] if expr_bind else provider, self.learning_store,
                 learning.share_key(eff_cfg, "expression_groups", platform, gid),
                 bool(eff_cfg.get("expression_checked_only", True)),
                 observe, str(eff_cfg.get("bot_name") or "麦麦"), reason,
-                model=expr_bind[1] if expr_bind else None)
+                model=expr_bind[1] if expr_bind else None,
+                mode=str(eff_cfg.get("expression_selection_mode") or "legacy"),
+                embedding=emb,
+                embedding_model=str((getattr(emb, "provider_config", None) or {})
+.get("id", "") or "") if emb is not None else "",
+                query_text=learning.build_expression_query_text(reply_reason=reason),
+                pool_size=int(eff_cfg.get("expression_vector_candidate_pool_size", 50) or 50))
         keyword_block = learning.keyword_reaction_block(eff_cfg, trigger_text)
 
         user_message = prompt.build_final_user_message(
@@ -1102,12 +1126,23 @@ class MaiSoulPlugin(Star):
         if use_expr:
             observe = learning.build_chat_info(list(st.buffer))
             expr_bind = self._pick_task_model("expression_use", eff_cfg)
+            emb = self._embedding_provider(eff_cfg)
             expr_block = await learning.select_expression_habits_block(
                 expr_bind[0] if expr_bind else provider, self.learning_store,
                 learning.share_key(eff_cfg, "expression_groups", platform, gid),
                 bool(eff_cfg.get("expression_checked_only", True)),
                 observe, str(eff_cfg.get("bot_name") or "麦麦"), reason,
-                model=expr_bind[1] if expr_bind else None)
+                model=expr_bind[1] if expr_bind else None,
+                mode=str(eff_cfg.get("expression_selection_mode") or "legacy"),
+                embedding=emb,
+                embedding_model=str((getattr(emb, "provider_config", None) or {})
+.get("id", "") or "") if emb is not None else "",
+                # query 对齐 _build_expression_query_text：reply 工具的
+                # reply_reference 优先，否则 Planner 推理（reason）
+                query_text=learning.build_expression_query_text(
+                    reply_reason=reason,
+                    reply_reference=str(args.get("reply_reference") or "")),
+                pool_size=int(eff_cfg.get("expression_vector_candidate_pool_size", 50) or 50))
         # 黑话参考已移至 planner 每轮注入（对齐 jargon_context_matcher 位置）
         trigger_text = ""
         for m in reversed(list(st.buffer)):
@@ -1324,7 +1359,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.9状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.14.0状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1464,4 +1499,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.9 已卸载")
+        logger.info("maisoul v6.14.0 已卸载")

@@ -1,5 +1,5 @@
 name: 麦麦之魂
 desc: 麦麦(MaiBot)发言流水线完整复刻 + 管家桥——聊天由麦麦流水线接管（三件套/意愿评分/分段拟人），agent 能力桥接 maid_agent 的 call_maid 管家，唤醒词逃生舱保留原生全部插件能力
-version: v6.13.9
+version: v6.14.0
 author: meng
 repo: https://docs.mai-mai.org
