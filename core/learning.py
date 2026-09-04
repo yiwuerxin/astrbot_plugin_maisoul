@@ -7,6 +7,12 @@
    legacy 使用 = 加权抽样（库 ≥10 条才启用，高频 count>1 抽 5 + 全库抽 5，
    去重）→ 注入【表达习惯参考，请视情况自然的使用】块
    （MaiBot 的 LLM 二次选择路径未接，走其"直接注入"路径）
+   vector_intent 使用 = 嵌入模型按语义召回候选池（对齐 maisaka_
+   expression_selector._build_expression_candidate_pool：query 由回复信息
+   参考/Planner 推理构建，候选 embedding 文本 = 情景/风格两行原文；召回
+   为空或未配嵌入模型回落 legacy 抽样。MaiBot 的 kmeans 聚类加权
+   （item 0.875 + cluster 0.125）依赖其向量索引基建，maisoul 简化为
+   纯 item 余弦——文档记录的工程取舍）
 3. 黑话（jargon）：学习库 {content, meaning, count}；最近上下文消息文本命中
    词条 → 注入【黑话参考】块（上限 10 条）
 
@@ -26,6 +32,8 @@ import json
 import random
 import re
 from pathlib import Path
+
+from astrbot.api import logger
 
 _DATA_FILE = Path(__file__).resolve().parent.parent / "data_learning.json"
 
@@ -190,18 +198,123 @@ def _sample_legacy_pool(pool: list[dict]) -> list[dict]:
     return candidates
 
 
+def expression_embedding_text(situation: str, style: str) -> str:
+    """表达候选的 embedding 文本（对齐 expression_vector_index.expression_embedding_text 原文）。"""
+    return f"情景：{str(situation).strip()}\n风格：{str(style).strip()}"
+
+
+def build_expression_query_text(reply_reason: str = "", reply_reference: str = "") -> str:
+    """表达检索的匹配依据文本（对齐 maisaka_expression_selector._build_
+    expression_query_text：优先「回复信息参考」（reply 工具参数），否则
+    「Planner 推理」；意图块来自 reply 工具的 intent 参数，maisoul 的
+    replyer 无该参数，同义信息已在 reply_reference/reason 内）。"""
+    parts: list[str] = []
+    ref = str(reply_reference or "").strip()
+    if ref:
+        parts.append(f"回复信息参考：\n{ref}")
+    else:
+        reason = str(reply_reason or "").strip()
+        if reason:
+            parts.append(f"Planner 推理：\n{reason}")
+    return "\n\n".join(parts)
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """余弦相似度（纯 Python，候选池 ≤百级无需 numpy）。"""
+    if len(a) != len(b) or not a:
+        return -1.0
+    dot = na = nb = 0.0
+    for x, y in zip(a, b):
+        dot += x * y
+        na += x * x
+        nb += y * y
+    if na <= 0 or nb <= 0:
+        return -1.0
+    return dot / (na ** 0.5 * nb ** 0.5)
+
+
+async def _vector_recall_pool(store: "LearningStore", key: str, pool: list[dict],
+                              embedding, embedding_model: str, query_text: str,
+                              pool_size: int) -> list[dict]:
+    """vector_intent 候选池：候选/查询嵌入 → 余弦排序取前 pool_size。
+
+    候选向量缓存在学习库条目上（emb/emb_model/emb_fp），指纹（情景+风格）
+    或嵌入模型变更时重算；查询向量维度与候选不一致按异常上抛（调用方回落
+    legacy，对齐 select_candidates 的维度校验语义）。
+    """
+    texts, targets = [], []
+    for e in pool:
+        fp = f"{str(e.get('situation')).strip()}\n{str(e.get('style')).strip()}"
+        if (isinstance(e.get("emb"), list) and e.get("emb")
+                and e.get("emb_model") == embedding_model and e.get("emb_fp") == fp):
+            continue
+        texts.append(expression_embedding_text(e.get("situation", ""), e.get("style", "")))
+        targets.append((e, fp))
+    if texts:
+        vectors = await embedding.get_embeddings(texts)
+        if len(vectors) != len(texts):
+            raise ValueError(f"嵌入返回数量不一致: {len(vectors)} != {len(texts)}")
+        for (e, fp), vec in zip(targets, vectors):
+            if not isinstance(vec, list) or not vec:
+                continue  # 单条失败不拖垮整池（下次再补）
+            e["emb"] = [float(x) for x in vec]
+            e["emb_model"] = embedding_model
+            e["emb_fp"] = fp
+        try:
+            store.save()
+        except Exception:
+            pass
+    query_vec = (await embedding.get_embeddings([query_text]))[0]
+    dim = len(query_vec)
+    scored = []
+    for e in pool:
+        vec = e.get("emb") or []
+        if len(vec) != dim:
+            raise ValueError(f"表达向量维度不一致: 候选 {len(vec)} / query {dim}"
+                             "（嵌入模型变更后索引未重建）")
+        scored.append((_cosine([float(x) for x in vec], [float(x) for x in query_vec]), e))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    limit = max(1, min(50, int(pool_size)))
+    return [e for _, e in scored[:limit]]
+
+
 async def select_expression_habits_block(provider, store: "LearningStore", key: str,
                                          checked_only: bool, chat_observe_info: str,
                                          bot_name: str, reply_reason: str = "",
-                                         model: str | None = None) -> str:
-    """legacy 完整路径：加权抽候选池 → LLM 按语境选择 → 注入块。
+                                         model: str | None = None,
+                                         mode: str = "legacy",
+                                         embedding=None, embedding_model: str = "",
+                                         query_text: str = "",
+                                         pool_size: int = 50) -> str:
+    """表达习惯注入块：候选池（legacy 抽样 / vector_intent 语义召回）→
+    LLM 按语境选择 → 注入块。
 
-    LLM 选择失败或无可选情境时回落"直接注入"（MaiBot 的另一条真实路径）。
+    LLM 选择失败或无可选情境时回落"直接注入"（MaiBot 的另一条真实路径）；
+    vector_intent 未配嵌入模型 / query 为空 / 召回异常或为空时回落 legacy
+    抽样（对齐 _build_expression_candidate_pool 的回落语义）。
     """
     pool = [e for e in store.expressions(key) if not checked_only or e.get("checked")]
     if len(pool) < EXPRESSION_MIN_POOL:
         return ""
-    candidates = _sample_legacy_pool(pool)
+    candidates = None
+    if mode == "vector_intent":
+        if embedding is None:
+            logger.info("maisoul: 表达方式向量召回需要配置嵌入模型（模型管理 embedding 任务），已回退随手候选")
+        elif not str(query_text or "").strip():
+            logger.info("maisoul: 表达方式向量召回 query 为空，已回退随手候选")
+        else:
+            try:
+                candidates = await _vector_recall_pool(
+                    store, key, pool, embedding, embedding_model,
+                    str(query_text).strip(), pool_size)
+            except Exception:
+                logger.warning("maisoul: 表达方式向量召回失败，回退随手候选", exc_info=True)
+                candidates = None
+            if not candidates:
+                logger.info("maisoul: 表达方式向量召回为空，回退随手候选")
+                candidates = None
+    if candidates is None:
+        candidates = _sample_legacy_pool(pool)
     if not candidates:
         return ""
 

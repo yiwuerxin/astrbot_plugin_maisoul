@@ -1307,6 +1307,87 @@ def test_planner():
     check("chat_info 行格式", "- " in learning.build_chat_info(
         [{"name": "u", "text": "hi", "ts": time.time()}]))
 
+    # v6.14.0：vector_intent 表达召回（对齐 _build_expression_candidate_pool 契约）
+    check("query 文本: reply_reference 优先（原文格式）",
+          learning.build_expression_query_text("推理A", "参考B")
+          == "回复信息参考：\n参考B"
+          and learning.build_expression_query_text("推理A")
+          == "Planner 推理：\n推理A"
+          and learning.build_expression_query_text() == "")
+    check("embedding 文本: 情景/风格两行原文",
+          learning.expression_embedding_text(" 安慰人 ", " 温柔拍拍 ")
+          == "情景：安慰人\n风格：温柔拍拍")
+    check("余弦: 同向=1 正交=0 维度不符=-1",
+          abs(learning._cosine([1, 0], [2, 0]) - 1.0) < 1e-9
+          and abs(learning._cosine([1, 0], [0, 1])) < 1e-9
+          and learning._cosine([1, 0], [1]) == -1.0)
+
+    class _Emb:
+        """假嵌入：'安慰' 类文本 → [1,0]，'编程' 类 → [0,1]，其余 → [1,1]。"""
+        def __init__(self):
+            self.calls = []
+            self.provider_config = {"id": "fake-emb"}
+
+        async def get_embeddings(self, texts):
+            self.calls.extend(texts)
+            out = []
+            for t in texts:
+                if "安慰" in t:
+                    out.append([1.0, 0.0])
+                elif "编程" in t:
+                    out.append([0.0, 1.0])
+                else:
+                    out.append([1.0, 1.0])
+            return out
+
+    vstore = learning.LearningStore(path=pathlib.Path(tempfile.mkdtemp()) / "v.json")
+    vstore.add_expression("global", "安慰情绪低落的人", "温柔拍拍", True)
+    vstore.add_expression("global", "聊到写代码", "吐槽编程", True)
+    for i in range(10):
+        vstore.add_expression("global", f"日常闲聊{i}", f"日常风格{i}", True)
+    emb = _Emb()
+    # query 与"安慰"同向 → 召回池应以安慰条目打头；LLM 选择选中第 1 条
+    blk3 = asyncio.run(learning.select_expression_habits_block(
+        _Prov(), vstore, "global", False, "- 12:00 u: 心情好差", "麦麦",
+        mode="vector_intent", embedding=emb, embedding_model="fake-emb",
+        query_text="回复信息参考：\n安慰一下对方",
+        pool_size=5))
+    check("vector 召回: 相似条目进精选并注入",
+          blk3.startswith("【表达习惯参考") and "安慰情绪低落的人" in blk3, blk3)
+    check("vector 召回: 候选向量缓存在学习库（二次调用不重嵌）",
+          isinstance(vstore.data["global"]["expressions"][0].get("emb"), list)
+          and vstore.data["global"]["expressions"][0].get("emb_model") == "fake-emb")
+    calls_before = len(emb.calls)
+    asyncio.run(learning.select_expression_habits_block(
+        _Prov(), vstore, "global", False, "- 12:00 u: hi", "麦麦",
+        mode="vector_intent", embedding=emb, embedding_model="fake-emb",
+        query_text="回复信息参考：\n安慰", pool_size=5))
+    check("vector 召回: 缓存命中（仅重嵌 query）",
+          len(emb.calls) == calls_before + 1, f"{calls_before} -> {len(emb.calls)}")
+
+    # 回落三态：未配嵌入 / query 空 / 召回异常（维度不一致上抛后吞掉）
+    blk4 = asyncio.run(learning.select_expression_habits_block(
+        _Prov(), vstore, "global", False, "- 12:00 u: hi", "麦麦",
+        mode="vector_intent", embedding=None, query_text="x", pool_size=5))
+    check("vector 回落: 未配嵌入模型走随手抽样", blk4.startswith("【表达习惯参考"))
+    blk5 = asyncio.run(learning.select_expression_habits_block(
+        _Prov(), vstore, "global", False, "- 12:00 u: hi", "麦麦",
+        mode="vector_intent", embedding=emb, embedding_model="fake-emb",
+        query_text="", pool_size=5))
+    check("vector 回落: query 为空走随手抽样", blk5.startswith("【表达习惯参考"))
+
+    class _DimEmb:
+        async def get_embeddings(self, texts):
+            return [[0.5, 0.5, 0.5] for _ in texts]  # 与缓存候选维度不符
+
+    vstore.data["global"]["expressions"][0]["emb"] = [1.0, 0.0]
+    blk6 = asyncio.run(learning.select_expression_habits_block(
+        _Prov(), vstore, "global", False, "- 12:00 u: hi", "麦麦",
+        mode="vector_intent", embedding=_DimEmb(), embedding_model="fake-emb",
+        query_text="回复信息参考：\n测试", pool_size=5))
+    check("vector 回落: 维度异常吞掉后走随手抽样",
+          blk6.startswith("【表达习惯参考"))
+
 
 def test_personas():
     print("[多人格]")
