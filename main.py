@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.9")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.15.3")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.9 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.15.3 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -127,6 +127,22 @@ class MaiSoulPlugin(Star):
         # 私聊不做唤醒放行——AstrBot 对私聊/webchat 恒置
         # is_at_or_wake_command=True，且 MaiBot 语义中私聊消息本身就全部进入管线。
         escape = text.startswith("/") or event.get_extra("heartflow_triggered")
+        if not escape:
+            # 指令双处理防线：AstrBot 指令不止 "/" 一种触发形态——私聊里裸指令名
+            # （"reset new"）、群聊「唤醒名 + 指令」（"<唤醒名> reset new"，waking_check
+            # 剥前缀后 CommandFilter 照样命中）都会激活指令 handler；指令执行后
+            # 不 stop_event，maisoul 若不识别会把它再当聊天跑一轮（双响应）。
+            # 框架在 filter 阶段已算好 activated_handlers：其中有指令类过滤器
+            # （CommandFilter）即视为指令，放行
+            try:
+                from astrbot.core.star.filter.command import CommandFilter as _CF
+                for _h in (event.get_extra("activated_handlers") or []):
+                    if any(isinstance(_f, _CF)
+                           for _f in (getattr(_h, "event_filters", None) or [])):
+                        escape = True
+                        break
+            except Exception:
+                pass
         explicit = False
         if is_group and event.is_at_or_wake_command:
             if self.config.get("escape_at_wake"):
@@ -271,6 +287,23 @@ class MaiSoulPlugin(Star):
         pick = modelbind.pick_model(candidates, strategy, self._task_model_rr, task)
         return self._resolve_bound_model(pick) if pick else None
 
+    def _embedding_provider(self, eff_cfg):
+        """embedding 任务绑定的嵌入 Provider（vector_intent 表达召回用）。
+
+        嵌入 Provider 走 AstrBot 的 EmbeddingProvider 体系（get_embeddings），
+        同样登记在 inst_map：绑定解析复用 _pick_task_model；未绑定时取第一个
+        可用嵌入实例，无则 None（调用方回落 legacy 抽样）。
+        """
+        try:
+            insts = list(getattr(self.context.provider_manager,
+                                 "embedding_provider_insts", None) or [])
+        except Exception:
+            return None
+        if not insts:
+            return None
+        resolved = self._pick_task_model("embedding", eff_cfg)
+        return resolved if resolved is not None else insts[0]
+
     async def _task_text_chat(self, task: str, cfg, **kwargs):
         """按任务绑定调 text_chat：策略选主候选，异常时依次降级链上后续候选；
         无绑定走 AstrBot 当前默认 Provider。"""
@@ -378,12 +411,19 @@ class MaiSoulPlugin(Star):
         if use_expr:
             observe = learning.build_chat_info(list(st.buffer))
             expr_bind = self._pick_task_model("expression_use", eff_cfg)
+            emb = self._embedding_provider(eff_cfg)
             expr_block = await learning.select_expression_habits_block(
                 expr_bind[0] if expr_bind else provider, self.learning_store,
                 learning.share_key(eff_cfg, "expression_groups", platform, gid),
                 bool(eff_cfg.get("expression_checked_only", True)),
                 observe, str(eff_cfg.get("bot_name") or "麦麦"), reason,
-                model=expr_bind[1] if expr_bind else None)
+                model=expr_bind[1] if expr_bind else None,
+                mode=str(eff_cfg.get("expression_selection_mode") or "legacy"),
+                embedding=emb,
+                embedding_model=str((getattr(emb, "provider_config", None) or {})
+.get("id", "") or "") if emb is not None else "",
+                query_text=learning.build_expression_query_text(reply_reason=reason),
+                pool_size=int(eff_cfg.get("expression_vector_candidate_pool_size", 50) or 50))
         keyword_block = learning.keyword_reaction_block(eff_cfg, trigger_text)
 
         user_message = prompt.build_final_user_message(
@@ -651,6 +691,7 @@ class MaiSoulPlugin(Star):
         self._monitor_stage(gid, monitor.STAGE_LOOP_START, f"循环 {cycle_id}",
                             agent_state=pl.agent_state)
         if send_fn is not None:
+            done.close()  # webchat 分支返回完整循环协程；预建的空协程关闭，防未 await 告警
             return self._planner_cycle(umo, platform, gid, st, is_group, send_fn=send_fn,
                                       event=event)
         pl.running_task = asyncio.create_task(
@@ -715,7 +756,8 @@ class MaiSoulPlugin(Star):
                 agent_state=pl.agent_state,
                 planner_interrupted=interrupted,
                 end_reason=reason, end_detail=detail,
-                eco_injection=pl.eco_injection)
+                eco_injection=pl.eco_injection,
+                planner_system_prompt=system_prompt)
 
         try:
             # 消息去抖：等最后一条外部消息静默 ≥1s 再开轮（对齐
@@ -964,6 +1006,12 @@ class MaiSoulPlugin(Star):
                         if "休息" in message:
                             pl.record_idle_cycle(eff_cfg)
                             pl.agent_state = "idle"
+                        else:
+                            # wait 到期必续轮（坑 26）：调度到期回执再跑一轮——
+                            # 缺失会让会话挂在 wait 直到下一条消息才动
+                            self._schedule_wait_resume(
+                                st, eff_cfg, gid,
+                                max(0, int(args.get("seconds", 0) or 0)))
                         self._monitor_stage(gid, monitor.STAGE_WAITING, "本轮处理结束",
                                             agent_state=pl.agent_state)
                         finalize("wait", str(message)[:120])
@@ -1102,12 +1150,23 @@ class MaiSoulPlugin(Star):
         if use_expr:
             observe = learning.build_chat_info(list(st.buffer))
             expr_bind = self._pick_task_model("expression_use", eff_cfg)
+            emb = self._embedding_provider(eff_cfg)
             expr_block = await learning.select_expression_habits_block(
                 expr_bind[0] if expr_bind else provider, self.learning_store,
                 learning.share_key(eff_cfg, "expression_groups", platform, gid),
                 bool(eff_cfg.get("expression_checked_only", True)),
                 observe, str(eff_cfg.get("bot_name") or "麦麦"), reason,
-                model=expr_bind[1] if expr_bind else None)
+                model=expr_bind[1] if expr_bind else None,
+                mode=str(eff_cfg.get("expression_selection_mode") or "legacy"),
+                embedding=emb,
+                embedding_model=str((getattr(emb, "provider_config", None) or {})
+.get("id", "") or "") if emb is not None else "",
+                # query 对齐 _build_expression_query_text：reply 工具的
+                # reply_reference 优先，否则 Planner 推理（reason）
+                query_text=learning.build_expression_query_text(
+                    reply_reason=reason,
+                    reply_reference=str(args.get("reply_reference") or "")),
+                pool_size=int(eff_cfg.get("expression_vector_candidate_pool_size", 50) or 50))
         # 黑话参考已移至 planner 每轮注入（对齐 jargon_context_matcher 位置）
         trigger_text = ""
         for m in reversed(list(st.buffer)):
@@ -1324,7 +1383,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.9状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.15.3状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1464,4 +1523,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.9 已卸载")
+        logger.info("maisoul v6.15.3 已卸载")
