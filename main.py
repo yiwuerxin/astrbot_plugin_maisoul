@@ -45,7 +45,7 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.8")
+@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.13.9")
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -80,7 +80,7 @@ class MaiSoulPlugin(Star):
     async def initialize(self):
         self._migrate_legacy_nicknames()
         logger.info(
-            f"maisoul v6.13.8 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.13.9 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -872,11 +872,15 @@ class MaiSoulPlugin(Star):
                     analysis = reasoning
                 if analysis and pl.last_analysis:
                     # 防复读（对齐 _should_replace_reasoning：与上一轮思考相似度>0.9
-                    # 时替换为固定反思文本，逼模型重新审视局面）
+                    # 时替换为固定反思文本，逼模型重新审视局面）。替换同样作用于
+                    # 回灌文本——MaiBot 的 replace_output_projection 直接改写
+                    # output_items 后才写历史，替换文本才是落库值（Sourcery 审查）
                     from difflib import SequenceMatcher
                     if SequenceMatcher(None, analysis, pl.last_analysis).ratio() > 0.9:
                         logger.info(f"maisoul planner[{gid}]: 本轮思考与上轮过相似，替换为反思提示")
                         analysis = planner.PLANNER_REFLECT_ON_REPEAT
+                        if visible_analysis:
+                            visible_analysis = analysis
                 if analysis:
                     pl.last_analysis = analysis
                 if visible_analysis:
@@ -1320,7 +1324,7 @@ class MaiSoulPlugin(Star):
             th = trigger.message_trigger_threshold(
                 str(self.config.get("reply_trigger_mode", "frequency")), f)
             yield event.plain_result(
-                f"maisoul v6.13.8状态：{'运行中' if self.config['enable'] else '已停用'} | "
+                f"maisoul v6.13.9状态：{'运行中' if self.config['enable'] else '已停用'} | "
                 f"模式={self.config['mode']} | bot={self.config['bot_name']}\n"
                 f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
                 f"talk_value={f:.3f} 阈值={th}条消息 "
@@ -1460,4 +1464,4 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        logger.info("maisoul v6.13.8 已卸载")
+        logger.info("maisoul v6.13.9 已卸载")
