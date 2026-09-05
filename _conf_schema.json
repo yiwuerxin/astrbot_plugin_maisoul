@@ -155,7 +155,7 @@
     "default": 6
   },
   "enable_reply_quote": {
-    "description": "回复时是否可以引用上一条或相关消息。",
+    "description": "回复时引用触发消息（首段挂 Reply 组件；webchat 单气泡流除外）",
     "type": "bool",
     "default": true
   },

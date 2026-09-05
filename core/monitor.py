@@ -419,13 +419,6 @@ class Monitor:
             "timestamp": timestamp or now,
         })
 
-    def emit_stage_removed(self, *, session_id: str, session_name: str = "") -> None:
-        self._broadcast("stage.removed", {
-            "session_id": session_id,
-            "session_name": session_name,
-            "timestamp": time.time(),
-        })
-
     def emit_llm_error(self, *, session_id: str, task_name: str, request_type: str,
                        model_name: str, message: str) -> None:
         self._broadcast("llm.error", {
