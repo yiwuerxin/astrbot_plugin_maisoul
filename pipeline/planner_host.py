@@ -142,6 +142,8 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
     end_reason, end_detail = "", ""
     interrupted = False
 
+    system_prompt = ""  # no_provider 提前 finalize 时未构建（Sourcery：未定义读取）
+
     def finalize(reason: str, detail: str = "") -> None:
         P.monitor.emit_planner_finalized(
             session_id=gid, cycle_id=cycle_id,
@@ -592,6 +594,17 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
             _uid = str(m.get("sid") or "")
             break
     system_prompt += await _xinxian_profile_block(P, gid, _uid)
+    import time as _time
+    if bool(eff_cfg.get("emotion_enable", False)):  # P-B：情绪行（与 independent 同口径）
+        system_prompt += "\n" + st.emotion.prompt_line(_time.time())
+    if bool(eff_cfg.get("memory_enable", False)):  # P-A：中期记忆召回注入
+        from ..core.memstore import SessionMemory as _SM
+
+        recent_texts = [str(m.get("text") or "") for m in list(st.buffer)[-8:]]
+        recalled = st.memory.recall(
+            recent_texts,
+            threshold=float(eff_cfg.get("memory_recall_threshold", 0.18) or 0.18))
+        system_prompt += _SM.render(recalled)
     # v6.9.7 管家迁位（对齐 MaiBot 分工）：replyer 是纯生成器，不带任何工具——
     # 查资料/跑任务全部在 planner 侧经 tool_search 发现 deferred 工具完成，
     # 工作成果由 planner 写进 reply_reference 传入。管家桥仅 independent/native 模式保留。
@@ -622,6 +635,9 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         expression_habits=expr_block,
         keyword_reaction=keyword_block, reference_override=reference,
         is_group=deps.is_group)
+    if bool(eff_cfg.get("emotion_enable", False)):  # P-B：要求行首情绪标签（发送前剥离）
+        user_message += ("\n\n【输出要求】请在正文最前面单独一行写 [情绪:愤怒/厌恶/恐惧/悲伤/平静/好奇/开心/兴奋/喜爱]，"
+                         "然后换行写正文；这一行会被系统剥离，不会发出。")
 
     try:
         image_parts = prompt.image_context_parts(st, eff_cfg)

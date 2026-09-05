@@ -353,14 +353,21 @@ class Monitor:
         self._queue = asyncio.Queue(maxsize=2000)
         self._writer = asyncio.create_task(self._writer_loop(), name="monitor_writer")
 
+    _SENTINEL = object()  # stop_writer 的优雅退出信号
+
     async def _writer_loop(self) -> None:
         q = self._queue
         while q is not None:
-            event, data = await q.get()
+            item = await q.get()
+            if item is self._SENTINEL:
+                return
             # 批量排水：顺手取走已积压项（不再等待新事件），保持顺序
-            batch = [(event, data)]
+            batch = [item]
             while len(batch) < 64 and not q.empty():
-                batch.append(q.get_nowait())
+                nxt = q.get_nowait()
+                if nxt is self._SENTINEL:
+                    return  # 排水中收到停止信号：本批已取项照常落库后退出
+                batch.append(nxt)
             for ev, d in batch:
                 try:
                     broadcast_data = d
@@ -373,16 +380,25 @@ class Monitor:
                     logger.debug(f"maisoul: 麦麦观察事件写入失败: {ev}", exc_info=True)
 
     async def stop_writer(self, timeout: float = 5.0) -> None:
-        """优雅冲刷并停止 writer（terminate 用）：等当前批，残余同步落库防丢。"""
+        """优雅冲刷并停止（terminate 用）。
+
+        哨兵让 writer 处理完队列再退出（Sourcery：直接 cancel 会把正在
+        to_thread 落库的当前批一起丢掉）；超时才 cancel，残余同步落库。"""
         writer, q = self._writer, self._queue
         self._writer, self._queue = None, None
         if writer is None:
             return
-        writer.cancel()
-        await asyncio.wait([writer], timeout=timeout)
+        try:
+            q.put_nowait(self._SENTINEL)
+            await asyncio.wait_for(writer, timeout=timeout)
+        except (asyncio.TimeoutError, asyncio.QueueFull):
+            writer.cancel()
+            await asyncio.wait([writer], timeout=1.0)
         if q is not None:
             while not q.empty():
-                self._dispatch(*q.get_nowait())
+                item = q.get_nowait()
+                if item is not self._SENTINEL:
+                    self._dispatch(*item)
 
     def notify(self, event: str, data: dict[str, Any]) -> None:
         """同步上下文的发射口（本实现全程同步：落账本 + 入队广播）。"""

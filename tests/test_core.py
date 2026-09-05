@@ -1171,7 +1171,7 @@ def test_phase3_mechanisms():
     print("[Phase3 机制：P-E/P-F/P-D]")
     import time as _t
     from astrbot_plugin_maisoul.core import sanitize, freqfeedback
-    from astrbot_plugin_maisoul.pipeline.replyer import demote_quote
+    from astrbot_plugin_maisoul.core.demote import demote_quote
 
     # P-F 清洗
     check("P-F 清洗: 引用前缀剥离",
@@ -1232,14 +1232,16 @@ def test_phase3_mechanisms():
     emq = EmotionState()  # 小增量词观察动量（大增量会撞值域钳位）
     vs = [emq.apply("好奇", 1000.0 + 0.5 * i)[0] for i in range(4)]
     check("P-B: 连续同向动量放大", vs[0] < vs[1] < vs[2] < vs[3])  # ×1.01^n 递增
-    em2 = EmotionState()
-    em2.apply("愤怒", 2000.0)
-    em2.apply("喜爱", 2000.1)  # 异向
-    em3 = EmotionState()
-    em3.apply("喜爱", 2000.0)
-    em3.apply("喜爱", 2000.1)
-    # 异向 ×0.99^n：同增量下反转后的幅度小于纯正向（近似比较）
-    check("P-B: 异向收敛（×0.99^n）", abs(em2.v) <= abs(em3.v) + 0.5)
+    # 动量方向性（Sourcery 修复回归）：首个情绪不缩放；同向第二发放大；异向收敛
+    e_first = EmotionState(); v_first = e_first.apply("好奇", 2000.0)[0]
+    check("P-B: 首个情绪不缩放", abs(v_first - 0.2) < 1e-9)
+    e_same = EmotionState(); va = e_same.apply("好奇", 2001.0)[0]
+    vb = e_same.apply("好奇", 2001.5)[0]
+    check("P-B: 同向第二发放大（×1.01^n）", abs(vb - va) > v_first)  # 0.204 > 0.2，不触钳位
+    e_rev = EmotionState(); e_rev.apply("喜爱", 2002.0)
+    before = e_rev.v
+    after = e_rev.apply("愤怒", 2002.5)[0]
+    check("P-B: 异向收敛（×0.99）", abs(after - before) < 0.6)  # 0.594 < 裸增量 0.6
     em4 = EmotionState()
     em4.apply("兴奋", 3000.0)
     check("P-B: 打字乘数 1.5^arousal", abs(em4.typing_multiplier() - 1.5 ** em4.a) < 1e-9)
