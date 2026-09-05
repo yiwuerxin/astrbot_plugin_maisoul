@@ -27,7 +27,7 @@ from astrbot.core.star.star_handler import EventType, star_handlers_registry
 from .core import bridge, learning, modelbind, monitor, personas, planner, prompt, sender, trigger
 from .core.taskregistry import TaskRegistry
 from .core.constants import MESSAGE_DEBOUNCE_SECONDS, OUTPUT_INSTRUCTION
-from .core.states import StateManager
+from .core.states import StateManager, session_key
 from .webui import routes as webui_routes
 
 try:
@@ -176,8 +176,7 @@ class MaiSoulPlugin(Star):
             event.stop_event()
             return
 
-        gid = (str(event.get_group_id()) if is_group
-               else str(event.get_sender_id() or event.unified_msg_origin))
+        gid = session_key(event)
         st = self.states.get(gid)
         if is_group:
             self._group_sessions.add(gid)
@@ -412,7 +411,7 @@ class MaiSoulPlugin(Star):
         # 会话键与 _process_chat/on_llm_* 回声钩子同式（群=group_id，私聊=sender_id，
         # 均空才回退 umo——坑 23：私聊漏掉 sender_id 会让观察账本落错会话、
         # 学习库按 item_id=用户ID 的匹配全部失效）
-        gid = str(event.get_group_id() or event.get_sender_id() or event.unified_msg_origin)
+        gid = session_key(event)
         umo = event.unified_msg_origin
         platform = str(event.get_platform_name() or "")
         eff_cfg, pname = await personas.resolve_active(
@@ -1322,7 +1321,7 @@ class MaiSoulPlugin(Star):
             return
         if not req or not hasattr(req, "system_prompt"):
             return
-        gid = str(event.get_group_id() or event.get_sender_id() or event.unified_msg_origin)
+        gid = session_key(event)
         eff_cfg, pname = await personas.resolve_active(
             self.context, self.config, gid, event.unified_msg_origin)
         inject = (
@@ -1345,8 +1344,7 @@ class MaiSoulPlugin(Star):
             if not answer:
                 return
             # 会话键与 _process_chat 对齐（群=群号，私聊=发送者ID），否则私聊回声记进另一个状态
-            gid = str(event.get_group_id() or event.get_sender_id()
-                      or event.unified_msg_origin)
+            gid = session_key(event)
             st = self.states.get(gid)
             segs = [s for s in answer.split("\n") if s.strip()]
             st.record_self_reply("", segs, self.config["bot_name"])
@@ -1438,8 +1436,7 @@ class MaiSoulPlugin(Star):
     def _record(self, event: AstrMessageEvent, text: str, gid: str | None = None):
         """gid 由调用方传入（群=群号，私聊=用户ID），保证与门控使用同一会话状态。"""
         if gid is None:
-            gid = str(event.get_group_id() or event.get_sender_id()
-                      or event.unified_msg_origin)
+            gid = session_key(event)
         sender_name = event.get_sender_name() or str(event.get_sender_id())
         group_id = str(event.get_group_id() or "")
         self.states.get(gid).record_external({
