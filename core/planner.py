@@ -348,6 +348,7 @@ class PlannerState:
     """单群 Planner 运行时（WAIT/RUNNING 状态机 + 退避 + 打断）。"""
 
     agent_state: str = "idle"        # idle / running / wait
+    cycle_gen: int = 0               # 循环代际号（M3：打断后旧代退出不得回写状态）
     consecutive_wait_count: int = 0
     wait_until: float = 0.0
     backoff_count: int = 0
@@ -365,6 +366,21 @@ class PlannerState:
     is_group: bool = True
 
     # ---------------- wait 状态机（对齐 _try_enter_wait_state） ----------------
+    def begin_cycle(self) -> int:
+        """开启新循环并返回其代际号（打断 cancel 旧循环后由新循环调用）。"""
+        self.cycle_gen += 1
+        return self.cycle_gen
+
+    def set_idle_if_current(self, gen: int) -> None:
+        """循环退出置 idle 的代际守卫（M3）。
+
+        打断流程是 cancel 旧任务 → 置 running → 开新循环；被取消的旧任务
+        在下一个 await 点才收到 CancelledError，其退出路径若直接回写
+        agent_state="idle" 会清掉新循环状态（后续消息误判 idle 再开一
+        循环 → 双循环并发）。只有代际号仍是自己时才允许回写。"""
+        if self.cycle_gen == gen:
+            self.agent_state = "idle"
+
     def try_enter_wait(self, cfg, seconds: int) -> tuple[bool, int, int]:
         maximum = max(1, int(cfg.get("max_consecutive_wait_count", 3)))
         if self.consecutive_wait_count >= maximum:
