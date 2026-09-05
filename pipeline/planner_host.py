@@ -679,15 +679,17 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     return f"已发送 {len(sent)} 段" + ("（引用回复）" if quote_id else "")
 
 async def _planner_send_emoji(P, deps) -> str:
-    """send_emoji 工具执行：语境选择表情包（v6.9.7 重写）。
+    """send_emoji 工具执行：语境选择表情包（v6.9.7 重写，v6.16.1 两段制）。
 
-    对齐 MaiBot send_emoji 的子代理选图（emoji_selection.prompt 的精神），适配
-    stealer 两步制：子 LLM 从上下文提炼检索词 → search_meme 取候选 → 取首个
-    候选编号 send_meme（stealer 的 BM25+faiss 检索已按相关性排序，取首条等价
-    于 MaiBot「情绪→最匹配」且省一次视觉选择）。search/send 必须复用同一
-    event 对象——stealer 的候选列表挂在 event._emoji_turn_state 上。
+    对齐 MaiBot send_emoji 子代理「候选中选号」的语义，适配 stealer 三步制：
+    ① 子 LLM 从上下文提炼检索词 → ② search_meme 取候选 → ③ 候选元数据回喂
+    子 LLM 挑编号再 send_meme（原版是 VLM 看 25 宫格拼图选号，stealer 候选
+    自带文字元数据，纯文本挑号等价且免视觉模型）。挑选失败/单候选时回落：
+    多候选随机抽（多样性，对齐原版 top-10 random.choice 的精神），不再恒取
+    检索第一名。search/send 必须复用同一 event 对象——stealer 的候选列表挂
+    在 event._emoji_turn_state 上。
     """
-    import re as _re
+    import random
     try:
         mgr = P.context.get_llm_tool_manager()
         search_tool = mgr.get_func("search_meme")
@@ -698,17 +700,18 @@ async def _planner_send_emoji(P, deps) -> str:
         ev = deps.event or bridge.SyntheticEvent(
             deps.umo, send_message=P.context.send_message)
         provider = P.context.get_using_provider()
+        recent = "\n".join(f"{m.get('name')}: {m.get('text')}"
+                           for m in list(deps.st.buffer)[-15:])
+        bot_name = str(deps.cfg.get("bot_name") or "麦麦")
+        reason = deps.latest_reason or "（无）"
         query = ""
         if provider is not None:
             try:
-                recent = "\n".join(f"{m.get('name')}: {m.get('text')}"
-                                   for m in list(deps.st.buffer)[-15:])
-                resp = await _task_text_chat(P, 
+                resp = await _task_text_chat(P,
                     "emoji", deps.cfg,
                     prompt=planner.EMOJI_QUERY_PROMPT.format(
                         chat_context=recent or "（群聊暂无消息）",
-                        bot_name=str(deps.cfg.get("bot_name") or "麦麦"),
-                        reason=deps.latest_reason or "（无）"),
+                        bot_name=bot_name, reason=reason),
                     session_id=f"maisoul_emoji_{deps.gid}")
                 query = _resp_text(resp).strip().strip('"“”‘’')
             except Exception:
@@ -717,15 +720,35 @@ async def _planner_send_emoji(P, deps) -> str:
             query = "开心"
         search_result = await bridge.call_llm_tool(
             P.context, ev, search_tool, {"query": query})
-        hit = _re.search(r"\[(\d+)\]", search_result or "")
-        if not hit:
+        cands = planner.parse_meme_candidates(search_result)
+        if not cands:
             return f"表情包检索失败: {str(search_result)[:120]}"
+        pick, how = cands[0]["num"], "检索第一名"
+        if len(cands) > 1 and provider is not None:
+            try:
+                resp = await _task_text_chat(P,
+                    "emoji", deps.cfg,
+                    prompt=planner.EMOJI_PICK_PROMPT.format(
+                        chat_context=recent or "（群聊暂无消息）",
+                        bot_name=bot_name, reason=reason,
+                        candidates="\n\n".join(
+                            f"[{c['num']}] {c['text']}" for c in cands)),
+                    session_id=f"maisoul_emoji_{deps.gid}")
+                got = planner.pick_meme_index(
+                    _resp_text(resp), [c["num"] for c in cands])
+                if got is not None:
+                    pick, how = got, "候选挑选"
+                else:
+                    pick, how = random.choice(cands)["num"], "随机候选"
+            except Exception:
+                logger.debug("maisoul: 表情候选挑选失败，随机候选", exc_info=True)
+                pick, how = random.choice(cands)["num"], "随机候选"
         send_result = await bridge.call_llm_tool(
-            P.context, ev, send_tool, {"emoji_id": int(hit.group(1))})
+            P.context, ev, send_tool, {"emoji_id": pick})
         if "发送失败" in send_result:
             return f"表情包发送失败: {send_result[:120]}"
         _emit_sent(P, deps.gid, f"[表情包] {query}", "", "emoji", deps.event)
-        return f"已发送表情包（检索词：{query}）"
+        return f"已发送表情包（检索词：{query}｜{how} #{pick}）"
     except Exception as e:
         return f"表情包发送失败: {e}"
 

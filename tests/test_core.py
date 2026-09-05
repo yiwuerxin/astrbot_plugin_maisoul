@@ -1566,6 +1566,42 @@ def test_taskregistry():
     check("M12 states: 活跃会话不被淘汰", "a" in sm2._groups)
 
 
+def test_emoji_pick():
+    """表情两段制：检索词 → 候选列表解析 → 选择模型挑号（对齐 MaiBot 选图语义）。"""
+    print("[表情候选挑选]")
+    from astrbot_plugin_maisoul.core import planner as P
+
+    raw = """找到 3 个匹配的表情包：
+
+[1] 分类：开心
+    角色：猫猫
+    图上文字：哈哈
+    描述：一只猫张大嘴笑
+
+[2] 分类：无语
+    图上文字：6
+    描述：翻白眼
+
+[3] 分类：震惊
+    描述：猫猫震惊"""
+    cands = P.parse_meme_candidates(raw)
+    check("解析: 候选数", len(cands) == 3, str(cands))
+    check("解析: 编号", [c["num"] for c in cands] == [1, 2, 3])
+    check("解析: 细节行并入所属候选",
+          "角色：猫猫" in cands[0]["text"] and "一只猫张大嘴笑" in cands[0]["text"]
+          and "翻白眼" in cands[1]["text"], str(cands[:1]))
+    check("解析: limit 截断", len(P.parse_meme_candidates(raw, limit=2)) == 2)
+    check("解析: 无候选返回空", P.parse_meme_candidates("未找到与'x'匹配的表情包。") == [])
+
+    nums = [c["num"] for c in cands]
+    check("挑号: 纯数字", P.pick_meme_index("3", nums) == 3)
+    check("挑号: 带话述", P.pick_meme_index("我认为选 2 最贴切", nums) == 2)
+    check("挑号: 越界数字跳过取下一个合法值",
+          P.pick_meme_index("12 3", nums) == 3)
+    check("挑号: 全部非法返回 None", P.pick_meme_index("不知道", nums) is None)
+    check("挑号: 空回复 None", P.pick_meme_index("", nums) is None)
+
+
 def test_planner():
     print("[Planner 决策层]")
     from astrbot_plugin_maisoul.core import planner as P
@@ -1990,6 +2026,7 @@ if __name__ == "__main__":
     test_states()
     test_learning()
     test_expression_review()
+    test_emoji_pick()
     test_planner()
     test_monitor()
     test_bridge_toolset()
