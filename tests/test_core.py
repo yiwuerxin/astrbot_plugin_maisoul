@@ -712,6 +712,78 @@ def test_deferred_pool_dependencies():
     names = [t["name"] for t in bridge.list_deferred_tools(_Ctx(), cfg)]
     check("无依赖的工具不受影响", names == ["call_maid"], str(names))
 
+
+def test_deferred_pool_gating():
+    """池构建的两道门控：WebUI 停用（active=False）与 builtin 配置激活条件。
+
+    builtin 的条件（如 web_search_exa 需 provider=exa）框架只在 WebUI/主代理
+    求值，get_func 不过滤——池混进调不通的工具会教 planner 白烧轮次。"""
+    print("[deferred 工具池：停用/未达标 builtin 过滤]")
+    import types as _t
+    from astrbot_plugin_maisoul.core import bridge
+
+    class _Tool:
+        def __init__(self, name, active=True):
+            self.name = name
+            self.active = active
+            self.description = name
+
+    class _Mgr:
+        def __init__(self, tools):
+            self._tools = {t.name: t for t in tools}
+
+        def get_func(self, name):
+            return self._tools.get(name)
+
+    # 1) active=False（WebUI 停用）→ 不入池
+    ctx = _t.SimpleNamespace(get_llm_tool_manager=lambda: _Mgr(
+        [_Tool("call_maid"), _Tool("web_search_tavily", active=False)]))
+    names = [t["name"] for t in bridge.list_deferred_tools(
+        ctx, {"chat_tools": ["web_search_tavily"], "maid_bridge": True})]
+    check("WebUI 停用的工具不入池", names == ["call_maid"], str(names))
+
+    # 2) builtin 配置条件未达标 → 不入池（桩掉 registry 规则表）
+    rule = _t.SimpleNamespace(
+        evaluate=lambda cfg: [{"matched": cfg.get("provider_settings", {}).get(
+            "websearch_provider") == "tavily"}])
+    reg = _t.ModuleType("astrbot.core.tools.registry")
+    reg.get_builtin_tool_config_rule = lambda n: rule if n == "web_search_tavily" else None
+    fake = {"astrbot": _t.ModuleType("astrbot"),
+            "astrbot.core": _t.ModuleType("astrbot.core"),
+            "astrbot.core.tools": _t.ModuleType("astrbot.core.tools"),
+            "astrbot.core.tools.registry": reg}
+    saved = {k: sys.modules.get(k) for k in fake}
+    try:
+        sys.modules.update(fake)
+        # 当前部署 provider=bocha（规则要求 tavily）→ 过滤
+        ctx2 = _t.SimpleNamespace(
+            get_llm_tool_manager=lambda: _Mgr([_Tool("web_search_tavily")]),
+            get_config=lambda: {"provider_settings": {"websearch_provider": "bocha"}})
+        names = [t["name"] for t in bridge.list_deferred_tools(
+            ctx2, {"chat_tools": ["web_search_tavily"], "maid_bridge": False})]
+        check("builtin 条件未达标不入池", names == [], str(names))
+        # provider 匹配 → 保留
+        ctx3 = _t.SimpleNamespace(
+            get_llm_tool_manager=lambda: _Mgr([_Tool("web_search_tavily")]),
+            get_config=lambda: {"provider_settings": {"websearch_provider": "tavily"}})
+        names = [t["name"] for t in bridge.list_deferred_tools(
+            ctx3, {"chat_tools": ["web_search_tavily"], "maid_bridge": False})]
+        check("builtin 条件达标保留", names == ["web_search_tavily"], str(names))
+        # 无规则（插件工具）→ 视为启用
+        ctx4 = _t.SimpleNamespace(
+            get_llm_tool_manager=lambda: _Mgr([_Tool("query_favor")]),
+            get_config=lambda: {"provider_settings": {}})
+        names = [t["name"] for t in bridge.list_deferred_tools(
+            ctx4, {"chat_tools": ["query_favor"], "maid_bridge": False})]
+        check("无规则的插件工具不受影响", names == ["query_favor"], str(names))
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
 def test_tool_skill_registry():
     print("[AstrBot 工具/技能注册表]")
     from pathlib import Path
@@ -1857,6 +1929,7 @@ if __name__ == "__main__":
     test_monitor()
     test_bridge_toolset()
     test_deferred_pool_dependencies()
+    test_deferred_pool_gating()
     test_tool_skill_registry()
     test_tool_exec_official_path()
     test_bridge_builtin_context()
