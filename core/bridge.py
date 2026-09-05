@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 from astrbot.api import logger
@@ -233,14 +234,32 @@ def list_astrbot_skills() -> list[dict]:
     ]
 
 
+_SKILLS_CACHE: dict[tuple, tuple[float, str]] = {}  # (技能集指纹) → (ts, 块文本)
+
+
 def build_skills_block(cfg) -> str:
     """把 chat_skills 选中的技能按 AstrBot 原生 build_skills_prompt 注入聊天系统提示词。
 
     与 astr_main_agent 注入主 agent 的方式一致：active_only=True、runtime="local"。
+    M13：按技能集指纹缓存 60s——每次 replyer 都新建 SkillManager 扫描技能
+    目录是纯浪费；短 TTL 兼容运行中安装/卸载技能的可见性。
     """
     names = {str(n).strip() for n in (cfg.get("chat_skills") or []) if str(n).strip()}
     if not names:
         return ""
+    key = tuple(sorted(names))
+    now = time.time()
+    hit = _SKILLS_CACHE.get(key)
+    if hit is not None and now - hit[0] < 60:
+        return hit[1]
+    block = _build_skills_block_uncached(names)
+    if len(_SKILLS_CACHE) > 16:
+        _SKILLS_CACHE.clear()
+    _SKILLS_CACHE[key] = (now, block)
+    return block
+
+
+def _build_skills_block_uncached(names: set) -> str:
     try:
         from astrbot.core.skills.skill_manager import SkillManager, build_skills_prompt
 
