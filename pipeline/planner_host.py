@@ -8,18 +8,13 @@ import time
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..core import bridge, learning, monitor, personas, planner, prompt, sender, trigger
+from ..core import bridge, learning, monitor, personas, planner, prompt, trigger
 from ..core.constants import MESSAGE_DEBOUNCE_SECONDS
-try:
-    from astrbot.api.event import MessageChain
-except ImportError:
-    from astrbot.core.message.message_event_result import MessageChain
-from astrbot.api.message_components import Reply
 
-from .ecobridge import (_eco_fire_response, _eco_inject_block, _extra_part_text,
+from .ecobridge import (_eco_inject_block, _extra_part_text,
                          xinxian_profile_block as _xinxian_profile_block)
 from .events_util import _emit_sent, _monitor_stage, _resp_text
-from .modelbind_host import _embedding_provider, _pick_task_model, _task_text_chat
+from .modelbind_host import _pick_task_model, _task_text_chat
 from .replyer import _deliver_reply, _schedule_learning, _select_expr_block
 
 
