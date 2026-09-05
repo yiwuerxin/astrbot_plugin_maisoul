@@ -498,7 +498,9 @@ class Monitor:
                                end_reason: str = "",
                                end_detail: str = "",
                                eco_injection: str = "",
-                               planner_system_prompt: str = "") -> None:
+                               planner_system_prompt: str = "",
+                               reasoning_by_idx=None,
+                               replyer_reasoning: str = "") -> None:
         """广播一轮 planner 结束后的最终聚合事件（MaiBot 原事件名与嵌套结构）。
 
         token 用量来自 AstrBot LLMResponse.usage（TokenUsage：input_other+
@@ -516,6 +518,7 @@ class Monitor:
                 planner_selected_history_count,
                 planner_tool_count,
                 planner_system_prompt or None,
+                reasoning_map=reasoning_by_idx,
             ),
             "planner": _serialize_planner_block(
                 planner_content,
@@ -524,6 +527,7 @@ class Monitor:
                 planner_completion_tokens,
                 planner_total_tokens,
                 planner_duration_ms,
+                replyer_reasoning,
             ),
             "tools": _serialize_tool_results(list(tools or [])),
             "interrupted": planner_interrupted,
@@ -539,17 +543,23 @@ class Monitor:
 
 
 def _serialize_request_block(messages, selected_history_count, tool_count,
-                             system_prompt=None):
+                             system_prompt=None, reasoning_map=None):
     if messages is None and selected_history_count is None and tool_count is None:
         return None
     out = {
         "messages": [], "selected_history_count": int(selected_history_count or 0),
         "tool_count": int(tool_count or 0),
     }
-    for m in list(messages or []):
+    rmap = {int(k): v for k, v in dict(reasoning_map or {}).items()}
+    for i, m in enumerate(list(messages or [])):
         if not isinstance(m, dict):
             continue
         item = {"role": str(m.get("role", "unknown")), "content": m.get("content")}
+        # 推理过程页：assistant 轮附思考（ReasoningItem）——仅进监控副本，
+        # 回灌 contexts 永不带 reasoning（坑 54），两边互不影响
+        reasoning = str(rmap.get(i, "") or "").strip()
+        if reasoning and item["role"] == "assistant":
+            item["reasoning"] = reasoning
         if m.get("tool_calls"):
             item["tool_calls"] = m["tool_calls"]
         if str(m.get("role")) == "tool" and m.get("tool_call_id"):
@@ -561,12 +571,13 @@ def _serialize_request_block(messages, selected_history_count, tool_count,
 
 
 def _serialize_planner_block(content, tool_calls, prompt_tokens,
-                             completion_tokens, total_tokens, duration_ms):
+                             completion_tokens, total_tokens, duration_ms,
+                             replyer_reasoning=""):
     if (content is None and tool_calls is None and duration_ms is None
             and prompt_tokens is None and completion_tokens is None
             and total_tokens is None):
         return None
-    return {
+    out = {
         "content": content,
         "tool_calls": [
             {"id": str(tc.get("id", "")),
@@ -579,6 +590,9 @@ def _serialize_planner_block(content, tool_calls, prompt_tokens,
         "total_tokens": int(total_tokens or 0),
         "duration_ms": float(duration_ms or 0.0),
     }
+    if str(replyer_reasoning or "").strip():
+        out["reasoning"] = str(replyer_reasoning).strip()  # 推理过程页：reply 工具的回复器思考
+    return out
 
 
 def _serialize_tool_results(tools):

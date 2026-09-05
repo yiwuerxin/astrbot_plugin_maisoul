@@ -31,6 +31,7 @@
 """
 
 import asyncio
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -86,6 +87,46 @@ EMOJI_QUERY_PROMPT = """{chat_context}
 当前分析参考：{reason}
 
 请只输出这个检索词本身，不要输出任何其他内容。"""
+
+# 表情候选挑选子提示（对齐 MaiBot send_emoji 子代理的「从候选选编号」语义：
+# 原版是 VLM 看 25 宫格拼图选号；stealer 生态里候选带文字元数据，纯文本挑号）
+EMOJI_PICK_PROMPT = """{chat_context}
+
+你需要为{bot_name}从下面的表情包候选中选出此刻发送的一张，要求最贴合当前聊天的语气、话题与画面内容。
+当前分析参考：{reason}
+
+候选表情包：
+
+{candidates}
+
+请只输出选中的编号数字（如 3），不要输出任何其他内容。"""
+
+
+def parse_meme_candidates(search_result: str, limit: int = 10) -> list[dict]:
+    """从 stealer search_meme 的候选列表文本解析 [{num, text}]。
+
+    候选块以「[N] 分类：」起始，其后缩进行（角色/图上文字/标签/描述等）
+    并入所属候选；只保留前 limit 个（挑选调用保持小体积）。
+    """
+    out: list[dict] = []
+    for ln in str(search_result or "").splitlines():
+        m = re.match(r"^\[(\d+)\]\s*(.*)$", ln.strip())
+        if m:
+            if len(out) >= max(1, limit):
+                break
+            out.append({"num": int(m.group(1)), "text": m.group(2).strip()})
+        elif out and ln.startswith("    ") and ln.strip():
+            out[-1]["text"] += "；" + ln.strip()
+    return out
+
+
+def pick_meme_index(reply: str, nums: list[int]) -> int | None:
+    """从挑选模型回复中取第一个落在候选编号集内的整数（越界跳过）。"""
+    for tok in re.findall(r"\d+", str(reply or "")):
+        v = int(tok)
+        if v in nums:
+            return v
+    return None
 
 WAIT_TOOL_RESULT = ("当前对话循环进入等待状态，将固定等待 {seconds} 秒；期间收到的新消息不会提前打断本次等待。"
                     "连续 wait 次数：{current}/{maximum}。")
