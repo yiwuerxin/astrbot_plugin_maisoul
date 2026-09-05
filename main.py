@@ -700,6 +700,7 @@ class MaiSoulPlugin(Star):
             else:
                 return done  # 消息留待当前循环的后续轮次处理
 
+        gen = pl.begin_cycle()  # M3：新循环换代——被打断的旧循环退出不得回写状态
         pl.agent_state = "running"
         pl.interrupt_count = 0
         umo = event.unified_msg_origin
@@ -715,9 +716,9 @@ class MaiSoulPlugin(Star):
         if send_fn is not None:
             done.close()  # webchat 分支返回完整循环协程；预建的空协程关闭，防未 await 告警
             return self._planner_cycle(umo, platform, gid, st, is_group, send_fn=send_fn,
-                                      event=event)
+                                      event=event, gen=gen)
         pl.running_task = asyncio.create_task(
-            self._planner_cycle(umo, platform, gid, st, is_group, event=event))
+            self._planner_cycle(umo, platform, gid, st, is_group, event=event, gen=gen))
         return done
 
     def _drain_pending(self, st, pl) -> list[dict]:
@@ -730,7 +731,8 @@ class MaiSoulPlugin(Star):
     async def _planner_cycle(self, umo: str, platform: str, gid: str, st,
                              is_group: bool = True, send_fn=None,
                              initial_feedback: str = "",
-                             event: AstrMessageEvent | None = None):
+                             event: AstrMessageEvent | None = None,
+                             gen: int = 0):
         """一轮 Planner：最多 MAX_INTERNAL_ROUNDS 轮工具循环（对齐 reasoning_engine）。
 
         initial_feedback：wait 到期续轮时的完成回执（对齐 wait 完成工具结果消息），
@@ -793,7 +795,7 @@ class MaiSoulPlugin(Star):
             provider = self.context.get_using_provider()
             if provider is None:
                 logger.warning("maisoul: 未配置可用的模型 Provider，planner 跳过")
-                pl.agent_state = "idle"
+                pl.set_idle_if_current(gen)
                 finalize("no_provider")
                 return
             logger.debug(f"maisoul planner[{gid}]: resolve 人格前")
@@ -986,7 +988,7 @@ class MaiSoulPlugin(Star):
                         pl.record_idle_cycle(eff_cfg)
                     logger.info(f"maisoul[{gid}] planner: 无动作结束"
                                 + (f"（模型陈述：{analysis[:120]}）" if analysis else "（无输出）"))
-                    pl.agent_state = "idle"
+                    pl.set_idle_if_current(gen)
                     self._monitor_stage(gid, monitor.STAGE_WAITING, "本轮处理结束",
                                         agent_state=pl.agent_state)
                     finalize("no_action", (analysis or "")[:120])
@@ -1029,7 +1031,7 @@ class MaiSoulPlugin(Star):
                         logger.info(f"maisoul[{gid}] planner wait: {message}")
                         if "休息" in message:
                             pl.record_idle_cycle(eff_cfg)
-                            pl.agent_state = "idle"
+                            pl.set_idle_if_current(gen)
                         else:
                             # wait 到期必续轮（坑 26）：调度到期回执再跑一轮——
                             # 缺失会让会话挂在 wait 直到下一条消息才动
@@ -1101,7 +1103,7 @@ class MaiSoulPlugin(Star):
                         "role": "tool",
                         "tool_call_id": f"{cycle_id}-{round_index}-{i}",
                         "content": f"未知工具（若是 deferred 工具，请先调用 tool_search 发现它）"})
-            pl.agent_state = "idle"
+            pl.set_idle_if_current(gen)
             self._monitor_stage(gid, monitor.STAGE_WAITING, "本轮处理结束",
                                 agent_state=pl.agent_state)
             finalize(end_reason or "max_rounds")
@@ -1110,14 +1112,14 @@ class MaiSoulPlugin(Star):
             self._monitor_stage(gid, monitor.STAGE_PLANNER_INTERRUPTED,
                                 "收到外部中断信号", agent_state=pl.agent_state)
             finalize("interrupted")
-            pl.agent_state = "idle"
+            pl.set_idle_if_current(gen)
             raise
         except Exception as e:
             self._monitor_stage(gid, monitor.STAGE_ERROR, str(e)[:80],
                                 agent_state=pl.agent_state)
             finalize("error", str(e)[:120])
             logger.error("maisoul planner 循环异常", exc_info=True)
-            pl.agent_state = "idle"
+            pl.set_idle_if_current(gen)
 
     def _schedule_wait_resume(self, st, cfg, gid: str, seconds: int):
         """wait 到期：必续一轮并注入完成回执（对齐 timeout 触发 + _build_wait_completed_message）。
@@ -1136,10 +1138,11 @@ class MaiSoulPlugin(Star):
                 elapsed = time.time() - armed_at
                 has_new = st.pending_since_fire > 0
                 receipt = planner.build_wait_completed_message(elapsed, seconds, has_new)
+                gen = pl.begin_cycle()  # M3：续轮换代，旧代退出不得回写
                 pl.agent_state = "running"
                 await self._planner_cycle(getattr(pl, "umo", ""), getattr(pl, "platform", ""),
                                           gid, st, getattr(pl, "is_group", True),
-                                          initial_feedback=receipt)
+                                          initial_feedback=receipt, gen=gen)
 
         try:
             return self._spawn(_resume())
@@ -1391,12 +1394,13 @@ class MaiSoulPlugin(Star):
             if not fired:
                 return
             pl = st.planner_state()
+            gen = pl.begin_cycle()  # M3：sim 循环同样走代际守卫
             pl.agent_state = "running"
             pl.umo = event.unified_msg_origin
             pl.platform = "webchat"
             pl.is_group = False
             await self._planner_cycle(event.unified_msg_origin, "webchat", "sim", st, False,
-                                      event=event)
+                                      event=event, gen=gen)
             yield event.plain_result(f"[sim 完成] 人格={st.last_persona}，决策结果见上方发言/日志")
             return
         if arg in ("on", "off"):

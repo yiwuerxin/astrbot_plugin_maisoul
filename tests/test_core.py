@@ -1157,6 +1157,21 @@ def test_planner():
     print("[Planner 决策层]")
     from astrbot_plugin_maisoul.core import planner as P
 
+    # M3 回归：代际号守卫——打断（cancel 旧循环 + 新循环 running）后，旧循环
+    # 在 CancelledError/退出路径回写 idle 会清掉新循环状态，后续消息误判
+    # idle 再开循环 → 双循环并发。旧代退出不得回写，仅当前代可以。
+    plg = P.PlannerState()
+    plg.agent_state = "running"
+    g1 = plg.begin_cycle()
+    plg.set_idle_if_current(g1)
+    check("M3 代际: 当前代退出置 idle", plg.agent_state == "idle")
+    g2 = plg.begin_cycle()          # 新循环开启（打断场景）
+    plg.agent_state = "running"
+    plg.set_idle_if_current(g1)     # 被取消的旧循环稍后醒来退出
+    check("M3 代际: 旧代退出不得清状态", plg.agent_state == "running")
+    plg.set_idle_if_current(g2)
+    check("M3 代际: 新代自身退出仍生效", plg.agent_state == "idle")
+
     # fetch_history 已移除（v6.13.5）：MaiBot focus 模式专属工具，部署版
     # focus_mode=false 不暴露——工具集与请求结构均不得出现
     st = GroupState()
