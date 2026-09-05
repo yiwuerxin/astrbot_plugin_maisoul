@@ -89,6 +89,10 @@ def list_deferred_tools(context, cfg) -> list[dict]:
             tool = mgr.get_func(name)
             if tool is None:
                 continue
+            # builtin 工具带配置激活条件（如 web_search_* 需 provider+key）：
+            # 未激活的不进池——池里出现调不通的工具会教 planner 白烧轮次
+            if not getattr(tool, "active", True):
+                continue
             seen.add(name)
             out.append({"name": name,
                         "description": str(getattr(tool, "description", "") or ""),
@@ -130,11 +134,15 @@ async def call_llm_tool(context, event, tool, args: dict | None = None,
 
     装饰器注册的插件工具（如 call_maid/send_meme）不能直接 tool.call()，
     必须走 _execute_local → call_local_llm_tool 的 handler(event, **kwargs) 路径。
+    核心 builtin 工具（web_search_tavily 等 FunctionTool 子类）执行时还要经
+    run_context.context.context.get_config(umo) 读 provider_settings——所以
+    内层必须同时携带 event 与 astrbot Context，只塞 event 会 AttributeError。
     """
     from astrbot.core.agent.run_context import ContextWrapper
     from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
-    wrapper = ContextWrapper(context=SimpleNamespace(event=event))
+    wrapper = ContextWrapper(
+        context=SimpleNamespace(event=event, context=context))
     out: list[str] = []
     agen = FunctionToolExecutor.execute(tool=tool, run_context=wrapper, **(args or {}))
     try:

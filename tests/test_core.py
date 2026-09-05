@@ -833,6 +833,62 @@ def test_tool_exec_official_path():
     check("SyntheticEvent: get_extra 默认空", ev.get_extra("k") is None)
 
 
+def test_bridge_builtin_context():
+    """call_llm_tool 的 ContextWrapper 必须同时携带 event 与 astrbot Context。
+
+    核心 builtin 工具（web_search_tavily 等 FunctionTool）执行时经
+    run_context.context.context.get_config(umo=...) 读 provider_settings——
+    只塞 event 会让 builtin 工具 AttributeError → deferred 路径报「执行失败」。
+    强制桩掉 ContextWrapper/FunctionToolExecutor，只验 maisoul 侧的组装。"""
+    print("[builtin 工具桥上下文]")
+    import types as _t
+    from astrbot_plugin_maisoul.core import bridge
+
+    captured: dict = {}
+
+    class _StubWrapper:
+        def __init__(self, context=None):
+            captured["inner"] = context
+
+    class _StubExecutor:
+        @staticmethod
+        def execute(tool=None, run_context=None, **kwargs):
+            async def _gen():
+                yield _t.SimpleNamespace(content=[_t.SimpleNamespace(text="ok")])
+            return _gen()
+
+    rc = _t.ModuleType("astrbot.core.agent.run_context")
+    rc.ContextWrapper = _StubWrapper
+    ex = _t.ModuleType("astrbot.core.astr_agent_tool_exec")
+    ex.FunctionToolExecutor = _StubExecutor
+    fake = {"astrbot": _t.ModuleType("astrbot"),
+            "astrbot.core": _t.ModuleType("astrbot.core"),
+            "astrbot.core.agent": _t.ModuleType("astrbot.core.agent"),
+            "astrbot.core.agent.run_context": rc,
+            "astrbot.core.astr_agent_tool_exec": ex}
+    saved = {k: sys.modules.get(k) for k in fake}
+    try:
+        sys.modules.update(fake)
+        ev = bridge.SyntheticEvent("webchat!u!1")
+        cfg = {"provider_settings": {"websearch_tavily_key": ["k"]}}
+        ctx = _t.SimpleNamespace(get_config=lambda umo=None: cfg)
+        out = asyncio.run(bridge.call_llm_tool(ctx, ev, object(), {}))
+        inner = captured.get("inner")
+        check("call_llm_tool: 内层携带 astrbot Context（builtin get_config 路径）",
+              getattr(inner, "context", None) is ctx, type(inner).__name__)
+        check("call_llm_tool: 内层 event 仍为原事件",
+              getattr(inner, "event", None) is ev, type(inner).__name__)
+        got = inner.context.get_config(umo=inner.event.unified_msg_origin)
+        check("call_llm_tool: builtin 取 provider_settings 路径可用", got is cfg, got)
+        check("call_llm_tool: 结果文本透传", out == "ok", out)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
 def test_monitor():
     print("[麦麦观察]")
     import pathlib
@@ -1803,6 +1859,7 @@ if __name__ == "__main__":
     test_deferred_pool_dependencies()
     test_tool_skill_registry()
     test_tool_exec_official_path()
+    test_bridge_builtin_context()
     test_personas()
     test_taskregistry()
     test_phase3_mechanisms()
