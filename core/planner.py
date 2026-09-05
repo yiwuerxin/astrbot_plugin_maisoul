@@ -525,5 +525,7 @@ class PlannerDeps:
         discovered = self.st.planner_state().discovered_tools
         # 新发现判定要在更新前做（MaiBot 同款标记）
         result = tool_search_result_text(hits, set(discovered))
+        if len(discovered) >= 256:  # M12：会话级集合封顶（清后可重发现，无行为损失）
+            discovered.clear()
         discovered.update(str(h.get("name")) for h in hits)
         return result

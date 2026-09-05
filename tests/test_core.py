@@ -1208,6 +1208,44 @@ def test_taskregistry():
     mon.close()  # 幂等
     check("M6 monitor: close 幂等释放", True)
 
+    # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
+    import asyncio as _aio2
+    from astrbot_plugin_maisoul.core.monitor import (
+        MaisakaMonitorEventRecord as _Rec, Monitor as _M, MonitorStore as _MS,
+    )
+
+    async def _writer_scenario():
+        s2 = _MS(pathlib.Path(tempfile.mkdtemp()) / "m10.db")
+        m2 = _M(s2)
+        m2.start_writer()
+        m2.emit_session_start("g1", "群 g1", is_group_chat=True,
+                              group_id="g1", user_id=None, platform="qq")
+        m2.emit_message_sent("g1", "麦麦", "hello", "", time.time(), "reply",
+                             platform="qq")
+        await _aio2.sleep(0.05)  # 给 writer 一拍
+        await m2.stop_writer()
+        return s2
+
+    s2 = _aio2.run(_writer_scenario())
+    with s2._session_factory() as sess:
+        n = len(sess.query(_Rec).all())
+    check("M10 writer: 事件经后台协程落库", n >= 2, f"rows={n}")
+
+    # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
+    from astrbot_plugin_maisoul.core.states import StateManager as _SM
+    sm = _SM()
+    sm._MAX_SESSIONS = 8  # 测试压缩上限
+    for i in range(20):
+        sm.get(f"g{i}")
+    check("M12 states: 会话数不超上限", len(sm) <= 8, f"len={len(sm)}")
+    check("M12 states: 最近访问者存活", "g19" in sm._groups)
+    sm2 = _SM()
+    sm2._MAX_SESSIONS = 2
+    a = sm2.get("a"); a.planner_state().agent_state = "running"
+    for i in range(6):
+        sm2.get(f"x{i}")
+    check("M12 states: 活跃会话不被淘汰", "a" in sm2._groups)
+
 
 def test_planner():
     print("[Planner 决策层]")
