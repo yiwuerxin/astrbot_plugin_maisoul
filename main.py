@@ -25,6 +25,7 @@ from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
 from .core import bridge, learning, modelbind, monitor, personas, planner, prompt, sender, trigger
+from .core.taskregistry import TaskRegistry
 from .core.constants import MESSAGE_DEBOUNCE_SECONDS, OUTPUT_INSTRUCTION
 from .core.states import StateManager
 from .webui import routes as webui_routes
@@ -57,16 +58,14 @@ class MaiSoulPlugin(Star):
         self._cycle_counter: dict[str, int] = {}
         self._group_sessions: set[str] = set()
         self._monitor_sessions: set[str] = set()
-        # fire-and-forget 后台任务（wait 续轮/学习器）的强引用——事件循环只持
-        # 弱引用，不持引用的任务可能在执行中被 GC 静默丢弃（CPython 文档明示）
-        self._bg_tasks: set[asyncio.Task] = set()
+        # 后台任务注册表（M6）：强引用 + 具名 + 完成自动清理 + 卸载时
+        # cancel_and_wait_all——事件循环只持弱引用，裸任务可能被 GC 中途
+        # 丢弃；且在飞任务必须在存储关闭前取消，否则在已关连接上继续跑
+        self._registry = TaskRegistry()
 
-    def _spawn(self, coro) -> asyncio.Task:
-        """fire-and-forget：持强引用防任务被 GC 中途丢弃，完成即自动移除。"""
-        task = asyncio.create_task(coro)
-        self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_tasks.discard)
-        return task
+    def _spawn(self, coro, name: str = "") -> asyncio.Task:
+        """fire-and-forget 唯一入口（经 TaskRegistry；禁止裸 create_task）。"""
+        return self._registry.spawn(coro, name=name)
 
     @staticmethod
     def _persistent_data_dir() -> Path:
@@ -397,7 +396,7 @@ class MaiSoulPlugin(Star):
                 finally:
                     st.firing = False
 
-        st.defer_task = asyncio.create_task(_recheck())
+        st.defer_task = self._registry.spawn(_recheck(), name=f"defer_recheck:{gid}")
         logger.debug(f"maisoul[{gid}] 空窗补偿重查已排期：{delay:.1f}s 后重评")
 
     # ------------------------------------------------------------------ #
@@ -654,7 +653,7 @@ class MaiSoulPlugin(Star):
                 except Exception:
                     logger.debug("maisoul: 学习任务失败", exc_info=True)
 
-            self._spawn(_run())
+            self._spawn(_run(), name=f"learning:{gid}")
         except Exception:
             logger.debug("maisoul: 学习任务调度失败", exc_info=True)
 
@@ -717,8 +716,9 @@ class MaiSoulPlugin(Star):
             done.close()  # webchat 分支返回完整循环协程；预建的空协程关闭，防未 await 告警
             return self._planner_cycle(umo, platform, gid, st, is_group, send_fn=send_fn,
                                       event=event, gen=gen)
-        pl.running_task = asyncio.create_task(
-            self._planner_cycle(umo, platform, gid, st, is_group, event=event, gen=gen))
+        pl.running_task = self._registry.spawn(
+            self._planner_cycle(umo, platform, gid, st, is_group, event=event, gen=gen),
+            name=f"planner:{gid}")
         return done
 
     def _drain_pending(self, st, pl) -> list[dict]:
@@ -1145,7 +1145,7 @@ class MaiSoulPlugin(Star):
                                           initial_feedback=receipt, gen=gen)
 
         try:
-            return self._spawn(_resume())
+            return self._spawn(_resume(), name=f"wait_resume:{gid}")
         except Exception:
             logger.debug("maisoul: wait 恢复调度失败", exc_info=True)
 
@@ -1557,8 +1557,10 @@ class MaiSoulPlugin(Star):
         return ""
 
     async def terminate(self):
-        # 取消仍挂起的后台任务（wait 续轮/学习器）：插件已停，续轮不应再触发
-        for task in list(self._bg_tasks):
-            task.cancel()
-        self._bg_tasks.clear()
+        # M6：任务必有主——先取消并等待全部在飞任务（planner 循环/空窗重查/
+        # wait 续轮/学习器），再释放监控库连接池；顺序不可反，否则任务会在
+        # 已关闭的连接/旧状态对象上继续跑。WebUI 路由框架无注销接口，热重载
+        # 时同路由重注册即替换，无泄漏。
+        await self._registry.cancel_and_wait_all(timeout=5.0)
+        self.monitor.close()
         logger.info("maisoul v6.15.4 已卸载")

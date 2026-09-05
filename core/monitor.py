@@ -102,7 +102,18 @@ class MonitorStore:
         self._cleanup_lock = threading.Lock()
         self._records_since_cleanup = 0
         self._last_cleanup_at = 0.0
+        self._closed = False
         self._import_legacy_json()
+
+    def close(self) -> None:
+        """释放连接池（插件卸载 terminate 时调用；幂等——热重载会重建）。"""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.engine.dispose()
+        except Exception:
+            logger.debug("maisoul: 监控库连接池释放失败", exc_info=True)
 
     def _import_legacy_json(self) -> None:
         """一次性迁移：v6.8 早期版本的 JSON 账本导入 SQL（有表数据则跳过）。"""
@@ -293,6 +304,10 @@ class Monitor:
     def __init__(self, store: MonitorStore, bus: MonitorBus | None = None):
         self.store = store
         self.bus = bus or MonitorBus()
+
+    def close(self) -> None:
+        """卸载时释放账本连接池（透传 MonitorStore.close，幂等）。"""
+        self.store.close()
 
     def _broadcast(self, event: str, data: dict[str, Any]) -> None:
         try:

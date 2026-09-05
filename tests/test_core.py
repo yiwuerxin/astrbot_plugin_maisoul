@@ -1153,6 +1153,48 @@ def test_learning():
           apivalid.validate_learning_payload(big) is not None)
 
 
+def test_taskregistry():
+    print("[任务注册表 M6]")
+    import asyncio as _aio
+    from astrbot_plugin_maisoul.core.taskregistry import TaskRegistry
+    from astrbot_plugin_maisoul.core.monitor import MonitorStore, Monitor
+
+    reg = TaskRegistry()
+
+    async def _ok():
+        await _aio.sleep(0.01)
+        return 7
+
+    async def _hang():
+        await _aio.sleep(30)
+
+    async def _scenario():
+        # spawn 持强引用 + 完成自动清理
+        t_ok = reg.spawn(_ok(), name="ok")
+        assert await t_ok == 7
+        await _aio.sleep(0)
+        check("M6 registry: 完成任务自动移除", reg.size == 0)
+        # adopt（defer_task/running_task 句柄另存场景）
+        t_hang = reg.adopt(_aio.create_task(_hang()), name="hang")
+        check("M6 registry: adopt 登记", reg.size == 1)
+        # cancel_and_wait_all：挂起任务被取消且在超时内返回（幂等）
+        await reg.cancel_and_wait_all(timeout=2.0)
+        check("M6 registry: 取消并等待", t_hang.cancelled() and reg.size == 0)
+        await reg.cancel_and_wait_all(timeout=1.0)  # 幂等：再次调用不抛
+        return True
+
+    check("M6 registry: 场景", _aio.run(_scenario()))
+
+    # MonitorStore/Monitor.close：释放连接池且幂等
+    import pathlib, tempfile
+    p = pathlib.Path(tempfile.mkdtemp()) / "m6.db"
+    store = MonitorStore(p)
+    mon = Monitor(store)
+    mon.close()
+    mon.close()  # 幂等
+    check("M6 monitor: close 幂等释放", True)
+
+
 def test_planner():
     print("[Planner 决策层]")
     from astrbot_plugin_maisoul.core import planner as P
@@ -1581,6 +1623,7 @@ if __name__ == "__main__":
     test_tool_skill_registry()
     test_tool_exec_official_path()
     test_personas()
+    test_taskregistry()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
     sys.exit(1 if FAIL else 0)
