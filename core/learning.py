@@ -428,6 +428,99 @@ class LearningStore:
         self.save()
         return True
 
+    # ---------------- 表达审核（WebUI 审核页） ---------------- #
+    def ensure_expression_ids(self) -> bool:
+        """给缺 id 的表达条目补稳定自增 id（审核页按 id 跨共享组定位）。
+
+        旧条目无 id（学习管线不写 id，运行时零感知）；审核 API 读改前调用，
+        有补齐才落盘。返回是否有改动。"""
+        next_id = 1
+        for bucket in self.data.values():
+            for item in (bucket.get("expressions") or []):
+                i = item.get("id") if isinstance(item, dict) else None
+                if isinstance(i, int) and not isinstance(i, bool) and i >= next_id:
+                    next_id = i + 1
+        changed = False
+        for bucket in self.data.values():
+            items = bucket.get("expressions")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, dict) and not isinstance(item.get("id"), int):
+                    item["id"] = next_id
+                    next_id += 1
+                    changed = True
+        if changed:
+            self.save()
+        return changed
+
+    def all_expressions(self) -> list[dict]:
+        """跨共享组拉平全部表达条目（附 key），供审核页列表。"""
+        out: list[dict] = []
+        for key in self.data:
+            for item in self.expressions(key):
+                if not isinstance(item, dict):
+                    continue
+                out.append({"id": item.get("id"),
+                            "key": str(key),
+                            "situation": str(item.get("situation") or ""),
+                            "style": str(item.get("style") or ""),
+                            "count": int(item.get("count", 1) or 1),
+                            "checked": bool(item.get("checked"))})
+        return out
+
+    def review_expression(self, expr_id: int, action: str) -> bool:
+        """审核单条：approve=通过（checked=true）/ unapprove=取消人工通过 /
+        reject=拒绝（直接删除，对齐部署版语义）。跨组按 id 定位，返回是否命中。"""
+        for key in list(self.data):
+            items = self.expressions(key)
+            for i, item in enumerate(items):
+                if isinstance(item, dict) and item.get("id") == expr_id:
+                    if action == "approve":
+                        item["checked"] = True
+                    elif action == "unapprove":
+                        item["checked"] = False
+                    elif action == "reject":
+                        del items[i]
+                    else:
+                        return False
+                    self.save()
+                    return True
+        return False
+
+    def upsert_expression(self, situation: str, style: str, checked: bool,
+                          key: str = "global", expr_id: int | None = None) -> dict | None:
+        """审核页弹窗创建/修改单条表达。expr_id 为空=新建（去重并入既有条目）。
+
+        返回写入后的条目（新建并入既有时返回既有条目），入参空白返回 None。"""
+        situation, style = situation.strip(), style.strip()
+        if not situation or not style:
+            return None
+        if expr_id is not None:
+            for item in self.all_expressions_internal():
+                if isinstance(item, dict) and item.get("id") == expr_id:
+                    item["situation"], item["style"] = situation, style
+                    item["checked"] = bool(checked)
+                    self.save()
+                    return item
+            return None
+        added = self.add_expression(key, situation, style, checked)
+        if not added:  # situation+style 已存在：count+1，找回该条
+            for item in self.expressions(key):
+                if item.get("situation") == situation and item.get("style") == style:
+                    return item
+        return {"situation": situation, "style": style, "count": 1,
+                "checked": checked}
+
+    def all_expressions_internal(self) -> list[dict]:
+        """跨组原始条目引用（改写用，不拷贝）。"""
+        out: list[dict] = []
+        for bucket in self.data.values():
+            items = bucket.get("expressions")
+            if isinstance(items, list):
+                out.extend(x for x in items if isinstance(x, dict))
+        return out
+
     # ---------------- 黑话 ---------------- #
     def jargons(self, key: str) -> list[dict]:
         return self._bucket(key).get("jargons") or []

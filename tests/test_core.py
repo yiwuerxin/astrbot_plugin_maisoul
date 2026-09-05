@@ -1086,6 +1086,68 @@ def test_monitor():
     mon.bus.unsubscribe(q)
 
 
+def test_expression_review():
+    """审核页后端语义（对齐部署版：通过=可用/拒绝=删除；id 跨共享组定位）。"""
+    print("[表达方式审核]")
+    import json as _json
+    import pathlib
+    import tempfile
+    from astrbot_plugin_maisoul.core import learning
+
+    tmp = pathlib.Path(tempfile.mkdtemp()) / "r.json"
+    store = learning.LearningStore(path=tmp)
+    store.add_expression("global", "惊叹", "使用 我嘞个", False)
+    store.add_expression("g_123", "被夸", "谦虚卖萌", True)
+    store.add_expression("g_123", "深夜", "轻声温和", False)
+    # 旧库条目无 id：ensure 补齐且持久化
+    store.data["global"]["expressions"][0].pop("id", None)
+    changed = store.ensure_expression_ids()
+    ids = [x["id"] for x in store.all_expressions()]
+    check("审核: 旧条目补 id 且落盘", changed and all(isinstance(i, int) for i in ids)
+          and len(set(ids)) == len(ids), str(ids))
+    check("审核: 拉平附 key", {x["key"] for x in store.all_expressions()} == {"global", "g_123"})
+
+    pend = [x for x in store.all_expressions() if not x["checked"]]
+    check("审核: 待审统计", len(pend) == 2 and all(not x["checked"] for x in pend))
+    # 通过 → checked=true（expression_checked_only 门控生效面）
+    ok = store.review_expression(pend[0]["id"], "approve")
+    check("审核: 通过", ok and not [x for x in store.all_expressions()
+          if x["id"] == pend[0]["id"] and not x["checked"]])
+    # 取消人工通过 → checked=false
+    store.review_expression(pend[0]["id"], "unapprove")
+    check("审核: 取消人工通过",
+          [x for x in store.all_expressions() if x["id"] == pend[0]["id"]][0]["checked"] is False)
+    # 拒绝 = 直接删除（部署版语义）
+    n_before = len(store.all_expressions())
+    store.review_expression(pend[0]["id"], "reject")
+    check("审核: 拒绝删除", len(store.all_expressions()) == n_before - 1
+          and store.expressions("global") == [])
+    # 未知动作/未知 id：拒绝且不改库
+    snap = _json.dumps(store.data, sort_keys=True, ensure_ascii=False)
+    check("审核: 未知动作拒绝", not store.review_expression(999999, "approve"))
+    check("审核: 未知 id 未命中", not store.review_expression(999999, "reject")
+          and _json.dumps(store.data, sort_keys=True, ensure_ascii=False) == snap)
+
+    # 弹窗增改：新建（重复并入既有条目）、按 id 修改、空白拒绝
+    item = store.upsert_expression("被夸", "谦虚卖萌", True, key="g_123")
+    check("弹窗: 新建并入既有（去重）", item and item.get("count") == 2, str(item))
+    item2 = store.upsert_expression("全新情境", "全新风格", False, key="g_123")
+    check("弹窗: 全新建", item2 and item2.get("count") == 1)
+    store.ensure_expression_ids()
+    target = [x for x in store.all_expressions() if x["situation"] == "全新情境"][0]
+    item3 = store.upsert_expression("改后情境", "改后风格", True, key="g_123",
+                                    expr_id=target["id"])
+    check("弹窗: 按 id 修改", item3 and item3["situation"] == "改后情境"
+          and item3["checked"] is True)
+    check("弹窗: 空白拒绝", store.upsert_expression("  ", "x", True) is None)
+    check("弹窗: 未知 id 修改返回 None",
+          store.upsert_expression("a", "b", True, expr_id=999999) is None)
+    # 落盘结构过 apivalid（WebUI 整包写回同校验）
+    from astrbot_plugin_maisoul.core.apivalid import validate_learning_payload
+    check("审核: 落盘结构过校验",
+          validate_learning_payload(_json.loads(tmp.read_text(encoding="utf-8"))) is None)
+
+
 def test_learning():
     print("[学习子系统]")
     import pathlib
@@ -1925,6 +1987,7 @@ if __name__ == "__main__":
     test_prompt()
     test_states()
     test_learning()
+    test_expression_review()
     test_planner()
     test_monitor()
     test_bridge_toolset()
