@@ -78,7 +78,6 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
         system_prompt += bridge.MAID_BRIDGE_PROMPT
 
     _monitor_stage(P, gid, monitor.STAGE_REPLYER, "生成可见回复", agent_state="running")
-    reply_started = time.time()  # replier.response 耗时基线
     try:
         resp = await _task_text_chat(P, 
             "replyer", eff_cfg,
@@ -112,12 +111,6 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
         )
 
     answer = _resp_text(resp)
-    # replier.response：时间线"回复器响应"卡——reasoning=模型思考过程
-    # （此前只进 debug 日志，观察页看不到：客户反馈的推理详情缺失根因）
-    P.monitor.emit_replier_response(
-        session_id=gid, content=answer,
-        reasoning=str(getattr(resp, "reasoning_content", None) or "").strip(),
-        duration_ms=(time.time() - reply_started) * 1000, success=bool(answer))
     if not answer:
         logger.info(f"maisoul[{gid}] 模型未返回内容，放弃本次发言")
         return
