@@ -4,6 +4,8 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+from .emotion import EmotionState
+from .memstore import SessionMemory
 from .constants import (
     EXTERNAL_BURST_INTERVAL_SECONDS,
     EXTERNAL_MIN_AVERAGE_INTERVAL_SECONDS,
@@ -17,6 +19,8 @@ class GroupState:
 
     buffer: deque = field(default_factory=lambda: deque(maxlen=200))
     recent_self: deque = field(default_factory=lambda: deque(maxlen=50))     # 自发时间戳
+    emotion: EmotionState = field(default_factory=EmotionState)  # P-B 情绪 VA（内存态）
+    memory: "SessionMemory" = field(default_factory=SessionMemory)  # P-A 中期记忆
     last_replies: deque = field(default_factory=lambda: deque(maxlen=20))   # 近期发言文本
     replied_targets: deque = field(default_factory=lambda: deque(maxlen=30))  # (msg_id, ts)
     reply_by_target: dict = field(default_factory=dict)  # msg_id → 对该目标说过的原文（防重复提醒用）
@@ -28,7 +32,6 @@ class GroupState:
     defer_task: object = None  # 空窗补偿到点重查任务（对齐 runtime._defer_message_turn_check）
     # Planner 决策层运行时（mode=planner）；惰性导入避免循环依赖
     planner: object = None
-    planner_last_cycle_ts: float = 0.0
 
     def planner_state(self):
         from .planner import PlannerState
@@ -124,16 +127,42 @@ class GroupState:
         }
 
 
+def session_key(event) -> str:
+    """会话键（单一真相，M2 收敛）：群=group_id，私聊=sender_id，均空才回退 umo。
+
+    坑 23：私聊漏掉 sender_id 会让观察账本落错会话、学习库 item_id=用户ID
+    的匹配全部失效——门控/生成/记账/回声钩子必须同键，禁止各处内联重写。"""
+    return str(event.get_group_id() or event.get_sender_id() or event.unified_msg_origin)
+
+
 class StateManager:
-    """所有群的会话状态注册表。"""
+    """所有群的会话状态注册表（M12：上限 512 个会话，LRU 淘汰闲置态）。"""
+
+    _MAX_SESSIONS = 512
 
     def __init__(self) -> None:
         self._groups: dict[str, GroupState] = {}
 
     def get(self, gid: str) -> GroupState:
-        if gid not in self._groups:
-            self._groups[gid] = GroupState()
-        return self._groups[gid]
+        st = self._groups.pop(gid, None) or GroupState()
+        self._groups[gid] = st  # 重插到尾 = 最近访问（dict 保序做 LRU）
+        if len(self._groups) > self._MAX_SESSIONS:
+            self._evict_idle(keep=gid)
+        return st
+
+    def _evict_idle(self, keep: str) -> None:
+        """淘汰最久未访问的闲置状态（无在飞循环/生成/重查任务）。
+
+        全部活跃时宁超限也不误杀——淘汰一个正在跑循环的状态会让
+        agent_state/planner 状态凭空消失（比内存超标严重得多）。"""
+        for old_gid, st in self._groups.items():
+            if old_gid == keep:
+                continue
+            pl = st.planner_state()
+            if pl.agent_state != "idle" or st.firing or st.defer_task is not None:
+                continue
+            del self._groups[old_gid]
+            return
 
     def status_all(self) -> dict:
         return {gid: st.status() for gid, st in self._groups.items()}

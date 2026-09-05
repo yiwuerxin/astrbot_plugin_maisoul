@@ -35,6 +35,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime as _dt
+from typing import Protocol
 
 from astrbot.api import logger
 
@@ -348,6 +349,7 @@ class PlannerState:
     """单群 Planner 运行时（WAIT/RUNNING 状态机 + 退避 + 打断）。"""
 
     agent_state: str = "idle"        # idle / running / wait
+    cycle_gen: int = 0               # 循环代际号（M3：打断后旧代退出不得回写状态）
     consecutive_wait_count: int = 0
     wait_until: float = 0.0
     backoff_count: int = 0
@@ -365,6 +367,21 @@ class PlannerState:
     is_group: bool = True
 
     # ---------------- wait 状态机（对齐 _try_enter_wait_state） ----------------
+    def begin_cycle(self) -> int:
+        """开启新循环并返回其代际号（打断 cancel 旧循环后由新循环调用）。"""
+        self.cycle_gen += 1
+        return self.cycle_gen
+
+    def set_idle_if_current(self, gen: int) -> None:
+        """循环退出置 idle 的代际守卫（M3）。
+
+        打断流程是 cancel 旧任务 → 置 running → 开新循环；被取消的旧任务
+        在下一个 await 点才收到 CancelledError，其退出路径若直接回写
+        agent_state="idle" 会清掉新循环状态（后续消息误判 idle 再开一
+        循环 → 双循环并发）。只有代际号仍是自己时才允许回写。"""
+        if self.cycle_gen == gen:
+            self.agent_state = "idle"
+
     def try_enter_wait(self, cfg, seconds: int) -> tuple[bool, int, int]:
         maximum = max(1, int(cfg.get("max_consecutive_wait_count", 3)))
         if self.consecutive_wait_count >= maximum:
@@ -450,12 +467,24 @@ def build_planner_toolset(deps) -> "object":
     return tool_set
 
 
-class PlannerDeps:
-    """把 planner 工具回调绑定到 maisoul 的 replyer/表情桥/消息缓冲。"""
+class PlannerHost(Protocol):
+    """planner 工具回调的宿主接口（M9）。
 
-    def __init__(self, plugin, st, eff_cfg, event, platform: str, gid: str,
+    由 pipeline/planner_host 的适配器提供；planner 只依赖本协议，
+    不再感知插件对象（解 main↔planner 双向耦合——原 PlannerDeps.plugin
+    直接回调插件私有方法，拆分后即断）。"""
+
+    async def planner_execute_reply(self, deps, reason: str, args: dict) -> str: ...
+    def planner_schedule_wait_resume(self, st, cfg, gid: str, seconds: int) -> None: ...
+    async def planner_send_emoji(self, deps) -> str: ...
+
+
+class PlannerDeps:
+    """把 planner 工具回调绑定到宿主（PlannerHost）的 replyer/表情桥/消息缓冲。"""
+
+    def __init__(self, host: PlannerHost, st, eff_cfg, event, platform: str, gid: str,
                  is_group: bool = True, send_fn=None):
-        self.plugin = plugin
+        self.host = host
         self.st = st
         self.cfg = eff_cfg
         self.event = event
@@ -468,7 +497,7 @@ class PlannerDeps:
         self.deferred_pool: list[dict] = []  # [{name, description, tool}]，由 _planner_cycle 注入
 
     async def on_reply(self, args: dict) -> str:
-        return await self.plugin._planner_execute_reply(self, self.latest_reason, args)
+        return await self.host.planner_execute_reply(self, self.latest_reason, args)
 
     def on_wait(self, args: dict) -> str:
         try:
@@ -478,11 +507,11 @@ class PlannerDeps:
         entered, current, maximum = self.st.planner.try_enter_wait(self.cfg, seconds)
         if not entered:
             return WAIT_LIMIT_RESULT.format(maximum=maximum)
-        self.plugin._schedule_wait_resume(self.st, self.cfg, self.gid, seconds)
+        self.host.planner_schedule_wait_resume(self.st, self.cfg, self.gid, seconds)
         return WAIT_TOOL_RESULT.format(seconds=max(0, seconds), current=current, maximum=maximum)
 
     async def on_send_emoji(self) -> str:
-        return await self.plugin._planner_send_emoji(self)
+        return await self.host.planner_send_emoji(self)
 
     def on_tool_search(self, args: dict) -> str:
         """tool_search 执行：打分匹配 deferred 池 → 命中记入 discovered_tools（下一轮可用）。"""
@@ -496,5 +525,7 @@ class PlannerDeps:
         discovered = self.st.planner_state().discovered_tools
         # 新发现判定要在更新前做（MaiBot 同款标记）
         result = tool_search_result_text(hits, set(discovered))
+        if len(discovered) >= 256:  # M12：会话级集合封顶（清后可重发现，无行为损失）
+            discovered.clear()
         discovered.update(str(h.get("name")) for h in hits)
         return result

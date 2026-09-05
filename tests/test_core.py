@@ -530,6 +530,20 @@ def test_prompt():
 def test_states():
     print("[会话状态]")
 
+    # M2 收敛：会话键单一真相——群=群号，私聊=发送者，均空回退 umo
+    from astrbot_plugin_maisoul.core.states import session_key
+
+    class _Ev:
+        def __init__(self, g, s, u):
+            self._g, self._s, self._u = g, s, u
+        def get_group_id(self): return self._g
+        def get_sender_id(self): return self._s
+        @property
+        def unified_msg_origin(self): return self._u
+    check("M2 会话键: 群聊=群号", session_key(_Ev("103", "42", "umo:g")) == "103")
+    check("M2 会话键: 私聊=发送者", session_key(_Ev("", "42", "umo:p:42")) == "42")
+    check("M2 会话键: 双空回退 umo", session_key(_Ev("", "", "umo:p:x")) == "umo:p:x")
+
     # v6.9.13：任务级模型绑定（对齐 model_task_config 的多模型+策略）
     import random as _rnd
     from astrbot_plugin_maisoul.core import modelbind
@@ -1048,6 +1062,29 @@ def test_learning():
     check("JSON 修复: 前后杂讯", learning._repair_json_array('好的：\n[{"a":1}] 完成') == [{"a": 1}])
     check("JSON 修复: 无数组", learning._repair_json_array("没有内容") == [])
 
+    # M1 回归：自检 suitable 判定必须按结构提取——旧实现是
+    # '"suitable": true' in raw.replace(" ","")（针含空格、干草堆已去空格，
+    # 恒 False）+ 紧凑字符串兜底，模型常规输出 {"suitable": true} 时
+    # checked=False，默认 expression_checked_only=true 下学到的表达全部不可用
+    check("M1 suitable: 常规带空格 JSON 判真",
+          learning._suitable_from_review('{"suitable": true, "reason": "自然口语"}') is True)
+    check("M1 suitable: 紧凑 JSON 判真", learning._suitable_from_review('{"suitable":true}') is True)
+    check("M1 suitable: false 判假", learning._suitable_from_review('{"suitable": false}') is False)
+    check("M1 suitable: 前后杂讯容忍",
+          learning._suitable_from_review('评估结果：\n{"suitable": true}\n以上。') is True)
+    check("M1 suitable: 无法解析保守为假", learning._suitable_from_review('这条表达没问题') is False)
+    # 端到端口径：checked=True 的条目在 expression_checked_only=True 时可用
+    # （注入需过滤后池 ≥10 条，故放 12 条过检 + 6 条未过检）
+    tmpm = pathlib.Path(tempfile.mkdtemp()) / "m.json"
+    storem = learning.LearningStore(path=tmpm)
+    for i in range(12):
+        storem.add_expression("global", f"可用品{i}", f"风格{i}", True)
+    for i in range(6):
+        storem.add_expression("global", f"废品{i}", f"风格x{i}", False)
+    random.seed(7)
+    blkm = learning.expression_habits_block(storem, "global", True)
+    check("M1 端到端: 自检通过的表达可用", "可用品" in blkm and "废品" not in blkm, blkm[:60])
+
     buf = [{"name": "麦麦", "sid": "b", "msg_id": f"s{i}", "text": f"自言{i}",
             "at_bot": False, "reply_bot": False, "ts": i} for i in range(5)]
     buf.append({"name": "u", "sid": "u", "msg_id": "m", "text": "用户",
@@ -1130,9 +1167,204 @@ def test_learning():
           apivalid.validate_learning_payload(big) is not None)
 
 
+def test_phase3_mechanisms():
+    print("[Phase3 机制：P-E/P-F/P-D]")
+    import time as _t
+    from astrbot_plugin_maisoul.core import sanitize, freqfeedback
+    from astrbot_plugin_maisoul.core.demote import demote_quote
+
+    # P-F 清洗
+    check("P-F 清洗: 引用前缀剥离",
+          sanitize.sanitize_text("[CQ:reply,id=123] 你好啊") == "你好啊")
+    check("P-F 清洗: 合并转发占位",
+          sanitize.sanitize_text("看这个[合并转发消息]哈哈") == "看这个[转发消息]哈哈")
+    check("P-F 清洗: 干净文本不动", sanitize.sanitize_text("普通消息") == "普通消息")
+    check("P-F 点名: 其他AI前缀识别",
+          sanitize.leading_ai_mention("@别的AI 帮我查一下", "麦麦", ["小麦"]) == "别的AI")
+    check("P-F 点名: 自己的名不算",
+          sanitize.leading_ai_mention("@麦麦 你好", "麦麦", ["小麦"]) == "")
+    check("P-F 点名: 剥离前缀保留剩余正文",
+          sanitize.strip_leading_ai_mention("@别的AI 帮我查天气", "麦麦", []) == "帮我查天气")
+    check("P-F 点名: 指向自己的前缀不剥",
+          sanitize.strip_leading_ai_mention("@麦麦 你好", "麦麦", []) == "@麦麦 你好")
+
+    # P-E 频率窗口反馈
+    class _St:
+        def __init__(self, win10, win5):
+            self._w10, self._w5 = win10, win5
+        def recent_self_count(self, seconds):
+            return self._w10 if seconds >= 600 else self._w5
+    cfg_on = {"freq_feedback_enable": True, "freq_feedback_expected": 6}
+    f0, _ = freqfeedback.frequency_feedback_factor(_St(0, 0), cfg_on)
+    check("P-E: 安静窗口 ×5.0", f0 == 5.0)
+    f1, _ = freqfeedback.frequency_feedback_factor(_St(6, 0), cfg_on)
+    check("P-E: 达标 ×1.0", abs(f1 - 1.0) < 1e-9)
+    f2, _ = freqfeedback.frequency_feedback_factor(_St(12, 0), cfg_on)
+    check("P-E: 超两倍 ×0.2", abs(f2 - 0.2) < 1e-9)
+    f3, _ = freqfeedback.frequency_feedback_factor(_St(3, 3), cfg_on)  # 近5min已3条=超速
+    check("P-E: 近窗超速只降不升", f3 == 1.0)
+    f4, _ = freqfeedback.frequency_feedback_factor(_St(0, 0), {"freq_feedback_enable": False})
+    check("P-E: 开关关闭恒 1.0", f4 == 1.0)
+
+    # P-A 中期记忆
+    from astrbot_plugin_maisoul.core.memstore import (
+        SessionMemory, jaccard, parse_summary, word_set,
+    )
+    mm = SessionMemory()
+    mm.add("阿狸帮忙搬了服务器", ["阿狸", "服务器"], 100.0)
+    mm.add("和小麦约了周末联机", ["周末", "联机"], 200.0)
+    check("P-A: 线索召回命中", mm.recall(["阿狸的服务器还好吗"], threshold=0.05) == ["阿狸帮忙搬了服务器"])
+    check("P-A: 无关不召回", mm.recall(["今天天气不错"], threshold=0.3) == [])
+    check("P-A: 召回条数上限", len(mm.recall(["周末 联机 阿狸 服务器"], threshold=0.0)) <= 3)
+    check("P-A: 渲染含内部参考声明", "不要逐字引用" in SessionMemory.render(["总结"]))
+    check("P-A: 摘要解析容忍杂讯",
+          parse_summary('好的：{"summary": "约定周末联机", "cues": ["周末"]}') == ("约定周末联机", ["周末"]))
+    check("P-A: 解析失败返回 None", parse_summary("我拒绝输出 JSON") is None)
+    check("P-A: 词集二元组", "阿狸" in word_set("阿狸真棒") and len(word_set("ok ok")) >= 1)
+    check("P-A: jaccard 边界", jaccard(set(), {"a"}) == 0.0)
+
+    # P-B 情绪 VA
+    import time as _tm
+    from astrbot_plugin_maisoul.core.emotion import EmotionState, EMOTION_DELTAS
+    em = EmotionState()
+    em.apply("开心", 1000.0)
+    check("P-B: 开心提升 valence", em.v > 0.3 and em.a > 0.2)
+    emq = EmotionState()  # 小增量词观察动量（大增量会撞值域钳位）
+    vs = [emq.apply("好奇", 1000.0 + 0.5 * i)[0] for i in range(4)]
+    check("P-B: 连续同向动量放大", vs[0] < vs[1] < vs[2] < vs[3])  # ×1.01^n 递增
+    # 动量方向性（Sourcery 修复回归）：首个情绪不缩放；同向第二发放大；异向收敛
+    e_first = EmotionState(); v_first = e_first.apply("好奇", 2000.0)[0]
+    check("P-B: 首个情绪不缩放", abs(v_first - 0.2) < 1e-9)
+    e_same = EmotionState(); va = e_same.apply("好奇", 2001.0)[0]
+    vb = e_same.apply("好奇", 2001.5)[0]
+    check("P-B: 同向第二发放大（×1.01^n）", abs(vb - va) > v_first)  # 0.204 > 0.2，不触钳位
+    e_rev = EmotionState(); e_rev.apply("喜爱", 2002.0)
+    before = e_rev.v
+    after = e_rev.apply("愤怒", 2002.5)[0]
+    check("P-B: 异向收敛（×0.99）", abs(after - before) < 0.6)  # 0.594 < 裸增量 0.6
+    em4 = EmotionState()
+    em4.apply("兴奋", 3000.0)
+    check("P-B: 打字乘数 1.5^arousal", abs(em4.typing_multiplier() - 1.5 ** em4.a) < 1e-9)
+    em4._decay(3000.0 + 3600)  # 60 分钟：exp(-0.1×60)≈0.0025
+    check("P-B: 每分钟向基线衰减", abs(em4.v) < 0.05 and abs(em4.a) < 0.05)
+    em5 = EmotionState()
+    em5.apply("愤怒", 4000.0)
+    check("P-B: 锚点标签映射", em5.label(4000.0) in {"愤怒", "恐惧"})
+    check("P-B: 情绪行注入格式", "情绪状态" in em5.prompt_line(4000.0))
+    from astrbot_plugin_maisoul.core.states import GroupState as _GS
+    check("P-B: 会话状态自带情绪", hasattr(_GS(), "emotion"))
+
+    # P-D 发送队列降级
+    buf = ([{"sid": "self", "msg_id": "", "text": "旧自发"}]
+           + [{"sid": f"u{i}", "msg_id": f"m{i}", "text": "x" * 30} for i in range(4)])
+    check("P-D: 超条数降级到最新",
+          demote_quote(buf, {"send_queue_demotion": True}, 1) == ("m3", "m3"))
+    check("P-D: 未超不降",
+          demote_quote(buf[:3], {"send_queue_demotion": True}, 1) is None)
+    check("P-D: 超字数降级",
+          demote_quote([{"sid": "u1", "msg_id": "m1", "text": "x" * 250}],
+                       {"send_queue_demotion": True}, 0) == ("m1", "m1"))
+    check("P-D: 开关关不降", demote_quote(buf, {}, 1) is None)
+
+
+def test_taskregistry():
+    print("[任务注册表 M6]")
+    import asyncio as _aio
+    from astrbot_plugin_maisoul.core.taskregistry import TaskRegistry
+    from astrbot_plugin_maisoul.core.monitor import MonitorStore, Monitor
+
+    reg = TaskRegistry()
+
+    async def _ok():
+        await _aio.sleep(0.01)
+        return 7
+
+    async def _hang():
+        await _aio.sleep(30)
+
+    async def _scenario():
+        # spawn 持强引用 + 完成自动清理
+        t_ok = reg.spawn(_ok(), name="ok")
+        assert await t_ok == 7
+        await _aio.sleep(0)
+        check("M6 registry: 完成任务自动移除", reg.size == 0)
+        # adopt（defer_task/running_task 句柄另存场景）
+        t_hang = reg.adopt(_aio.create_task(_hang()), name="hang")
+        check("M6 registry: adopt 登记", reg.size == 1)
+        # cancel_and_wait_all：挂起任务被取消且在超时内返回（幂等）
+        await reg.cancel_and_wait_all(timeout=2.0)
+        check("M6 registry: 取消并等待", t_hang.cancelled() and reg.size == 0)
+        await reg.cancel_and_wait_all(timeout=1.0)  # 幂等：再次调用不抛
+        return True
+
+    check("M6 registry: 场景", _aio.run(_scenario()))
+
+    # MonitorStore/Monitor.close：释放连接池且幂等
+    import pathlib, tempfile
+    p = pathlib.Path(tempfile.mkdtemp()) / "m6.db"
+    store = MonitorStore(p)
+    mon = Monitor(store)
+    mon.close()
+    mon.close()  # 幂等
+    check("M6 monitor: close 幂等释放", True)
+
+    # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
+    import asyncio as _aio2
+    from astrbot_plugin_maisoul.core.monitor import (
+        MaisakaMonitorEventRecord as _Rec, Monitor as _M, MonitorStore as _MS,
+    )
+
+    async def _writer_scenario():
+        s2 = _MS(pathlib.Path(tempfile.mkdtemp()) / "m10.db")
+        m2 = _M(s2)
+        m2.start_writer()
+        m2.emit_session_start("g1", "群 g1", is_group_chat=True,
+                              group_id="g1", user_id=None, platform="qq")
+        m2.emit_message_sent("g1", "麦麦", "hello", "", time.time(), "reply",
+                             platform="qq")
+        await _aio2.sleep(0.05)  # 给 writer 一拍
+        await m2.stop_writer()
+        return s2
+
+    s2 = _aio2.run(_writer_scenario())
+    with s2._session_factory() as sess:
+        n = len(sess.query(_Rec).all())
+    check("M10 writer: 事件经后台协程落库", n >= 2, f"rows={n}")
+
+    # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
+    from astrbot_plugin_maisoul.core.states import StateManager as _SM
+    sm = _SM()
+    sm._MAX_SESSIONS = 8  # 测试压缩上限
+    for i in range(20):
+        sm.get(f"g{i}")
+    check("M12 states: 会话数不超上限", len(sm) <= 8, f"len={len(sm)}")
+    check("M12 states: 最近访问者存活", "g19" in sm._groups)
+    sm2 = _SM()
+    sm2._MAX_SESSIONS = 2
+    a = sm2.get("a"); a.planner_state().agent_state = "running"
+    for i in range(6):
+        sm2.get(f"x{i}")
+    check("M12 states: 活跃会话不被淘汰", "a" in sm2._groups)
+
+
 def test_planner():
     print("[Planner 决策层]")
     from astrbot_plugin_maisoul.core import planner as P
+
+    # M3 回归：代际号守卫——打断（cancel 旧循环 + 新循环 running）后，旧循环
+    # 在 CancelledError/退出路径回写 idle 会清掉新循环状态，后续消息误判
+    # idle 再开循环 → 双循环并发。旧代退出不得回写，仅当前代可以。
+    plg = P.PlannerState()
+    plg.agent_state = "running"
+    g1 = plg.begin_cycle()
+    plg.set_idle_if_current(g1)
+    check("M3 代际: 当前代退出置 idle", plg.agent_state == "idle")
+    g2 = plg.begin_cycle()          # 新循环开启（打断场景）
+    plg.agent_state = "running"
+    plg.set_idle_if_current(g1)     # 被取消的旧循环稍后醒来退出
+    check("M3 代际: 旧代退出不得清状态", plg.agent_state == "running")
+    plg.set_idle_if_current(g2)
+    check("M3 代际: 新代自身退出仍生效", plg.agent_state == "idle")
 
     # fetch_history 已移除（v6.13.5）：MaiBot focus 模式专属工具，部署版
     # focus_mode=false 不暴露——工具集与请求结构均不得出现
@@ -1141,9 +1373,11 @@ def test_planner():
         st.record_external({"name": f"u{i}", "sid": str(i), "msg_id": f"m{i}",
                             "text": f"消息{i}", "at_bot": False, "reply_bot": False,
                             "ts": 100.0 + i})
-    class _PluginStub:
-        async def _planner_send_emoji(self, deps): return ""
-    deps = P.PlannerDeps(_PluginStub(), st, {}, None, "qq", "g1", True)
+    class _HostStub:
+        async def planner_execute_reply(self, deps, reason, args): return ""
+        def planner_schedule_wait_resume(self, st, cfg, gid, seconds): pass
+        async def planner_send_emoji(self, deps): return ""
+    deps = P.PlannerDeps(_HostStub(), st, {}, None, "qq", "g1", True)
     pl = st.planner_state()
     if _HAS_REAL_ASTRBOT:  # ToolSet 构造依赖框架（CI 离线跳过）
         tool_names = sorted(t.name for t in P.build_planner_toolset(deps).tools)
@@ -1198,7 +1432,7 @@ def test_planner():
     check("reminder: 全部发现后为空", P.build_deferred_reminder(
         pool, {"call_maid", "search_meme", "send_meme"}) == "")
 
-    deps2 = P.PlannerDeps(_PluginStub(), st, {}, None, "qq", "g1", True)
+    deps2 = P.PlannerDeps(_HostStub(), st, {}, None, "qq", "g1", True)
     deps2.deferred_pool = pool
     r = deps2.on_tool_search({"query": "meme", "limit": 5})
     check("tool_search 流: 命中文本含新发现标记并记入状态",
@@ -1543,6 +1777,8 @@ if __name__ == "__main__":
     test_tool_skill_registry()
     test_tool_exec_official_path()
     test_personas()
+    test_taskregistry()
+    test_phase3_mechanisms()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
     sys.exit(1 if FAIL else 0)

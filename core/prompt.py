@@ -106,7 +106,9 @@ def build_preset_dialogues_block(cfg) -> str:
 def build_system_prompt(cfg, chat_id: str | None = None, platform: str | None = None,
                         is_group: bool = True) -> str:
     """逐行复刻 prompts/zh-CN/maisaka_replyer.prompt 的结构。"""
-    return (
+    from .sanitize import ANTI_INJECTION_LINES
+
+    base = (
         f"{build_identity(cfg)}\n"
         "现在请你读读之前的聊天记录，把握当前的话题，然后给出日常且口语化的回复，\n"
         f"{select_reply_style(cfg)}\n"
@@ -115,6 +117,9 @@ def build_system_prompt(cfg, chat_id: str | None = None, platform: str | None = 
         f"{build_preset_dialogues_block(cfg)}"
         f"{OUTPUT_INSTRUCTION}"
     )
+    if bool(cfg.get("anti_injection", True)):  # P-F：防注入声明（默认开）
+        base += ANTI_INJECTION_LINES
+    return base
 
 
 REPLY_INSTRUCTION = "请自然地回复。不要输出多余说明、括号、@ 或额外标记，只输出实际要发言的内容。"

@@ -147,6 +147,16 @@ EXPRESSION_EVALUATION_PROMPT = """请评估以下表达方式或语言风格以�
 }}
 请严格按照JSON格式输出，不要包含其他内容。"""
 
+# 自检输出中提取 suitable 布尔（M1：旧实现是字符串包含——针含空格而干草堆
+# 已去空格，常规输出 {"suitable": true} 恒判 False，学习到的表达全部不可用）
+_SUITABLE_RE = re.compile(r'"suitable"\s*:\s*(true|false)', re.IGNORECASE)
+
+
+def _suitable_from_review(review_raw: str) -> bool:
+    """从自检输出提取 suitable 判定；无该字段时保守为 False（不采信）。"""
+    m = _SUITABLE_RE.search(review_raw or "")
+    return bool(m) and m.group(1).lower() == "true"
+
 # ---------------- expression_select.prompt 原文 ----------------
 EXPRESSION_SELECT_PROMPT = """{chat_observe_info}
 
@@ -671,8 +681,7 @@ async def _learn_from_chat_inner(provider, cfg, buffer: list[dict], platform: st
                     criteria = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(_EXPRESSION_CRITERIA))
                     review_raw = await _llm(provider, EXPRESSION_EVALUATION_PROMPT.format(
                         situation=situation, style=style, criteria_list=criteria), model=model)
-                    checked = '"suitable": true' in review_raw.replace(" ", "") or \
-                              '"suitable":true' in review_raw
+                    checked = _suitable_from_review(review_raw)
                 if store.add_expression(key, situation, style, checked):
                     added += 1
             summary.append(f"表达 +{added}")

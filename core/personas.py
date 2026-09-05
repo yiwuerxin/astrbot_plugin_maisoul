@@ -62,6 +62,7 @@ def find_persona(cfg, name: str) -> dict | None:
 
 
 def list_persona_names(cfg) -> list[str]:
+    """人格名单（测试/调试断言用；生产路径按名直查 find_persona）。"""
     return [str(p.get("name") or "").strip() for p in (cfg.get("personas") or [])
             if isinstance(p, dict) and str(p.get("name") or "").strip()]
 
