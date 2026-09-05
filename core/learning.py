@@ -492,7 +492,8 @@ class LearningStore:
                           key: str = "global", expr_id: int | None = None) -> dict | None:
         """审核页弹窗创建/修改单条表达。expr_id 为空=新建（去重并入既有条目）。
 
-        返回写入后的条目（新建并入既有时返回既有条目），入参空白返回 None。"""
+        返回库内条目引用（含 ensure 后的 id；新建并入既有时返回既有条目），
+        入参空白返回 None。"""
         situation, style = situation.strip(), style.strip()
         if not situation or not style:
             return None
@@ -504,13 +505,12 @@ class LearningStore:
                     self.save()
                     return item
             return None
-        added = self.add_expression(key, situation, style, checked)
-        if not added:  # situation+style 已存在：count+1，找回该条
-            for item in self.expressions(key):
-                if item.get("situation") == situation and item.get("style") == style:
-                    return item
-        return {"situation": situation, "style": style, "count": 1,
-                "checked": checked}
+        self.add_expression(key, situation, style, checked)
+        self.ensure_expression_ids()
+        for item in self.expressions(key):
+            if item.get("situation") == situation and item.get("style") == style:
+                return item
+        return None
 
     def all_expressions_internal(self) -> list[dict]:
         """跨组原始条目引用（改写用，不拷贝）。"""

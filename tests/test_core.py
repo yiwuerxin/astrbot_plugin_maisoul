@@ -1132,7 +1132,9 @@ def test_expression_review():
     item = store.upsert_expression("被夸", "谦虚卖萌", True, key="g_123")
     check("弹窗: 新建并入既有（去重）", item and item.get("count") == 2, str(item))
     item2 = store.upsert_expression("全新情境", "全新风格", False, key="g_123")
-    check("弹窗: 全新建", item2 and item2.get("count") == 1)
+    check("弹窗: 全新建（返回库内引用含 id）",
+          item2 and item2.get("count") == 1 and isinstance(item2.get("id"), int),
+          str(item2))
     store.ensure_expression_ids()
     target = [x for x in store.all_expressions() if x["situation"] == "全新情境"][0]
     item3 = store.upsert_expression("改后情境", "改后风格", True, key="g_123",
