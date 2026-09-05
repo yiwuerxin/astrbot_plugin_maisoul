@@ -1048,6 +1048,29 @@ def test_learning():
     check("JSON 修复: 前后杂讯", learning._repair_json_array('好的：\n[{"a":1}] 完成') == [{"a": 1}])
     check("JSON 修复: 无数组", learning._repair_json_array("没有内容") == [])
 
+    # M1 回归：自检 suitable 判定必须按结构提取——旧实现是
+    # '"suitable": true' in raw.replace(" ","")（针含空格、干草堆已去空格，
+    # 恒 False）+ 紧凑字符串兜底，模型常规输出 {"suitable": true} 时
+    # checked=False，默认 expression_checked_only=true 下学到的表达全部不可用
+    check("M1 suitable: 常规带空格 JSON 判真",
+          learning._suitable_from_review('{"suitable": true, "reason": "自然口语"}') is True)
+    check("M1 suitable: 紧凑 JSON 判真", learning._suitable_from_review('{"suitable":true}') is True)
+    check("M1 suitable: false 判假", learning._suitable_from_review('{"suitable": false}') is False)
+    check("M1 suitable: 前后杂讯容忍",
+          learning._suitable_from_review('评估结果：\n{"suitable": true}\n以上。') is True)
+    check("M1 suitable: 无法解析保守为假", learning._suitable_from_review('这条表达没问题') is False)
+    # 端到端口径：checked=True 的条目在 expression_checked_only=True 时可用
+    # （注入需过滤后池 ≥10 条，故放 12 条过检 + 6 条未过检）
+    tmpm = pathlib.Path(tempfile.mkdtemp()) / "m.json"
+    storem = learning.LearningStore(path=tmpm)
+    for i in range(12):
+        storem.add_expression("global", f"可用品{i}", f"风格{i}", True)
+    for i in range(6):
+        storem.add_expression("global", f"废品{i}", f"风格x{i}", False)
+    random.seed(7)
+    blkm = learning.expression_habits_block(storem, "global", True)
+    check("M1 端到端: 自检通过的表达可用", "可用品" in blkm and "废品" not in blkm, blkm[:60])
+
     buf = [{"name": "麦麦", "sid": "b", "msg_id": f"s{i}", "text": f"自言{i}",
             "at_bot": False, "reply_bot": False, "ts": i} for i in range(5)]
     buf.append({"name": "u", "sid": "u", "msg_id": "m", "text": "用户",
