@@ -9,7 +9,7 @@ import asyncio
 from .postprocess import calculate_typing_time, process_response_segments
 
 
-async def send_humanlike(send, answer: str, cfg) -> list[str]:
+async def send_humanlike(send, answer: str, cfg, typing_mult: float = 1.0) -> list[str]:
     """后处理 → 逐段打字延迟发送。返回实际发出的段文本。
 
     首段不等待（对齐 MaiBot reply 工具 typing=index>0），第 2 段起按
@@ -22,7 +22,8 @@ async def send_humanlike(send, answer: str, cfg) -> list[str]:
     sent: list[str] = []
     for index, seg in enumerate(segments):
         if index > 0:
-            delay = calculate_typing_time(seg.text, typing_speed=typing_speed)
+            # P-B：情绪激昂度放大打字节奏（typing_mult=1.5^arousal，默认 1）
+            delay = calculate_typing_time(seg.text, typing_speed=typing_speed) * typing_mult
             if delay > 0:
                 await asyncio.sleep(delay)
         await send(seg.text)

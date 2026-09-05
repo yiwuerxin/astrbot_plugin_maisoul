@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -41,6 +42,8 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
                                                is_group=is_group)
     system_prompt += bridge.build_skills_block(eff_cfg)
     system_prompt += await _xinxian_profile_block(P, gid, str(event.get_sender_id() or ""))
+    if bool(eff_cfg.get("emotion_enable", False)):  # P-B：情绪行注入
+        system_prompt += "\n" + st.emotion.prompt_line(time.time())
     eco_block, eco_extras = await _eco_inject_block(P, event, trigger_text)
     if eco_block:
         system_prompt += f"\n\n{eco_block}"
@@ -57,6 +60,9 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
         st, eff_cfg, reason, style,
         expression_habits=expr_block,
         keyword_reaction=keyword_block)
+    if bool(eff_cfg.get("emotion_enable", False)):  # P-B：要求模型行首给情绪标签
+        user_message += ("\n\n【输出要求】请在正文最前面单独一行写 [情绪:愤怒/厌恶/恐惧/悲伤/平静/好奇/开心/兴奋/喜爱]，"
+                         "然后换行写正文；这一行会被系统剥离，不会发出。")
 
     func_tool = bridge.build_chat_toolset(P.context, eff_cfg)
     if func_tool is not None:
@@ -214,7 +220,16 @@ async def _deliver_reply(P, *, st, eff_cfg, gid, umo, event, provider, platform,
             await P.context.send_message(umo, MessageChain().message(text))
         _emit_sent(P, gid, text, msg_id, "reply", event)
 
-    sent = await sender.send_humanlike(send, answer, eff_cfg)
+    typing_mult = 1.0
+    if bool(eff_cfg.get("emotion_enable", False)):  # P-B：剥标签/更新情绪/打字乘数
+        import re as _re
+        import time as _time
+        m = _re.match(r"^\s*\[情绪[:：]\s*([^\]\s]{1,6})\s*\]\s*\n?", answer or "")
+        if m:
+            answer = (answer or "")[m.end():].lstrip("\n")
+            st.emotion.apply(m.group(1), _time.time())
+        typing_mult = st.emotion.typing_multiplier()
+    sent = await sender.send_humanlike(send, answer, eff_cfg, typing_mult=typing_mult)
     if webchat_send is not None and buf:
         await webchat_send("\n\n".join(buf))
         for seg_text in buf:
