@@ -90,6 +90,22 @@ def _drain_pending(P, st, pl) -> list[dict]:
     st.pending_since_fire = 0
     return pending
 
+class _PlannerHostAdapter:
+    """PlannerHost 适配器（M9）：planner 回调 → 本模块函数，P 经构造携带。"""
+
+    def __init__(self, P):
+        self._P = P
+
+    async def planner_execute_reply(self, deps, reason: str, args: dict) -> str:
+        return await _planner_execute_reply(self._P, deps, reason, args)
+
+    def planner_schedule_wait_resume(self, st, cfg, gid: str, seconds: int) -> None:
+        _schedule_wait_resume(self._P, st, cfg, gid, seconds)
+
+    async def planner_send_emoji(self, deps) -> str:
+        return await _planner_send_emoji(self._P, deps)
+
+
 async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
                          is_group: bool = True, send_fn=None,
                          initial_feedback: str = "",
@@ -164,8 +180,8 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
         eff_cfg, pname = await personas.resolve_active(P.context, P.config, gid, umo)
         st.last_persona = pname
         logger.debug(f"maisoul planner[{gid}]: 人格={pname}，构建工具集")
-        deps = planner.PlannerDeps(P, st, eff_cfg, event, platform, gid, is_group,
-                                   send_fn=send_fn)
+        deps = planner.PlannerDeps(_PlannerHostAdapter(P), st, eff_cfg, event,
+                                   platform, gid, is_group, send_fn=send_fn)
         deps.umo = umo
         deps.deferred_pool = bridge.list_deferred_tools(P.context, eff_cfg)
         tool_count_total[0] = 4 + len(deps.deferred_pool)

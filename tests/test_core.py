@@ -1235,9 +1235,11 @@ def test_planner():
         st.record_external({"name": f"u{i}", "sid": str(i), "msg_id": f"m{i}",
                             "text": f"消息{i}", "at_bot": False, "reply_bot": False,
                             "ts": 100.0 + i})
-    class _PluginStub:
-        async def _planner_send_emoji(self, deps): return ""
-    deps = P.PlannerDeps(_PluginStub(), st, {}, None, "qq", "g1", True)
+    class _HostStub:
+        async def planner_execute_reply(self, deps, reason, args): return ""
+        def planner_schedule_wait_resume(self, st, cfg, gid, seconds): pass
+        async def planner_send_emoji(self, deps): return ""
+    deps = P.PlannerDeps(_HostStub(), st, {}, None, "qq", "g1", True)
     pl = st.planner_state()
     if _HAS_REAL_ASTRBOT:  # ToolSet 构造依赖框架（CI 离线跳过）
         tool_names = sorted(t.name for t in P.build_planner_toolset(deps).tools)
@@ -1292,7 +1294,7 @@ def test_planner():
     check("reminder: 全部发现后为空", P.build_deferred_reminder(
         pool, {"call_maid", "search_meme", "send_meme"}) == "")
 
-    deps2 = P.PlannerDeps(_PluginStub(), st, {}, None, "qq", "g1", True)
+    deps2 = P.PlannerDeps(_HostStub(), st, {}, None, "qq", "g1", True)
     deps2.deferred_pool = pool
     r = deps2.on_tool_search({"query": "meme", "limit": 5})
     check("tool_search 流: 命中文本含新发现标记并记入状态",
