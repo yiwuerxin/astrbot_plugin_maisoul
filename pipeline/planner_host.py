@@ -138,6 +138,7 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
     request_messages: list[dict] | None = None
     history_count = 0
     tool_records: list[dict] = []
+    reasoning_by_idx: dict[int, str] = {}  # assistant 轮 index→思考（仅监控副本，坑 54 不回灌）
     pl.eco_injection = ""
     end_reason, end_detail = "", ""
     interrupted = False
@@ -162,7 +163,9 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
             planner_interrupted=interrupted,
             end_reason=reason, end_detail=detail,
             eco_injection=pl.eco_injection,
-            planner_system_prompt=system_prompt)
+            planner_system_prompt=system_prompt,
+                reasoning_by_idx=reasoning_by_idx,
+                replyer_reasoning=getattr(pl, "replyer_reasoning", ""))
 
     try:
         # 消息去抖：等最后一条外部消息静默 ≥1s 再开轮（对齐
@@ -355,11 +358,6 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
                  "arguments": (args_list[i] if i < len(args_list)
                                and isinstance(args_list[i], dict) else {})}
                 for i, n in enumerate(names)]
-            # planner.response：时间线"规划器思考"卡（对齐 MaiBot 事件名；
-            # content 与日志口径一致——无正文时用思考兜底）
-            P.monitor.emit_planner_response(
-                session_id=gid, content=analysis, tool_calls=planner_calls,
-                duration_ms=(time.time() - llm_started) * 1000)
             # 对齐 MaiBot 输出项粒度：工具轮的 assistant 轮始终存在（带
             # tool_calls，正文块仅在可见正文非空时；思考块不重发，坑 54）。
             # 旧版工具结果走纯文本 user 轮，模型看不见自己调过工具——冷启动
@@ -374,6 +372,8 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
                                       "arguments": c["arguments"]}}
                         for c in planner_calls]
                 contexts.append(assistant_turn)
+                if reasoning:
+                    reasoning_by_idx[len(contexts) - 1] = reasoning  # 推理过程页素材
             if not names:
                 if is_group:
                     pl.record_idle_cycle(eff_cfg)
@@ -659,12 +659,11 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         raise
 
     answer = _resp_text(resp)
-    # replier.response：时间线"回复器响应"卡——reasoning=模型思考过程
-    # （此前只进 debug 日志，观察页看不到：客户反馈的推理详情缺失根因）
-    P.monitor.emit_replier_response(
-        session_id=gid, content=answer,
-        reasoning=str(getattr(resp, "reasoning_content", None) or "").strip(),
-        duration_ms=(time.time() - reply_started) * 1000, success=bool(answer))
+    # 推理过程页素材：reply 工具的回复器思考/耗时（挂在 planner 状态上，
+    # 由 finalize 汇入 planner.finalized——不进麦麦观察时间线）
+    _pl = st.planner_state()
+    _pl.replyer_reasoning = str(getattr(resp, "reasoning_content", None) or "").strip()
+    _pl.replyer_duration_ms = (time.time() - reply_started) * 1000
     if not answer:
         return "模型未返回内容，本次未发言"
 

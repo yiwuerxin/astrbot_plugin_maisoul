@@ -1550,11 +1550,16 @@ function rrUserArticle(n,selfFlag,name,time,mid,body,obj){
 function rrPlainArticle(n,v,text,obj,headExtra){
   return rrArticle(n,v,`<pre ${RR_PRE}>${esc(text)}</pre>`,obj,headExtra);
 }
+function rrReasonArticle(n,text,obj){
+/* 思考过程（ReasoningItem）：默认折叠——数据来自 planner.finalized 的
+   request.messages[].reasoning 与 planner.reasoning（回复器思考） */
+return rrArticle(n,'reasoning',`<details class="rr-think"><summary class="cursor-pointer select-none text-muted-foreground text-xs">思考过程</summary><pre ${RR_PRE} class="mt-2">${esc(text)}</pre></details>`,Object.assign({item_type:'ReasoningItem',content:text},obj||{}));
+}
 function rrMsgItems(d){
   const req=d.request||{},items=[];let n=0;
   const next=()=>++n;
   if(req.system_prompt)items.push(rrPlainArticle(next(),'system',req.system_prompt,{item_type:'SystemMessageItem',content:req.system_prompt}));
-  (req.messages||[]).forEach(m=>{
+  (req.messages||[]).forEach((m,mi)=>{
     const c=String(m.content==null?'':m.content);
     if(m.role==='user'){
       const mm=c.match(/^<message ([^>]*)>\n?([\s\S]*)$/);
@@ -1563,6 +1568,7 @@ function rrMsgItems(d){
         items.push(rrUserArticle(next(),at.is_self_message==='true',at.user||'',at.time||'',at.msg_id||'',mm[2],{item_type:'UserMessageItem',attrs:at,content:mm[2]}));
       }else items.push(rrPlainArticle(next(),'user',c,{item_type:'UserMessageItem',content:c}));
     }else if(m.role==='assistant'){
+      if(m.reasoning)items.push(rrReasonArticle(next(),m.reasoning,{item_type:'ReasoningItem',content:m.reasoning}));
       if(c.trim())items.push(rrPlainArticle(next(),'assistant',c,{item_type:'AssistantMessageItem',content:c}));
       (m.tool_calls||[]).forEach(tc=>{
         const fn=tc.function||{};
@@ -1577,7 +1583,8 @@ function rrMsgItems(d){
     }else items.push(rrPlainArticle(next(),'user',c,{item_type:'UserMessageItem',role:m.role,content:c}));
   });
   const pl=d.planner||{};
-  if(pl.content)items.push(rrPlainArticle(next(),'assistant',pl.content,{item_type:'AssistantMessageItem',output:true,content:pl.content}));
+  if(pl.reasoning)items.push(rrReasonArticle(next(),pl.reasoning,{item_type:'ReasoningItem',output:true,content:pl.reasoning}));
+if(pl.content)items.push(rrPlainArticle(next(),'assistant',pl.content,{item_type:'AssistantMessageItem',output:true,content:pl.content}));
   return items.join('');
 }
 /* ---- 记录源：每轮动作一条（对齐部署版粒度）+ 会话/类型筛选 + 真分页 ----

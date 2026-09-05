@@ -941,12 +941,12 @@ def test_monitor():
           == {"event_id", "event_type", "session_id", "timestamp",
               "schema_version", "payload_json", "created_at"})
 
-    # 事件集：planner.response / replier.response 已按前端渲染契约发射（真实
-    # LLMResponse 数据，非编造——推理详情缺失客户反馈的修复）；timing_gate.result
-    # 仍不发射（maisoul 门控语义与 MaiBot 反应门不同，编造耗时/动作只会误导）
-    check("事件集: planner/replier.response 已发射、timing_gate 仍不编造",
-          hasattr(mon, "emit_planner_response") and hasattr(mon, "emit_replier_response")
-          and not hasattr(mon, "emit_timing_gate"))
+    # 事件集对齐 MaiBot events.py：timing_gate.result / planner.response /
+    # replier.response 不进麦麦观察时间线——推理思考由 planner.finalized 的
+    # request.messages[].reasoning / planner.reasoning 承载（推理过程页专属）
+    check("事件集: 三个时间线遗留类型均不发射",
+          not any(hasattr(mon, m) for m in
+                  ("emit_timing_gate", "emit_planner_response", "emit_replier_response")))
 
     # 推送：订阅队列收到广播（SSE 端点的数据源）
     q = mon.bus.subscribe()
@@ -1309,28 +1309,31 @@ def test_taskregistry():
     mon.close()  # 幂等
     check("M6 monitor: close 幂等释放", True)
 
-    # 客户反馈回归：推理模型思考过程必须进观察时间线（replier.response.reasoning）
+    # 客户反馈回归：推理思考进 planner.finalized 载荷（推理过程页数据源）
     from astrbot_plugin_maisoul.core.monitor import (
-        MaisakaMonitorEventRecord as _Rec2, Monitor as _M2, MonitorStore as _MS2,
+        MaisakaMonitorEventRecord as _R3, Monitor as _M2, MonitorStore as _MS2,
     )
     s3 = _MS2(pathlib.Path(tempfile.mkdtemp()) / "resp.db")
     m3 = _M2(s3)
-    m3.emit_planner_response(session_id="g1", content="查看上下文后决定回复",
-                             tool_calls=[{"name": "reply"}], duration_ms=123.4)
-    m3.emit_replier_response(session_id="g1", content="好呀~", reasoning="先想想语气…",
-                             duration_ms=456.7, success=True)
+    m3.emit_planner_finalized(
+        session_id="g1", cycle_id=1,
+        planner_request_messages=[
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "reply"}}]},
+        ],
+        planner_content="去回复", reasoning_by_idx={1: "先想想语气…"},
+        replyer_reasoning="回复器思考：要热情一点")
     m3.close()
     import json as _json
     with s3._session_factory() as sess:
-        rows = {r.event_type: _json.loads(r.payload_json) for r in sess.query(_Rec2).all()}
-    pr = rows.get("planner.response")
-    check("推理详情: planner.response 落库",
-          pr is not None and pr.get("content") == "查看上下文后决定回复"
-          and pr.get("tool_calls") == [{"name": "reply"}], str(pr)[:80])
-    rr = rows.get("replier.response")
-    check("推理详情: replier.response.reasoning 落库",
-          rr is not None and rr.get("reasoning") == "先想想语气…"
-          and rr.get("content") == "好呀~" and rr.get("success") is True, str(rr)[:80])
+        rec = sess.query(_R3).one()
+        data = _json.loads(rec.payload_json)
+    msgs = data["request"]["messages"]
+    check("推理过程: assistant 轮附 reasoning（仅监控副本）",
+          msgs[1].get("reasoning") == "先想想语气…" and "reasoning" not in msgs[0],
+          str(msgs[1])[:80])
+    check("推理过程: 回复器思考在 planner 块",
+          data["planner"].get("reasoning") == "回复器思考：要热情一点")
 
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
     import asyncio as _aio2
