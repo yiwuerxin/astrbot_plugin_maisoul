@@ -435,6 +435,37 @@ class Monitor:
             "timestamp": timestamp or now,
         })
 
+    def emit_planner_response(self, *, session_id: str, content: str = "",
+                              tool_calls=None, duration_ms: float = 0.0) -> None:
+        """planner 单轮思考（对齐 MaiBot planner.response：时间线"规划器思考"卡）。
+
+        content=本轮可见正文（无正文时为思考兜底，与日志口径一致）；
+        tool_calls=[{name},...]；duration_ms=本轮 LLM 耗时。持久化事件。"""
+        self._broadcast("planner.response", {
+            "session_id": session_id,
+            "content": str(content or ""),
+            "tool_calls": [{"name": str(c.get("name") or "")}
+                           for c in (tool_calls or []) if isinstance(c, dict)],
+            "duration_ms": float(duration_ms or 0.0),
+            "timestamp": time.time(),
+        })
+
+    def emit_replier_response(self, *, session_id: str, content: str = "",
+                              reasoning: str = "", duration_ms: float = 0.0,
+                              success: bool = True) -> None:
+        """回复器响应（对齐 MaiBot replier.response：时间线"回复器响应"卡）。
+
+        reasoning=模型思考过程（LLMResponse.reasoning_content）——推理模型
+        的思考此前只进 debug 日志，观察页看不到（客户反馈的问题）。持久化。"""
+        self._broadcast("replier.response", {
+            "session_id": session_id,
+            "content": str(content or ""),
+            "reasoning": str(reasoning or ""),
+            "duration_ms": float(duration_ms or 0.0),
+            "success": bool(success),
+            "timestamp": time.time(),
+        })
+
     def emit_llm_error(self, *, session_id: str, task_name: str, request_type: str,
                        model_name: str, message: str) -> None:
         self._broadcast("llm.error", {

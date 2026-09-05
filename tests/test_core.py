@@ -941,11 +941,12 @@ def test_monitor():
           == {"event_id", "event_type", "session_id", "timestamp",
               "schema_version", "payload_json", "created_at"})
 
-    # 事件集对齐 MaiBot events.py 的 9 个 emit：timing_gate.result / planner.response /
-    # replier.response 是部署前端的遗留渲染类型，后端不发，maisoul 也不发（禁止编造）
-    check("事件集: 不存在三个前端遗留类型的发射方法",
-          not any(hasattr(mon, m) for m in
-                  ("emit_timing_gate", "emit_planner_response", "emit_replier_response")))
+    # 事件集：planner.response / replier.response 已按前端渲染契约发射（真实
+    # LLMResponse 数据，非编造——推理详情缺失客户反馈的修复）；timing_gate.result
+    # 仍不发射（maisoul 门控语义与 MaiBot 反应门不同，编造耗时/动作只会误导）
+    check("事件集: planner/replier.response 已发射、timing_gate 仍不编造",
+          hasattr(mon, "emit_planner_response") and hasattr(mon, "emit_replier_response")
+          and not hasattr(mon, "emit_timing_gate"))
 
     # 推送：订阅队列收到广播（SSE 端点的数据源）
     q = mon.bus.subscribe()
@@ -1307,6 +1308,29 @@ def test_taskregistry():
     mon.close()
     mon.close()  # 幂等
     check("M6 monitor: close 幂等释放", True)
+
+    # 客户反馈回归：推理模型思考过程必须进观察时间线（replier.response.reasoning）
+    from astrbot_plugin_maisoul.core.monitor import (
+        MaisakaMonitorEventRecord as _Rec2, Monitor as _M2, MonitorStore as _MS2,
+    )
+    s3 = _MS2(pathlib.Path(tempfile.mkdtemp()) / "resp.db")
+    m3 = _M2(s3)
+    m3.emit_planner_response(session_id="g1", content="查看上下文后决定回复",
+                             tool_calls=[{"name": "reply"}], duration_ms=123.4)
+    m3.emit_replier_response(session_id="g1", content="好呀~", reasoning="先想想语气…",
+                             duration_ms=456.7, success=True)
+    m3.close()
+    import json as _json
+    with s3._session_factory() as sess:
+        rows = {r.event_type: _json.loads(r.payload_json) for r in sess.query(_Rec2).all()}
+    pr = rows.get("planner.response")
+    check("推理详情: planner.response 落库",
+          pr is not None and pr.get("content") == "查看上下文后决定回复"
+          and pr.get("tool_calls") == [{"name": "reply"}], str(pr)[:80])
+    rr = rows.get("replier.response")
+    check("推理详情: replier.response.reasoning 落库",
+          rr is not None and rr.get("reasoning") == "先想想语气…"
+          and rr.get("content") == "好呀~" and rr.get("success") is True, str(rr)[:80])
 
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
     import asyncio as _aio2

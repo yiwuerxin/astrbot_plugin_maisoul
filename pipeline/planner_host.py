@@ -355,6 +355,11 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
                  "arguments": (args_list[i] if i < len(args_list)
                                and isinstance(args_list[i], dict) else {})}
                 for i, n in enumerate(names)]
+            # planner.response：时间线"规划器思考"卡（对齐 MaiBot 事件名；
+            # content 与日志口径一致——无正文时用思考兜底）
+            P.monitor.emit_planner_response(
+                session_id=gid, content=analysis, tool_calls=planner_calls,
+                duration_ms=(time.time() - llm_started) * 1000)
             # 对齐 MaiBot 输出项粒度：工具轮的 assistant 轮始终存在（带
             # tool_calls，正文块仅在可见正文非空时；思考块不重发，坑 54）。
             # 旧版工具结果走纯文本 user 轮，模型看不见自己调过工具——冷启动
@@ -639,6 +644,7 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         user_message += ("\n\n【输出要求】请在正文最前面单独一行写 [情绪:愤怒/厌恶/恐惧/悲伤/平静/好奇/开心/兴奋/喜爱]，"
                          "然后换行写正文；这一行会被系统剥离，不会发出。")
 
+    reply_started = time.time()
     try:
         image_parts = prompt.image_context_parts(st, eff_cfg)
         resp = await _task_text_chat(P, 
@@ -653,6 +659,12 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         raise
 
     answer = _resp_text(resp)
+    # replier.response：时间线"回复器响应"卡——reasoning=模型思考过程
+    # （此前只进 debug 日志，观察页看不到：客户反馈的推理详情缺失根因）
+    P.monitor.emit_replier_response(
+        session_id=gid, content=answer,
+        reasoning=str(getattr(resp, "reasoning_content", None) or "").strip(),
+        duration_ms=(time.time() - reply_started) * 1000, success=bool(answer))
     if not answer:
         return "模型未返回内容，本次未发言"
 
