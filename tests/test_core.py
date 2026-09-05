@@ -1206,6 +1206,35 @@ def test_phase3_mechanisms():
     f4, _ = freqfeedback.frequency_feedback_factor(_St(0, 0), {"freq_feedback_enable": False})
     check("P-E: 开关关闭恒 1.0", f4 == 1.0)
 
+    # P-B 情绪 VA
+    import time as _tm
+    from astrbot_plugin_maisoul.core.emotion import EmotionState, EMOTION_DELTAS
+    em = EmotionState()
+    em.apply("开心", 1000.0)
+    check("P-B: 开心提升 valence", em.v > 0.3 and em.a > 0.2)
+    emq = EmotionState()  # 小增量词观察动量（大增量会撞值域钳位）
+    vs = [emq.apply("好奇", 1000.0 + 0.5 * i)[0] for i in range(4)]
+    check("P-B: 连续同向动量放大", vs[0] < vs[1] < vs[2] < vs[3])  # ×1.01^n 递增
+    em2 = EmotionState()
+    em2.apply("愤怒", 2000.0)
+    em2.apply("喜爱", 2000.1)  # 异向
+    em3 = EmotionState()
+    em3.apply("喜爱", 2000.0)
+    em3.apply("喜爱", 2000.1)
+    # 异向 ×0.99^n：同增量下反转后的幅度小于纯正向（近似比较）
+    check("P-B: 异向收敛（×0.99^n）", abs(em2.v) <= abs(em3.v) + 0.5)
+    em4 = EmotionState()
+    em4.apply("兴奋", 3000.0)
+    check("P-B: 打字乘数 1.5^arousal", abs(em4.typing_multiplier() - 1.5 ** em4.a) < 1e-9)
+    em4._decay(3000.0 + 3600)  # 60 分钟：exp(-0.1×60)≈0.0025
+    check("P-B: 每分钟向基线衰减", abs(em4.v) < 0.05 and abs(em4.a) < 0.05)
+    em5 = EmotionState()
+    em5.apply("愤怒", 4000.0)
+    check("P-B: 锚点标签映射", em5.label(4000.0) in {"愤怒", "恐惧"})
+    check("P-B: 情绪行注入格式", "情绪状态" in em5.prompt_line(4000.0))
+    from astrbot_plugin_maisoul.core.states import GroupState as _GS
+    check("P-B: 会话状态自带情绪", hasattr(_GS(), "emotion"))
+
     # P-D 发送队列降级
     buf = ([{"sid": "self", "msg_id": "", "text": "旧自发"}]
            + [{"sid": f"u{i}", "msg_id": f"m{i}", "text": "x" * 30} for i in range(4)])

@@ -159,6 +159,11 @@
     "type": "bool",
     "default": true
   },
+  "emotion_enable": {
+    "type": "bool",
+    "default": false,
+    "description": "P-B 情绪 VA：9 情绪词驱动的心情值/激昂度（动量+每分钟衰减+12 锚点标签），情绪行注入提示词、正文剥离 [情绪:xx] 标签、打字节奏 ×1.5^激昂度；纯规则零 LLM 成本"
+  },
   "send_queue_demotion": {
     "type": "bool",
     "default": false,
