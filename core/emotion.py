@@ -7,7 +7,7 @@
 - 动量：连续同向增益 ×1.01^n、异向 ×0.99^n（n=连续次数）；
 - 每分钟向基线 (0,0) 做 exp 衰减（读时惰性结算）；
 - (v,a) 按 12 锚点最近距离转情绪文本注入 prompt；
-- 打字延迟 ×1.5^arousal（兴奋打得快、低落打得慢）。
+- 打字延迟 ×1.5^arousal（激昂度越高，段间停顿越长）。
 
 全部内存态、纯函数（EmotionState 为纯数据 + 方法），可单测。
 """
@@ -70,15 +70,20 @@ class EmotionState:
         self._decay(now)
         dv, da = EMOTION_DELTAS.get(str(word or "").strip(), (0.0, 0.0))
         direction = (dv > 0) - (dv < 0)
-        if dv == 0 and da != 0:
-            direction = 0
-        if direction != 0 and direction == self.streak_dir:
-            self.streak_n += 1
-        elif direction != 0:
-            self.streak_dir, self.streak_n = direction, 1
-        # 连续同向 ×1.01^n 放大、异向 ×0.99^n 收敛（n 截断防爆）
+        # 先按旧 streak 判同/异向（Sourcery：换代后再比较会让异向也吃放大）
+        same_direction = direction != 0 and self.streak_dir == direction
+        first_emotion = direction != 0 and self.streak_dir == 0
+        if direction != 0:
+            self.streak_n = self.streak_n + 1 if same_direction else 1
+            self.streak_dir = direction
+        # 连续同向 ×1.01^n 放大、异向 ×0.99 收敛、首个情绪不缩放（n 截断防爆）
         n = min(self.streak_n, 50) if direction != 0 else 0
-        momentum = (_MOMENTUM_UP ** n) if direction == self.streak_dir and direction != 0 else (_MOMENTUM_DOWN ** n)
+        if first_emotion:
+            momentum = 1.0
+        elif same_direction:
+            momentum = _MOMENTUM_UP ** n
+        else:
+            momentum = _MOMENTUM_DOWN
         self.v = max(-1.0, min(1.0, self.v + dv * momentum))
         self.a = max(0.0, min(1.0, self.a + da * momentum))
         word = str(word or "").strip() or "平静"
