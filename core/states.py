@@ -32,7 +32,6 @@ class GroupState:
     defer_task: object = None  # 空窗补偿到点重查任务（对齐 runtime._defer_message_turn_check）
     # Planner 决策层运行时（mode=planner）；惰性导入避免循环依赖
     planner: object = None
-    planner_last_cycle_ts: float = 0.0
 
     def planner_state(self):
         from .planner import PlannerState

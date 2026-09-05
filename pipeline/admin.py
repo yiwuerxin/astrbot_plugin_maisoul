@@ -62,8 +62,12 @@ async def maisoul_cmd_impl(P, event: AstrMessageEvent):
     elif arg in ("planner", "native", "independent"):
         P.config["mode"] = arg
         P.config.save_config()
-        yield event.plain_result(
-            f"maisoul 已切换到 {'协作模式（生成交给原生agent）' if arg == 'native' else '独立模式（麦麦流水线完全接管发言）'}")
+        names = {
+            "planner": "决策模式（maisaka Planner 循环决策，工具经 planner 调度）",
+            "native": "协作模式（生成交给原生 agent，三件套注入）",
+            "independent": "独立模式（麦麦流水线完全接管发言）",
+        }
+        yield event.plain_result(f"maisoul 已切换到 {names[arg]}")
     else:
         f = max(0.0, float(P.config.get("talk_value", 1.0) or 0.0))
         th = trigger.message_trigger_threshold(
