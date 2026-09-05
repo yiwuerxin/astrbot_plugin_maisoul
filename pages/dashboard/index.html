@@ -1512,7 +1512,10 @@ function moReasonBack(){MO.page='tl';MO.reasoning=null;moRenderAll()}
    planner.finalized 事件（request.system_prompt/messages[].tool_calls/
    tool_call_id 为 maisoul 扩展字段）。颜色映射（部署版实抓）：system=cyan、
    他人消息=emerald、自发消息=orange、reasoning=indigo、工具调用=fuchsia、
-   工具结果=violet、assistant=amber。v6.15.3 全控件接真交互（owner 指令，
+   工具结果=violet、assistant=amber。详情按部署版 fe 分区组件拆两区：
+   「请求 Items」=产出本轮输出前的完整请求，「输出结果」=本轮模型产物
+   （工具轮=该轮 assistant 消息；收尾轮=planner 思考+回复）。
+   v6.15.3 全控件接真交互（owner 指令，
    头行页签/返回监控移除——返回监控移宿主聊天流侧栏底座）：类型/会话=真下拉
    筛选（moReasonSet）、上一页/下一页=真分页（RR_PAGE=20，moReasonPage）、
    记录点击=经宿主状态展开（moReasonRec） ---- */
@@ -1555,11 +1558,27 @@ function rrReasonArticle(n,text,obj){
    request.messages[].reasoning 与 planner.reasoning（回复器思考） */
 return rrArticle(n,'reasoning',`<details class="rr-think"><summary class="cursor-pointer select-none text-muted-foreground text-xs">思考过程</summary><pre ${RR_PRE} class="mt-2">${esc(text)}</pre></details>`,Object.assign({item_type:'ReasoningItem',content:text},obj||{}));
 }
-function rrMsgItems(d){
-  const req=d.request||{},items=[];let n=0;
+function rrAssistantTurn(m,next){
+  /* assistant 产物内联序（部署版归一化同序）：思考 → 正文 → 工具调用 */
+  const c=String(m.content==null?'':m.content),items=[];
+  if(m.reasoning)items.push(rrReasonArticle(next(),m.reasoning,{item_type:'ReasoningItem',content:m.reasoning}));
+  if(c.trim())items.push(rrPlainArticle(next(),'assistant',c,{item_type:'AssistantMessageItem',content:c}));
+  (m.tool_calls||[]).forEach(tc=>{
+    const fn=tc.function||{};
+    items.push(rrArticle(next(),'fncall',
+      `<div class="text-muted-foreground font-mono text-[11px]">call_id: ${esc(tc.id||'')}</div><pre class="text-foreground text-xs leading-5 whitespace-pre-wrap font-mono">${esc(typeof fn.arguments==='string'?fn.arguments:JSON.stringify(fn.arguments,null,2))}</pre>`,
+      {item_type:'FunctionCallItem',name:fn.name,args:fn.arguments}));
+  });
+  return items;
+}
+function rrMsgItems(d,cut,n0){
+  /* 请求 Items：system + 历史 messages；cut>=0 时截到下标 cut 前
+     （工具轮把本轮输出消息让给「输出结果」分区） */
+  const req=d.request||{},items=[];let n=n0||0;
   const next=()=>++n;
   if(req.system_prompt)items.push(rrPlainArticle(next(),'system',req.system_prompt,{item_type:'SystemMessageItem',content:req.system_prompt}));
-  (req.messages||[]).forEach((m,mi)=>{
+  const msgs=cut==null?(req.messages||[]):(req.messages||[]).slice(0,cut);
+  msgs.forEach(m=>{
     const c=String(m.content==null?'':m.content);
     if(m.role==='user'){
       const mm=c.match(/^<message ([^>]*)>\n?([\s\S]*)$/);
@@ -1567,50 +1586,58 @@ function rrMsgItems(d){
         const at={};mm[1].replace(/(\w+)="([^"]*)"/g,(_,k,v)=>{at[k]=v});
         items.push(rrUserArticle(next(),at.is_self_message==='true',at.user||'',at.time||'',at.msg_id||'',mm[2],{item_type:'UserMessageItem',attrs:at,content:mm[2]}));
       }else items.push(rrPlainArticle(next(),'user',c,{item_type:'UserMessageItem',content:c}));
-    }else if(m.role==='assistant'){
-      if(m.reasoning)items.push(rrReasonArticle(next(),m.reasoning,{item_type:'ReasoningItem',content:m.reasoning}));
-      if(c.trim())items.push(rrPlainArticle(next(),'assistant',c,{item_type:'AssistantMessageItem',content:c}));
-      (m.tool_calls||[]).forEach(tc=>{
-        const fn=tc.function||{};
-        items.push(rrArticle(next(),'fncall',
-          `<div class="text-muted-foreground font-mono text-[11px]">call_id: ${esc(tc.id||'')}</div><pre class="text-foreground text-xs leading-5 whitespace-pre-wrap font-mono">${esc(typeof fn.arguments==='string'?fn.arguments:JSON.stringify(fn.arguments,null,2))}</pre>`,
-          {item_type:'FunctionCallItem',name:fn.name,args:fn.arguments}));
-      });
-    }else if(m.role==='tool'){
+    }else if(m.role==='assistant')items.push(...rrAssistantTurn(m,next));
+    else if(m.role==='tool'){
       items.push(rrArticle(next(),'fnout',
         (m.tool_call_id?`<div class="text-muted-foreground font-mono text-[11px]">call_id: ${esc(m.tool_call_id)}</div>`:'')+`<pre ${RR_PRE}>${esc(c)}</pre>`,
         {item_type:'FunctionCallOutputItem',content:c}));
     }else items.push(rrPlainArticle(next(),'user',c,{item_type:'UserMessageItem',role:m.role,content:c}));
   });
-  const pl=d.planner||{};
-  if(pl.reasoning)items.push(rrReasonArticle(next(),pl.reasoning,{item_type:'ReasoningItem',output:true,content:pl.reasoning}));
-if(pl.content)items.push(rrPlainArticle(next(),'assistant',pl.content,{item_type:'AssistantMessageItem',output:true,content:pl.content}));
-  return items.join('');
+  return items;
+}
+function rrOutItems(d,outIdx,n0){
+  /* 输出结果：工具轮=该轮 assistant 产物消息；收尾轮/旧事件=planner 思考+最终回复 */
+  const items=[];let n=n0||0;
+  const next=()=>++n;
+  if(outIdx>=0){
+    const m=((d.request||{}).messages||[])[outIdx];
+    if(m&&m.role==='assistant')items.push(...rrAssistantTurn(m,next));
+  }else{
+    const pl=d.planner||{};
+    if(pl.reasoning)items.push(rrReasonArticle(next(),pl.reasoning,{item_type:'ReasoningItem',output:true,content:pl.reasoning}));
+    if(pl.content)items.push(rrPlainArticle(next(),'assistant',pl.content,{item_type:'AssistantMessageItem',output:true,content:pl.content}));
+  }
+  return items;
+}
+function rrSection(title,items){
+  /* 部署版 fe 分区容器：标题 + secondary 计数徽章；空分区给「没有 Items。」 */
+  const cnt=rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm',items.length+' Items');
+  return `<section class="space-y-2 rounded-md border p-2.5 sm:p-3"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">${title}</span>${cnt}</div>${items.length?`<div class="space-y-2">${items.join('')}</div>`:`<p class="text-muted-foreground text-xs">没有 Items。</p>`}</section>`;
 }
 /* ---- 记录源：每轮动作一条（对齐部署版粒度）+ 会话/类型筛选 + 真分页 ----
-   部署版左列 280px 记录列表：记录=一轮推理（assistant.tool_calls 开轮，紧随的
-   tool 消息归该轮），无动作收尾轮标题为空（实抓"reply 后跟空标题"即此）；
-   右列 = 选中记录详情（该轮时点的完整请求 Items） ---- */
+   部署版左列 280px 记录列表：记录=一轮推理（assistant.tool_calls 消息开轮，
+   即该轮输出结果），无动作收尾轮标题为空（实抓"reply 后跟空标题"即此）；
+   右列 = 选中记录详情（「请求 Items」+「输出结果」两分区，对齐部署版 fe） ---- */
 const RR_PAGE=20;
 const RR_TYPES=[['','类型'],['tools','含工具调用'],['plain','无工具轮'],['wait','纯等待续轮']];
 function rrRoundsOf(ev){
   const d=ev.data||{},msgs=((d.request||{}).messages)||[];
-  const rounds=[];let cur=null;
+  /* start 指向该轮 assistant.tool_calls 消息（模型产物）；其后 tool 消息
+     归下一轮的请求 Items（部署版 request/output 语义） */
+  const rounds=[];
   msgs.forEach((m,i)=>{
-    if(m.role==='assistant'&&Array.isArray(m.tool_calls)&&m.tool_calls.length){
-      cur={end:i,tools:m.tool_calls.map(tc=>((tc.function||{}).name)||'').filter(Boolean)};
-      rounds.push(cur)
-    }else if(m.role==='tool'&&cur){cur.end=i}
+    if(m.role==='assistant'&&Array.isArray(m.tool_calls)&&m.tool_calls.length)
+      rounds.push({start:i,tools:m.tool_calls.map(tc=>((tc.function||{}).name)||'').filter(Boolean)})
   });
   let recs;
   if(rounds.length){
-    recs=rounds.map((r,k)=>({key:ev.id+'_'+k,ev:ev,end:r.end,tools:r.tools,wrap:false,slice:true}))
+    recs=rounds.map((r,k)=>({key:ev.id+'_'+k,ev:ev,start:r.start,tools:r.tools,slice:true}))
   }else{
     /* 旧事件（v6.14.3 前无 messages[].tool_calls 扩展）：按 d.tools 逐动作拆，详情给整循环 */
     const names=(d.tools||[]).map(t=>t&&t.tool_name).filter(Boolean);
-    recs=names.map((n,k)=>({key:ev.id+'_t'+k,ev:ev,end:msgs.length-1,tools:[n],wrap:false,slice:false}))
+    recs=names.map((n,k)=>({key:ev.id+'_t'+k,ev:ev,tools:[n],slice:false}))
   }
-  if(!recs.length||((d.planner||{}).content))recs.push({key:ev.id+'_w',ev:ev,end:msgs.length-1,tools:[],wrap:true,slice:false});
+  if(!recs.length||((d.planner||{}).content))recs.push({key:ev.id+'_w',ev:ev,tools:[],slice:false});
   return recs
 }
 function rrTypeOfRec(rec){
@@ -1652,14 +1679,17 @@ function rrRowHTML(rec,selected){
 function rrRowsHTML(list,pi){
   return list.slice((pi.page-1)*RR_PAGE,pi.page*RR_PAGE).map(r=>rrRowHTML(r,r.key===(MO.rr&&MO.rr.sel))).join('')
 }
-/* 详情 = 该轮时点的完整请求（system + messages 截到本轮末）；旧事件/收尾轮给整循环 */
+/* 详情两分区（对齐部署版 fe 分区组件）：请求 Items=产出本轮输出前的完整请求
+   （工具轮截到输出消息前）；输出结果=本轮模型产物（工具轮=该轮 assistant
+   消息；收尾轮/旧事件=planner 思考+回复）。条目编号跨分区连续 */
 function rrDetailHTML(rec){
-  const d=rec.ev.data||{},req=d.request||{},msgs=req.messages||[];
-  const sliced={system_prompt:req.system_prompt,messages:rec.slice?msgs.slice(0,rec.end+1):msgs};
-  const shim=rec.wrap?{request:sliced,planner:d.planner}:{request:sliced};
+  const d=rec.ev.data||{},req=d.request||{};
+  const outIdx=rec.slice&&rec.start!=null?rec.start:-1;
+  const reqItems=rrMsgItems({request:req},outIdx>=0?outIdx:null,0);
+  const outItems=rrOutItems(d,outIdx,reqItems.length);
   const m=rrRecMeta(rec),names=(rec.tools||[]).join('、');
   const head=`<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2"><span class="text-sm font-medium">${esc(names)}</span><span class="text-muted-foreground text-xs">${m.tstr}</span><span class="text-muted-foreground ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"><span class="inline-flex items-center gap-1">${RR_SVG_CPU}循环 #${m.cycle==null?'-':m.cycle}</span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${m.dur} s</span><span>输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token</span></span></div>`;
-  return {head:head,items:rrMsgItems(shim)}
+  return {head:head,items:rrSection('请求 Items',reqItems)+rrSection('输出结果',outItems)}
 }
 function rrPagerHTML(pi){
   const cls='inline-flex cursor-pointer items-center gap-2 font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md px-3 text-xs h-8';
