@@ -521,8 +521,13 @@ code{font-family:var(--mono);font-size:.9em;background:hsl(var(--muted));border-
 /* 列表模式（大弹窗承载，对齐部署版 Sheet：近全幅、贴下贴右不浪费空间） */
 .exr-bigback{position:fixed;inset:0;z-index:55;display:flex;flex-direction:column;background:rgb(0 0 0/.5);padding:64px 16px 16px}
 .exr-big{display:flex;width:100%;height:100%;min-height:0;flex-direction:column;border:1px solid hsl(var(--border));background:hsl(var(--background));border-radius:10px;box-shadow:0 24px 48px -12px rgb(0 0 0/.35)}
-.exr-big-h{display:flex;flex:none;align-items:center;gap:10px;border-bottom:1px solid hsl(var(--border));padding:10px 16px}
+.exr-big-h{display:flex;flex:none;align-items:center;gap:10px;border-bottom:1px solid hsl(var(--border));padding:10px 16px;flex-wrap:wrap}
 .exr-big-h b{font-size:15px;font-weight:600}
+/* 搜索框（部署版列表同款：放大镜 + 情景/风格实时过滤） */
+.exr-srch{position:relative;flex:1;max-width:300px;min-width:170px}
+.exr-srch svg{position:absolute;top:50%;left:10px;transform:translateY(-50%);color:hsl(var(--muted-foreground));pointer-events:none}
+.exr-srch input{width:100%;height:36px;border:1px solid hsl(var(--input));border-radius:6px;background:hsl(var(--background));color:hsl(var(--foreground));padding:0 12px 0 34px;font-size:13px;font-family:inherit}
+.exr-srch input:focus{outline:none;box-shadow:0 0 0 2px hsl(var(--ring)/.3);border-color:hsl(var(--ring))}
 .exr-listwrap{display:flex;min-height:0;flex:1;flex-direction:column}
 .exr-batch{display:flex;flex:none;flex-wrap:wrap;align-items:center;gap:8px;background:hsl(var(--muted)/.5);border-radius:8px;margin:8px 16px 0;padding:8px 12px;font-size:12px;color:hsl(var(--muted-foreground))}
 /* 卡片行（对齐部署版列表：rounded-lg border 行 + 左选框 + 右侧同意/拒绝图标钮） */
@@ -1027,13 +1032,20 @@ function addGrpRow(hostId){document.getElementById(hostId).insertAdjacentHTML('b
 /* ---------------- 表达方式审核（像素对齐 MaiBot 部署版 ExpressionReviewer：卡片滑动 + 列表批量 + 创建/编辑弹窗） ----------------
    语义对齐部署版：通过人工审核的表达才会被使用（学习页「使用精选表达」开关），
    拒绝=直接删除；数据源 learning/expressions API（LearningStore 表达条目补 id） */
-const EX={mode:'browse',status:'pending',page:1,pageSize:20,items:null,stats:{pending:0,passed:0,total:0},keys:[],sel:new Set(),idx:0,dlg:null};
+const EX={mode:'browse',status:'pending',page:1,pageSize:20,items:null,stats:{pending:0,passed:0,total:0},keys:[],sel:new Set(),idx:0,dlg:null,q:'',qFocus:false};
 function exFiltered(){
   const arr=EX.items||[];
   if(EX.status==='pending')return arr.filter(x=>!x.checked);
   if(EX.status==='passed')return arr.filter(x=>x.checked);
   return arr;
 }
+function exSearchFiltered(){
+  /* 列表搜索：情景/风格/共享组 子串实时过滤（大小写不敏感） */
+  const q=EX.q.trim().toLowerCase();
+  if(!q)return exFiltered();
+  return exFiltered().filter(x=>(x.situation+'\n'+x.style+'\n'+x.key).toLowerCase().includes(q));
+}
+function exQ(v){EX.q=v;EX.qFocus=true;EX.page=1;exRender()}
 function exPages(list){return Math.max(1,Math.ceil(list.length/EX.pageSize))}
 function exLoad(reset){
   apiGet('expressions').then(d=>{
@@ -1097,7 +1109,9 @@ function exBrowseHTML(list){
   if(!list.length)return `<div class="exr-empty">${EX.status==='pending'?'全部审核完成！':'当前筛选条件下没有待处理的项目'}</div>`;
   const x=list[EX.idx]||list[0];
   return `<div class="exr-deck">
-      <div style="position:absolute;top:10px;right:16px;font-size:12px;color:hsl(var(--muted-foreground))">第 ${EX.idx+1} / ${list.length} 条</div>
+      <div style="position:absolute;top:10px;right:16px;display:flex;align-items:center;gap:8px;font-size:12px;color:hsl(var(--muted-foreground))">第 ${EX.idx+1} / ${list.length} 条
+        <button class="exr-abtn" title="编辑此条" onclick="exDlg(${x.id})">${moIcon('pencil',15)}</button>
+      </div>
       ${list[EX.idx+2]?exCardHTML(list[EX.idx+2],'be2'):''}${list[EX.idx+1]?exCardHTML(list[EX.idx+1],'be1'):''}
       ${exCardHTML(x,'')}
     </div>
@@ -1171,12 +1185,13 @@ function exListHTML(list){
 }
 function exRowReview(id,action){exReview([id],action)}
 function exListDlgHTML(){
-  const list=exFiltered();
+  const list=exSearchFiltered();
   return `<div class="exr-bigback" onclick="if(event.target===this)exMode('browse')">
     <div class="exr-big">
       <div class="exr-big-h">
         <b>表达方式审核 · 列表</b>
         <span class="exr-count">共 ${list.length} 条</span>
+        <div class="exr-srch">${moIcon('search',15)}<input id="ex_q" placeholder="搜索情景或风格..." value="${esc(EX.q)}" oninput="exQ(this.value)"></div>
         <span class="exr-sp"></span>
         <button class="exr-abtn" title="关闭" onclick="exMode('browse')">${moIcon('x',16)}</button>
       </div>
@@ -1265,6 +1280,12 @@ function exRender(){
     ${EX.mode==='list'?exListDlgHTML():''}
     ${EX.dlg?exDlgHTML():''}`;
   if(EX.mode==='browse')exBindDrag();
+  /* 列表搜索框重渲染后回焦点、光标置尾（oninput 全量重绘会丢焦） */
+  if(EX.mode==='list'&&EX.qFocus){
+    const q=document.getElementById('ex_q');
+    if(q){q.focus();try{q.setSelectionRange(q.value.length,q.value.length)}catch(_){}}
+    EX.qFocus=false;
+  }
 }
 document.addEventListener('keydown',e=>{
   if(curPage!=='exprv'||EX.dlg||EX.mode!=='browse')return;
