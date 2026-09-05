@@ -19,9 +19,6 @@ OTHER_ASSISTANT_PATTERN = re.compile(r"^(?:DeepSeek|ChatGPT|Grok|豆包|千问|�
 # MaiBot maisaka_generator_base._build_replyer_output_instruction() 中文原文
 OUTPUT_INSTRUCTION = "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，只输出发言内容就好。"
 
-# 打字延迟参数 —— 对齐 utils.calculate_typing_time
-TYPING_CN, TYPING_EN, TYPING_ENTER = 0.3, 0.15, 0.3
-
 # 调度时机 —— 对齐 maisaka/runtime.py
 MESSAGE_DEBOUNCE_SECONDS = 1.0          # _message_debounce_seconds：开轮前等消息静默窗
 EXTERNAL_SAMPLE_WINDOW_SECONDS = 1800.0  # 外部消息间隔样本窗（30 分钟）

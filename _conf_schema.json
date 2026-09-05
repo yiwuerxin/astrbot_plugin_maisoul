@@ -89,6 +89,16 @@
       "reply_necessity"
     ]
   },
+  "freq_feedback_enable": {
+    "type": "bool",
+    "default": false,
+    "description": "P-E 频率窗口反馈：10 分钟滚动窗口的自发条数映射期望乘数 [0.2,5.0]（安静×5 鼓励开口/超两倍×0.2 压刷屏），叠加进评分频率倍率；近 5 分钟超速只降不升"
+  },
+  "freq_feedback_expected": {
+    "type": "int",
+    "default": 6,
+    "description": "频率窗口反馈的期望值：10 分钟期望自发条数（≥1）"
+  },
   "talk_value": {
     "description": "群聊里麦麦主动说话的频率；越小越安静。",
     "type": "float",
@@ -145,9 +155,34 @@
     "default": 6
   },
   "enable_reply_quote": {
-    "description": "回复时是否可以引用上一条或相关消息。",
+    "description": "回复时引用触发消息（首段挂 Reply 组件；webchat 单气泡流除外）",
     "type": "bool",
     "default": true
+  },
+  "emotion_enable": {
+    "type": "bool",
+    "default": false,
+    "description": "P-B 情绪 VA：9 情绪词驱动的心情值/激昂度（动量+每分钟衰减+12 锚点标签），情绪行注入提示词、正文剥离 [情绪:xx] 标签、打字节奏 ×1.5^激昂度；纯规则零 LLM 成本"
+  },
+  "memory_enable": {
+    "type": "bool",
+    "default": false,
+    "description": "P-A 中期记忆：上下文窗口裁掉的旧消息后台摘要为一句总结+回忆线索，后续按线索词召回（≤3 条/900 字，标注内部参考不逐字引用）注入 replyer"
+  },
+  "memory_recall_threshold": {
+    "type": "float",
+    "default": 0.18,
+    "description": "中期记忆召回的词集 Jaccard 阈值（0~1，越高越严）"
+  },
+  "send_queue_demotion": {
+    "type": "bool",
+    "default": false,
+    "description": "P-D 发送队列降级：生成期间新到消息 >3 条或新文本 >200 字时，回复自动改为引用最新一条消息（避免回应早已滚过去的话题）"
+  },
+  "xinxian_link": {
+    "type": "bool",
+    "default": false,
+    "description": "P-H 心弦联动：好心弦插件 facade 取好感等级/印象/关系渲染进系统提示词（任一插件缺失自动静默降级）"
   },
   "talk_value_rules": {
     "description": "动态发言频率规则；可让麦麦在某些群、私聊或时段更活跃或更安静。",
@@ -188,6 +223,11 @@
     "description": "用正则过滤消息；适合更复杂的过滤规则。",
     "type": "list",
     "default": []
+  },
+  "anti_injection": {
+    "type": "bool",
+    "default": true,
+    "description": "P-F 反注入：清洗引用前缀/合并转发占位后再进门控；「@其他AI名」开头不计为点名自己；系统提示词附两句防注入声明"
   },
   "enable_image_context": {
     "description": "识图上下文：把最近几张聊天图片直接附给模型理解（需视觉/多模态模型）",

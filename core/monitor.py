@@ -102,7 +102,18 @@ class MonitorStore:
         self._cleanup_lock = threading.Lock()
         self._records_since_cleanup = 0
         self._last_cleanup_at = 0.0
+        self._closed = False
         self._import_legacy_json()
+
+    def close(self) -> None:
+        """释放连接池（插件卸载 terminate 时调用；幂等——热重载会重建）。"""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.engine.dispose()
+        except Exception:
+            logger.debug("maisoul: 监控库连接池释放失败", exc_info=True)
 
     def _import_legacy_json(self) -> None:
         """一次性迁移：v6.8 早期版本的 JSON 账本导入 SQL（有表数据则跳过）。"""
@@ -266,13 +277,19 @@ def _coerce_float(value: Any, *, default: float) -> float:
 
 
 class MonitorBus:
-    """订阅队列总线（对齐 websocket_manager.broadcast_to_topic 的广播语义）。"""
+    """订阅队列总线（对齐 websocket_manager.broadcast_to_topic 的广播语义）。
+
+    M12：订阅队列有界（500）——慢 SSE 消费者不再让队列无限吃内存，
+    满时丢最旧保最新（观察页语义：最新状态比完整历史重要）。
+    """
+
+    _QUEUE_MAX = 500
 
     def __init__(self):
         self._subscribers: set[asyncio.Queue] = set()
 
     def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue()
+        q: asyncio.Queue = asyncio.Queue(maxsize=self._QUEUE_MAX)
         self._subscribers.add(q)
         return q
 
@@ -283,6 +300,12 @@ class MonitorBus:
         for q in list(self._subscribers):
             try:
                 q.put_nowait({"event": event, "data": data})
+            except asyncio.QueueFull:
+                try:
+                    q.get_nowait()  # 丢最旧，保最新
+                    q.put_nowait({"event": event, "data": data})
+                except Exception:
+                    pass  # 降级：丢旧重放也失败（订阅刚被移除）则放弃本条
             except Exception:
                 self._subscribers.discard(q)
 
@@ -293,8 +316,27 @@ class Monitor:
     def __init__(self, store: MonitorStore, bus: MonitorBus | None = None):
         self.store = store
         self.bus = bus or MonitorBus()
+        self._queue: asyncio.Queue | None = None  # M10 writer 队列（None=直写）
+        self._writer: asyncio.Task | None = None
+        self._dropped = 0  # M12：队列满丢弃计数
+
+    def close(self) -> None:
+        """卸载时释放账本连接池（透传 MonitorStore.close，幂等）。"""
+        self.store.close()
 
     def _broadcast(self, event: str, data: dict[str, Any]) -> None:
+        # M10：writer 启动时 emit 只入队，SQL 落库经 to_thread 移出事件循环
+        # （逐消息同步 commit + planner.finalized 大 payload 是高流量群的
+        # 延迟放大器）；writer 未启动（测试/离线）保持直写，行为不变
+        if self._writer is not None and self._queue is not None:
+            try:
+                self._queue.put_nowait((event, data))
+            except asyncio.QueueFull:
+                self._dropped += 1  # 有界队列（M12）：慢消费丢弃最新并计数
+            return
+        self._dispatch(event, data)
+
+    def _dispatch(self, event: str, data: dict[str, Any]) -> None:
         try:
             broadcast_data = data
             if event not in NON_PERSISTED_EVENTS:
@@ -303,6 +345,60 @@ class Monitor:
         except Exception:
             # 观察账本写入失败不阻断聊天管线，但必须留痕（高频路径用 debug）
             logger.debug(f"maisoul: 麦麦观察事件写入失败: {event}", exc_info=True)
+
+    def start_writer(self) -> None:
+        """启动后台落库 writer 协程（M10）。幂等；需在事件循环内调用。"""
+        if self._writer is not None and not self._writer.done():
+            return
+        self._queue = asyncio.Queue(maxsize=2000)
+        self._writer = asyncio.create_task(self._writer_loop(), name="monitor_writer")
+
+    _SENTINEL = object()  # stop_writer 的优雅退出信号
+
+    async def _writer_loop(self) -> None:
+        q = self._queue
+        while q is not None:
+            item = await q.get()
+            if item is self._SENTINEL:
+                return
+            # 批量排水：顺手取走已积压项（不再等待新事件），保持顺序
+            batch = [item]
+            while len(batch) < 64 and not q.empty():
+                nxt = q.get_nowait()
+                if nxt is self._SENTINEL:
+                    return  # 排水中收到停止信号：本批已取项照常落库后退出
+                batch.append(nxt)
+            for ev, d in batch:
+                try:
+                    broadcast_data = d
+                    if ev not in NON_PERSISTED_EVENTS:
+                        broadcast_data = await asyncio.to_thread(self.store.record, ev, d)
+                    self.bus.publish(ev, broadcast_data)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.debug(f"maisoul: 麦麦观察事件写入失败: {ev}", exc_info=True)
+
+    async def stop_writer(self, timeout: float = 5.0) -> None:
+        """优雅冲刷并停止（terminate 用）。
+
+        哨兵让 writer 处理完队列再退出（Sourcery：直接 cancel 会把正在
+        to_thread 落库的当前批一起丢掉）；超时才 cancel，残余同步落库。"""
+        writer, q = self._writer, self._queue
+        self._writer, self._queue = None, None
+        if writer is None:
+            return
+        try:
+            q.put_nowait(self._SENTINEL)
+            await asyncio.wait_for(writer, timeout=timeout)
+        except (asyncio.TimeoutError, asyncio.QueueFull):
+            writer.cancel()
+            await asyncio.wait([writer], timeout=1.0)
+        if q is not None:
+            while not q.empty():
+                item = q.get_nowait()
+                if item is not self._SENTINEL:
+                    self._dispatch(*item)
 
     def notify(self, event: str, data: dict[str, Any]) -> None:
         """同步上下文的发射口（本实现全程同步：落账本 + 入队广播）。"""
@@ -337,13 +433,6 @@ class Monitor:
             "stage_started_at": stage_started_at or now,
             "updated_at": updated_at or now,
             "timestamp": timestamp or now,
-        })
-
-    def emit_stage_removed(self, *, session_id: str, session_name: str = "") -> None:
-        self._broadcast("stage.removed", {
-            "session_id": session_id,
-            "session_name": session_name,
-            "timestamp": time.time(),
         })
 
     def emit_llm_error(self, *, session_id: str, task_name: str, request_type: str,

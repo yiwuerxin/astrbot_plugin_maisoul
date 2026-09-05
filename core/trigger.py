@@ -18,7 +18,9 @@ talk_value 规则（enable_talk_value_rules + talk_value_rules）：
 import time
 from math import ceil
 
-from . import scoring
+from astrbot.api import logger
+
+from . import freqfeedback, scoring
 from .states import GroupState
 
 TRIGGER_SCORE = 80  # REPLY_NECESSITY_TRIGGER_SCORE
@@ -34,6 +36,8 @@ def _parse_range(range_str: str):
         eh, em = [int(x) for x in end_str.split(":")]
         return sh * 60 + sm, eh * 60 + em
     except Exception:
+        # 降级：时间段格式非法按无时间限制（规则仍按优先级生效）
+        logger.debug("maisoul: talk_value 规则时间段解析失败", exc_info=True)
         return None
 
 
@@ -205,13 +209,17 @@ def should_trigger(
         reason = "@" if at_bot else "提及"
         detail = f"{freq_detail} 判定=强制触发({reason}必回复)"
         if mode == "reply_necessity":
+            fb_factor, fb_note = freqfeedback.frequency_feedback_factor(st, cfg)
             result = scoring.evaluate(st, at_bot=at_bot, text=text, aliases=aliases,
+                                      feedback_factor=fb_factor, feedback_note=fb_note,
                                       bot_name=bot_name, frequency=talk_value)
             return True, detail, result
         return True, detail, None
 
     if mode == "reply_necessity":
+        fb_factor, fb_note = freqfeedback.frequency_feedback_factor(st, cfg)
         result = scoring.evaluate(st, at_bot=at_bot, text=text, aliases=aliases,
+                                  feedback_factor=fb_factor, feedback_note=fb_note,
                                   bot_name=bot_name, frequency=talk_value)
         fired = result.score >= TRIGGER_SCORE
         decision = "进入生成" if fired else "等待更多消息"
