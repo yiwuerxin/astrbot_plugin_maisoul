@@ -478,6 +478,75 @@ code{font-family:var(--mono);font-size:.9em;background:hsl(var(--muted));border-
 .mo-details{margin-top:4px}
 .mo-details summary{color:var(--mo-muted-fg);cursor:pointer;font-size:12px}
 .mo-details summary:hover{color:var(--mo-fg)}
+
+/* ===== 表达方式审核（像素对齐 MaiBot 部署版 expression-reviewer chunk） ===== */
+.exr-wrap{display:flex;height:100%;min-height:0;flex-direction:column;overflow:hidden;background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:10px}
+.exr-tabs{display:flex;flex:none;align-items:flex-end;background:hsl(var(--muted)/.3);padding:8px 8px 0}
+.exr-tab{position:relative;display:flex;align-items:center;gap:8px;border-radius:8px 8px 0 0;padding:8px 16px;border:none;background:none;color:hsl(var(--muted-foreground));font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;transition:all .15s}
+.exr-tab:hover{background:hsl(var(--background)/.5);color:hsl(var(--foreground))}
+.exr-tab.on{background:hsl(var(--background));color:hsl(var(--foreground));border:1px solid hsl(var(--border));border-bottom:none;box-shadow:0 1px 2px 0 rgb(0 0 0/.05)}
+.exr-tab.on::after{content:"";position:absolute;right:0;bottom:0;left:0;height:2px;background:hsl(var(--background))}
+.exr-bar{display:flex;flex:none;flex-wrap:wrap;align-items:center;gap:8px;border-bottom:1px solid hsl(var(--border));padding:10px 16px}
+.exr-chip{display:inline-flex;align-items:center;gap:6px;height:28px;border-radius:999px;border:1px solid hsl(var(--border));background:hsl(var(--background));color:hsl(var(--muted-foreground));padding:0 12px;font-size:13px;font-weight:500;font-family:inherit;cursor:pointer;transition:all .15s}
+.exr-chip:hover{color:hsl(var(--foreground));border-color:hsl(var(--foreground)/.25)}
+.exr-chip.on{background:hsl(var(--primary));border-color:hsl(var(--primary));color:hsl(var(--primary-foreground))}
+.exr-chip .n{font-size:11px;font-variant-numeric:tabular-nums;opacity:.75}
+.exr-sp{flex:1}
+.exr-count{font-size:12px;color:hsl(var(--muted-foreground))}
+.exr-body{position:relative;display:flex;min-height:0;flex:1;flex-direction:column;overflow-y:auto}
+/* 浏览模式：滑动卡组 */
+.exr-deck{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px 16px}
+.exr-card{position:relative;display:flex;width:100%;max-width:576px;min-height:280px;flex-direction:column;gap:16px;border:1px solid hsl(var(--border));background:hsl(var(--background));border-radius:14px;box-shadow:0 10px 24px -8px rgb(0 0 0/.18);padding:24px;cursor:grab;user-select:none;touch-action:none}
+.exr-card:active{cursor:grabbing}
+.exr-card.be1{position:absolute;top:calc(50% - 190px);transform:scale(.94) translateY(18px);opacity:.5;pointer-events:none}
+.exr-card.be2{position:absolute;top:calc(50% - 190px);transform:scale(.88) translateY(36px);opacity:.25;pointer-events:none}
+.exr-card.fly{transition:transform .3s ease,opacity .3s ease}
+.exr-lab{color:hsl(var(--muted-foreground));font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.exr-sit{font-size:18px;line-height:1.6;font-weight:500}
+.exr-stys{display:flex;max-height:96px;flex-wrap:wrap;gap:8px;overflow-y:auto;padding-right:4px}
+.exr-badge{display:inline-flex;align-items:center;border-radius:6px;background:hsl(var(--secondary));color:hsl(var(--secondary-foreground));padding:2px 10px;font-size:12px;font-weight:400}
+.exr-foot{display:flex;flex:none;margin-top:12px;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid hsl(var(--border));padding-top:12px;font-size:12px;color:hsl(var(--muted-foreground))}
+.exr-who{display:flex;min-width:0;align-items:center;gap:8px}
+.exr-av{display:flex;height:24px;width:24px;flex:none;align-items:center;justify-content:center;border-radius:999px;background:hsl(var(--primary)/.1);color:hsl(var(--primary))}
+.exr-ok-tag{display:inline-flex;align-items:center;gap:4px;border-radius:6px;background:#16a34a;color:#fff;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap}
+.exr-acts{display:flex;flex:none;align-items:center;justify-content:center;gap:32px;padding:4px 0 8px}
+.exr-rbtn{display:flex;height:64px;width:64px;align-items:center;justify-content:center;border-radius:999px;border:2px solid hsl(var(--border));background:hsl(var(--background));color:hsl(var(--foreground));box-shadow:0 8px 16px -6px rgb(0 0 0/.25);cursor:pointer;transition:all .15s}
+.exr-rbtn:active{transform:scale(.95)}
+.exr-rbtn.ok:hover{border-color:#86efac;background:#f0fdf4;color:#16a34a}
+.exr-rbtn.no:hover{border-color:#fecaca;background:#fef2f2;color:#dc2626}
+.exr-rbtn:disabled{opacity:.3;cursor:not-allowed}
+.exr-hint{display:none;flex:none;flex-wrap:wrap;align-items:center;justify-content:center;gap-x:20px;gap-y:8px;border-top:1px solid hsl(var(--border));color:hsl(var(--muted-foreground));padding:8px 16px;font-size:12px}
+@media(min-width:640px){.exr-hint{display:flex}}
+.exr-kbd{display:inline-flex;height:20px;min-width:20px;align-items:center;justify-content:center;border:1px solid hsl(var(--border));border-bottom-width:2px;border-radius:4px;background:hsl(var(--muted));padding:0 4px;font-family:ui-monospace,monospace;font-size:11px}
+/* 列表模式 */
+.exr-listwrap{display:flex;min-height:0;flex:1;flex-direction:column}
+.exr-batch{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-bottom:1px solid hsl(var(--border));padding:8px 16px;font-size:12px;color:hsl(var(--muted-foreground))}
+.exr-tblw{min-height:0;flex:1;overflow:auto;padding:0 16px}
+table.exr-tbl{width:100%;border-collapse:collapse;font-size:14px}
+.exr-tbl th{position:sticky;top:0;z-index:1;background:hsl(var(--card));color:hsl(var(--muted-foreground));font-size:12px;font-weight:600;text-align:left;padding:10px 8px;border-bottom:1px solid hsl(var(--border))}
+.exr-tbl td{padding:10px 8px;border-bottom:1px solid hsl(var(--border));vertical-align:top}
+.exr-tbl tr:hover td{background:hsl(var(--muted)/.4)}
+.exr-pager{display:flex;flex:none;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid hsl(var(--border));padding:10px 16px;font-size:12px;color:hsl(var(--muted-foreground))}
+.exr-pg{display:inline-flex;height:32px;min-width:32px;align-items:center;justify-content:center;border:1px solid hsl(var(--input));border-radius:6px;background:hsl(var(--background));padding:0 10px;font-size:13px;font-family:inherit;cursor:pointer}
+.exr-pg.on{background:hsl(var(--primary));border-color:hsl(var(--primary));color:hsl(var(--primary-foreground));font-weight:600}
+.exr-pg:disabled{opacity:.5;cursor:not-allowed}
+.exr-pginput{width:56px;height:32px;border:1px solid hsl(var(--input));border-radius:6px;background:hsl(var(--background));color:hsl(var(--foreground));padding:0 8px;font-size:13px;font-family:inherit;text-align:center}
+.exr-empty{flex:1;display:flex;align-items:center;justify-content:center;color:hsl(var(--muted-foreground));font-size:14px;padding:48px 16px;text-align:center}
+/* 创建/编辑弹窗（对齐部署版 Dialog：遮罩 + 居中卡片） */
+.exr-dlgback{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgb(0 0 0/.5);padding:16px}
+.exr-dlg{display:flex;width:95vw;max-width:512px;max-height:90vh;flex-direction:column;border:1px solid hsl(var(--border));background:hsl(var(--background));border-radius:10px;box-shadow:0 24px 48px -12px rgb(0 0 0/.35)}
+.exr-dlg-h{padding:20px 24px 8px}
+.exr-dlg-h h3{font-size:17px;font-weight:600;margin:0}
+.exr-dlg-h p{margin:6px 0 0;font-size:13px;color:hsl(var(--muted-foreground))}
+.exr-dlg-b{display:flex;flex-direction:column;gap:14px;overflow-y:auto;padding:16px 24px}
+.exr-dlg label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
+.exr-ta,.exr-sel{width:100%;min-height:76px;border:1px solid hsl(var(--input));border-radius:6px;background:hsl(var(--background));color:hsl(var(--foreground));padding:8px 12px;font-size:14px;font-family:inherit;resize:vertical}
+.exr-sel{min-height:0;height:36px;resize:none}
+.exr-ta:focus,.exr-sel:focus{outline:none;box-shadow:0 0 0 2px hsl(var(--ring)/.3);border-color:hsl(var(--ring))}
+.exr-dlg-f{display:flex;justify-content:flex-end;gap:8px;border-top:1px solid hsl(var(--border));padding:14px 24px}
+.exr-status{display:inline-flex;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap}
+.exr-status.pend{background:hsl(var(--muted));color:hsl(var(--muted-foreground))}
+.exr-status.pass{background:#dcfce7;color:#166534}
 </style>
 </head>
 
@@ -516,7 +585,7 @@ let S = null;
 let FB = null;
 let maisoulTab = 'core';
 function setMsTab(t){maisoulTab=t;render('maisoul')}
-const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理'};
+const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理',exprv:'表达审核'};
 const PAGE_VERSION = 'v6.15.4';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -597,7 +666,7 @@ function onFreqSlide(el){
 const NAV=[
   {group:'概览',items:[{p:'overview',icon:'house',label:'首页'},{p:'observe',icon:'activity',label:'麦麦观察'}]},
   {group:'麦麦配置编辑',items:[{p:'maisoul',icon:'settings',label:'麦麦设置'},{p:'rhythm',icon:'clock',label:'发言节奏'},{p:'models',icon:'cpu',label:'模型管理'}]},
-  {group:'麦麦资源管理',items:[{p:'personamgr',icon:'user',label:'人格管理'},{p:'learn',icon:'book-open',label:'学习'}]},
+  {group:'麦麦资源管理',items:[{p:'personamgr',icon:'user',label:'人格管理'},{p:'learn',icon:'book-open',label:'学习'},{p:'exprv',icon:'circle-check',label:'表达审核'}]},
   {group:'扩展与集成',items:[{p:'bridge',icon:'wrench',label:'管家桥'}]}
 ];
 function navHTML(){return NAV.map(g=>`<div class="sb-group"><div class="sb-gtitle">${g.group}</div>${g.items.map(it=>`<button class="sb-item ${curPage===it.p?'on':''}" onclick="render('${it.p}')"><span class="ic">${moIcon(it.icon,20)}</span><span class="lb">${it.label}</span></button>`).join('')}</div>`).join('')}
@@ -611,11 +680,12 @@ function render(p){
   curPage=p;
   const nav=document.getElementById('nav');if(nav)nav.innerHTML=navHTML();
   document.getElementById('ptitle').textContent=TITLES[p]||'';
-  const sv=document.getElementById('saveBtn');if(sv)sv.style.display=(p==='observe'||p==='overview'||p==='models')?'none':'';
+  const sv=document.getElementById('saveBtn');if(sv)sv.style.display=(p==='observe'||p==='overview'||p==='models'||p==='exprv')?'none':'';
   const sc=document.querySelector('.pagescroll');if(sc)sc.scrollTop=0;
   const b=document.getElementById('body');
   if(p==='overview'){b.innerHTML=overviewHTML();loadStatus();return}
   if(p==='observe'){b.innerHTML=observeHTML();startMonitor();return}
+  if(p==='exprv'){b.innerHTML='<div style="height:calc(100vh - 180px);min-height:520px"><div class="exr-wrap" id="exr_root"></div></div>';exLoad(true);return}
   if(!S){b.innerHTML='<div class="loading">配置未加载</div>';return}
   const map={
     maisoul: ()=>{
@@ -929,6 +999,216 @@ function addLrRow(hostId){document.getElementById(hostId).insertAdjacentHTML('be
     ${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`)}
 function addGrpRow(hostId){document.getElementById(hostId).insertAdjacentHTML('beforeend',
   `<div class="cp-row" data-egr="x"><input type="text" class="egr-targets" placeholder="qq:群号, qq:群号2（逗号分隔）" style="flex:1" value="">${iconBtn('trash-2','删除','onclick="this.parentElement.remove()"')}</div>`)}
+
+/* ---------------- 表达方式审核（像素对齐 MaiBot 部署版 ExpressionReviewer：卡片滑动 + 列表批量 + 创建/编辑弹窗） ----------------
+   语义对齐部署版：通过人工审核的表达才会被使用（学习页「使用精选表达」开关），
+   拒绝=直接删除；数据源 learning/expressions API（LearningStore 表达条目补 id） */
+const EX={mode:'browse',status:'pending',page:1,pageSize:20,items:null,stats:{pending:0,passed:0,total:0},keys:[],sel:new Set(),idx:0,dlg:null};
+function exFiltered(){
+  const arr=EX.items||[];
+  if(EX.status==='pending')return arr.filter(x=>!x.checked);
+  if(EX.status==='passed')return arr.filter(x=>x.checked);
+  return arr;
+}
+function exPages(list){return Math.max(1,Math.ceil(list.length/EX.pageSize))}
+function exLoad(reset){
+  apiGet('expressions').then(d=>{
+    EX.items=(d&&d.items)||[];EX.stats=(d&&d.stats)||{pending:0,passed:0,total:0};
+    EX.keys=[...new Set(EX.items.map(x=>x.key))];
+    if(reset){EX.page=1;EX.idx=0}
+    const n=exFiltered().length;
+    if(EX.idx>=n)EX.idx=Math.max(0,n-1);
+    exRender();
+  }).catch(e=>{EX.items=null;exRender();toast('加载表达失败：'+e.message)});
+}
+async function exReview(ids,action){
+  if(!ids||!ids.length)return;
+  try{
+    const r=await apiPost('expressions/review',{ids:ids,action:action});
+    if(r&&r.success===false)throw new Error(r.error||'操作失败');
+    const idset=new Set(ids);
+    if(action==='reject'){EX.items=(EX.items||[]).filter(x=>!idset.has(x.id));EX.sel.clear()}
+    else EX.items.forEach(x=>{if(idset.has(x.id))x.checked=(action==='approve')});
+    EX.stats.pending=EX.items.filter(x=>!x.checked).length;
+    EX.stats.total=EX.items.length;EX.stats.passed=EX.items.length-EX.stats.pending;
+    const n=exFiltered().length;
+    if(EX.idx>=n)EX.idx=Math.max(0,n-1);
+    exRender();
+  }catch(e){toast('审核失败：'+e.message)}
+}
+function exKey(d){const list=exFiltered();const x=list[EX.idx];if(!x)return;exReview([x.id],d>0?'approve':'reject')}
+function exMove(d){const n=exFiltered().length;if(!n)return;EX.idx=(EX.idx+d+n)%n;exRender()}
+function exMode(m){EX.mode=m;exRender()}
+function exStatus(s){EX.status=s;EX.page=1;EX.idx=0;EX.sel.clear();exRender()}
+function exGo(p){EX.page=Math.min(Math.max(1,p),exPages(exFiltered()));exRender()}
+function exJump(){const el=document.getElementById('ex_jump');if(!el)return;const v=parseInt(el.value,10);if(!isNaN(v))exGo(v)}
+function exSel(id,on){on?EX.sel.add(id):EX.sel.delete(id);exRender()}
+function exSelAll(on){const rows=exFiltered().slice((EX.page-1)*EX.pageSize,EX.page*EX.pageSize);rows.forEach(x=>{on?EX.sel.add(x.id):EX.sel.delete(x.id)});exRender()}
+function exSelClear(){EX.sel.clear();exRender()}
+function exBatch(action){if(!EX.sel.size){toast('请先选择要审核的表达方式');return}exReview([...EX.sel],action)}
+function exStyleBadges(style,max){
+  const parts=String(style||'').split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+  const shown=parts.slice(0,max||3).map(s=>`<span class="exr-badge">${esc(s)}</span>`).join('');
+  return shown+(parts.length>(max||3)?'<span class="exr-badge">…</span>':'');
+}
+function exCardHTML(x,cls){
+  return `<div class="exr-card ${cls||''}">
+    <div><div class="exr-lab">情景</div><div class="exr-sit" style="margin-top:6px">${esc(x.situation)}</div></div>
+    <div><div class="exr-lab">风格</div><div class="exr-stys" style="margin-top:6px">${exStyleBadges(x.style,12)||'<span class="exr-badge">—</span>'}</div></div>
+    <div class="exr-foot"><div class="exr-who"><span class="exr-av">${moIcon('sparkles',12)}</span><span title="${esc(x.key)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">${esc(x.key)}</span>${x.checked?`<span class="exr-ok-tag">${moIcon('circle-check',12)}人工通过</span>`:''}</div><span style="flex:none;font-family:ui-monospace,SFMono-Regular,monospace">×${x.count} 次</span></div>
+  </div>`;
+}
+function exBrowseHTML(list){
+  if(!list.length)return `<div class="exr-empty">${EX.status==='pending'?'全部审核完成！':'当前筛选条件下没有待处理的项目'}</div>`;
+  const x=list[EX.idx]||list[0];
+  return `<div class="exr-deck">
+      <div style="position:absolute;top:10px;right:16px;font-size:12px;color:hsl(var(--muted-foreground))">第 ${EX.idx+1} / ${list.length} 条</div>
+      ${list[EX.idx+2]?exCardHTML(list[EX.idx+2],'be2'):''}${list[EX.idx+1]?exCardHTML(list[EX.idx+1],'be1'):''}
+      ${exCardHTML(x,'')}
+    </div>
+    <div class="exr-acts">
+      <button class="exr-rbtn no" title="拒绝（←）" onclick="exKey(-1)">${moIcon('x',28)}</button>
+      <button class="exr-rbtn ok" title="通过（→）" onclick="exKey(1)">${moIcon('circle-check',28)}</button>
+    </div>
+    <div class="exr-hint">
+      <span style="display:flex;align-items:center;gap:4px"><span class="exr-kbd">←</span>拒绝</span>
+      <span style="display:flex;align-items:center;gap:4px"><span class="exr-kbd">→</span>通过</span>
+      <span style="display:flex;align-items:center;gap:4px"><span class="exr-kbd">↑</span>上一条</span>
+      <span style="display:flex;align-items:center;gap:4px"><span class="exr-kbd">↓</span>下一条</span>
+      <span style="opacity:.5">|</span><span>拖拽卡片滑动审核</span>
+    </div>`;
+}
+function exPageBtns(pages){
+  const c=[],p=EX.page;
+  if(pages<=7){for(let i=1;i<=pages;i++)c.push(i)}
+  else{c.push(1);if(p>3)c.push('…');for(let i=Math.max(2,p-1);i<=Math.min(pages-1,p+1);i++)c.push(i);if(p<pages-2)c.push('…');c.push(pages)}
+  return c.map(i=>i==='…'?'<span style="padding:0 4px">…</span>':`<button class="exr-pg ${i===p?'on':''}" onclick="exGo(${i})">${i}</button>`).join('');
+}
+function exListHTML(list){
+  if(!list.length)return `<div class="exr-empty">${EX.status==='pending'?'全部审核完成！':'没有找到表达方式'}</div>`;
+  EX.page=Math.min(Math.max(1,EX.page),exPages(list));
+  const rows=list.slice((EX.page-1)*EX.pageSize,EX.page*EX.pageSize);
+  const allSel=rows.length&&rows.every(x=>EX.sel.has(x.id));
+  return `<div class="exr-listwrap">
+    <div class="exr-batch">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" onchange="exSelAll(this.checked)" ${allSel?'checked':''}>${allSel?`已全选当前页 (${rows.length} 条)`:`全选当前页 (${rows.length} 条)`}</label>
+      ${EX.sel.size?`<span style="color:hsl(var(--foreground))">已选 ${EX.sel.size} 条</span>
+        <button class="ui-btn sm" onclick="exBatch('approve')">${moIcon('circle-check',14)}<span>批量通过</span></button>
+        <button class="ui-btn sm outline" onclick="exBatch('reject')" style="color:hsl(var(--destructive))">${moIcon('trash-2',14)}<span>批量拒绝</span></button>
+        <button class="ui-btn sm ghost" onclick="exSelClear()">取消选择</button>`:''}
+    </div>
+    <div class="exr-tblw"><table class="exr-tbl">
+      <tr><th style="width:32px"></th><th>情景</th><th>风格</th><th style="width:110px">共享组</th><th style="width:52px;text-align:center">次数</th><th style="width:72px">状态</th><th style="width:44px"></th></tr>
+      ${rows.map(x=>`<tr>
+        <td><input type="checkbox" ${EX.sel.has(x.id)?'checked':''} onchange="exSel(${x.id},this.checked)"></td>
+        <td style="max-width:260px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.situation)}">${esc(x.situation)}</div></td>
+        <td style="max-width:240px"><div style="display:flex;flex-wrap:wrap;gap:4px">${exStyleBadges(x.style,3)}</div></td>
+        <td title="${esc(x.key)}" style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:hsl(var(--muted-foreground))">${esc(x.key)}</td>
+        <td style="text-align:center;font-variant-numeric:tabular-nums">${x.count}</td>
+        <td>${x.checked?'<span class="exr-status pass">已通过</span>':'<span class="exr-status pend">待审</span>'}</td>
+        <td>${iconBtn('pencil','编辑',`onclick="exDlg(${x.id})"`)}</td>
+      </tr>`).join('')}
+    </table></div>
+    <div class="exr-pager">
+      <span>共 ${list.length} 条 · 每页 ${EX.pageSize} 条</span>
+      <span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+        <button class="exr-pg" ${EX.page<=1?'disabled':''} onclick="exGo(${EX.page-1})">上一页</button>
+        ${exPageBtns(exPages(list))}
+        <button class="exr-pg" ${EX.page>=exPages(list)?'disabled':''} onclick="exGo(${EX.page+1})">下一页</button>
+        <span style="margin-left:8px;display:flex;align-items:center;gap:4px">跳至<input class="exr-pginput" id="ex_jump" onkeydown="if(event.key==='Enter')exJump()">页</span>
+      </span>
+    </div></div>`;
+}
+function exDlg(id){
+  if(id==null){EX.dlg={id:null,key:EX.keys[0]||'global',situation:'',style:'',checked:true}}
+  else{const x=(EX.items||[]).find(i=>i.id===id);if(!x)return;EX.dlg={id:x.id,key:x.key,situation:x.situation,style:x.style,checked:x.checked}}
+  exRender();
+}
+function exDlgClose(){EX.dlg=null;exRender()}
+function exDlgHTML(){
+  const d=EX.dlg;
+  return `<div class="exr-dlgback" onclick="if(event.target===this)exDlgClose()">
+    <div class="exr-dlg">
+      <div class="exr-dlg-h"><h3>${d.id==null?'创建新的表达方式记录':'修改表达方式的信息'}</h3>
+        <p>${d.id==null?'手动添加一条「当 X 时可以用 Y 表达」，创建即视为人工通过':'修改情景或风格，保存后立即生效'}</p></div>
+      <div class="exr-dlg-b">
+        <div><label>共享组</label>${d.id==null
+          ?`<select class="exr-sel" id="ex_dlg_key">${EX.keys.map(k=>`<option value="${esc(k)}" ${k===d.key?'selected':''}>${esc(k)}</option>`).join('')||'<option value="global">global</option>'}</select>`
+          :`<input class="exr-sel" value="${esc(d.key)}" disabled>`}</div>
+        <div><label>情景（当…时）</label><textarea class="exr-ta" id="ex_dlg_sit" placeholder="例：群友分享日常小事时">${esc(d.situation)}</textarea></div>
+        <div><label>风格（可以用…表达，逗号分隔多个）</label><textarea class="exr-ta" id="ex_dlg_sty" placeholder="例：简短接话，带点调侃，像熟人之间">${esc(d.style)}</textarea></div>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:500;cursor:pointer"><input type="checkbox" id="ex_dlg_ck" ${d.checked?'checked':''}>已人工通过（开启「使用精选表达」时才会被使用）</label>
+      </div>
+      <div class="exr-dlg-f">
+        <button class="ui-btn sm outline" onclick="exDlgClose()">取消</button>
+        <button class="ui-btn sm" onclick="exDlgSave()">${moIcon('save',14)}<span>保存</span></button>
+      </div>
+    </div></div>`;
+}
+async function exDlgSave(){
+  const d=EX.dlg;if(!d)return;
+  const sit=(document.getElementById('ex_dlg_sit').value||'').trim();
+  const sty=(document.getElementById('ex_dlg_sty').value||'').trim();
+  if(!sit||!sty){toast('情景与风格都不能为空');return}
+  const sel=document.getElementById('ex_dlg_key');
+  const key=d.id==null?(sel?sel.value:'global'):d.key;
+  const ck=document.getElementById('ex_dlg_ck');
+  try{
+    const r=await apiPost('expressions/save',{id:d.id,key:key,situation:sit,style:sty,checked:ck?ck.checked:true});
+    if(r&&r.success===false)throw new Error(r.error||'保存失败');
+    EX.dlg=null;toast(d.id==null?'创建成功':'保存成功');exLoad(false);
+  }catch(e){toast((d.id==null?'创建失败：':'保存失败：')+e.message)}
+}
+function exBindDrag(){
+  const card=document.querySelector('.exr-card:not(.be1):not(.be2)');if(!card)return;
+  let sx=0,dx=0,drag=false;
+  card.addEventListener('pointerdown',e=>{if(e.button!==undefined&&e.button!==0)return;drag=true;sx=e.clientX;dx=0;card.classList.remove('fly');try{card.setPointerCapture(e.pointerId)}catch(_){}});
+  card.addEventListener('pointermove',e=>{if(!drag)return;dx=e.clientX-sx;card.style.transform=`translateX(${dx}px) rotate(${dx*0.05}deg)`;card.style.opacity=String(Math.max(.5,1-Math.abs(dx)/320))});
+  const end=()=>{
+    if(!drag)return;drag=false;
+    if(Math.abs(dx)>90){
+      card.classList.add('fly');
+      card.style.transform=`translateX(${dx>0?420:-420}px) rotate(${dx>0?24:-24}deg)`;
+      card.style.opacity='0';
+      setTimeout(()=>exKey(dx>0?1:-1),220);
+    }else{
+      card.classList.add('fly');card.style.transform='';card.style.opacity='';
+      setTimeout(()=>card.classList.remove('fly'),320);
+    }};
+  card.addEventListener('pointerup',end);
+  card.addEventListener('pointercancel',end);
+}
+function exRender(){
+  const root=document.getElementById('exr_root');if(!root)return;
+  if(EX.items===null){root.innerHTML='<div class="exr-empty">加载失败，请刷新重试</div>';return}
+  const st=EX.stats||{};
+  const chips=[['pending','待审',st.pending],['passed','已通过',st.passed],['all','全部',st.total]];
+  const list=exFiltered();
+  root.innerHTML=`
+    <div class="exr-tabs">
+      <button class="exr-tab ${EX.mode==='list'?'on':''}" onclick="exMode('list')">${moIcon('layout-dashboard',16)}<span>列表模式</span></button>
+      <button class="exr-tab ${EX.mode==='browse'?'on':''}" onclick="exMode('browse')">${moIcon('sparkles',16)}<span>浏览模式</span></button>
+    </div>
+    <div class="exr-bar">
+      ${chips.map(c=>`<button class="exr-chip ${EX.status===c[0]?'on':''}" onclick="exStatus('${c[0]}')">${c[1]}<span class="n">${c[2]??0}</span></button>`).join('')}
+      <span class="exr-sp"></span>
+      <span class="exr-count" style="text-align:right">审核麦麦学习到的表达方式。通过人工审核的才会被使用（可在学习页调整），拒绝的会被直接删除。</span>
+      <button class="ui-btn sm outline" onclick="exLoad()">${moIcon('refresh-cw',14)}<span>刷新</span></button>
+      <button class="ui-btn sm" onclick="exDlg(null)">${moIcon('plus',14)}<span>创建表达</span></button>
+    </div>
+    <div class="exr-body">${EX.mode==='browse'?exBrowseHTML(list):exListHTML(list)}</div>
+    ${EX.dlg?exDlgHTML():''}`;
+  if(EX.mode==='browse')exBindDrag();
+}
+document.addEventListener('keydown',e=>{
+  if(curPage!=='exprv'||EX.dlg||EX.mode!=='browse')return;
+  const t=e.target;
+  if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'))return;
+  if(e.key==='ArrowLeft'){e.preventDefault();exKey(-1)}
+  else if(e.key==='ArrowRight'){e.preventDefault();exKey(1)}
+  else if(e.key==='ArrowUp'){e.preventDefault();exMove(-1)}
+  else if(e.key==='ArrowDown'){e.preventDefault();exMove(1)}
+});
 
 function overviewHTML(){
   return `<div class="page-head"><h1>概览</h1></div>

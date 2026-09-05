@@ -139,6 +139,77 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             learning_store.save()
             return jsonify({"success": True})
 
+        async def get_expressions():
+            """表达方式审核页数据源：跨共享组拉平 + 待审/已通过统计。"""
+            if learning_store is None:
+                return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+            learning_store.ensure_expression_ids()
+            items = learning_store.all_expressions()
+            pending = sum(1 for x in items if not x["checked"])
+            return jsonify({"success": True, "data": {
+                "items": items,
+                "stats": {"pending": pending, "passed": len(items) - pending,
+                          "total": len(items)}}})
+
+        async def post_expressions_review():
+            """批量审核：approve=通过 / unapprove=取消人工通过 / reject=拒绝删除。"""
+            if learning_store is None:
+                return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+            try:
+                payload = await request.get_json(silent=True) or {}
+            except Exception:
+                payload = {}
+            action = str(payload.get("action") or "")
+            if action not in ("approve", "unapprove", "reject"):
+                return jsonify({"success": False, "error": "无效的审核动作"}), 400
+            raw_ids = payload.get("ids")
+            if not isinstance(raw_ids, list) or not raw_ids:
+                return jsonify({"success": False, "error": "ids 必须是非空数组"}), 400
+            ids: list[int] = []
+            for raw in raw_ids[:500]:
+                try:
+                    ids.append(int(raw))
+                except (TypeError, ValueError):
+                    continue
+            learning_store.ensure_expression_ids()
+            done = sum(1 for i in ids if learning_store.review_expression(i, action))
+            return jsonify({"success": True, "data": {"action": action, "count": done}})
+
+        async def post_expressions_save():
+            """审核页弹窗：创建（id 空）/修改单条表达。"""
+            if learning_store is None:
+                return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+            try:
+                payload = await request.get_json(silent=True) or {}
+            except Exception:
+                payload = {}
+            situation = str(payload.get("situation") or "").strip()
+            style = str(payload.get("style") or "").strip()
+            if not situation or not style:
+                return jsonify({"success": False, "error": "情景与风格都不能为空"}), 400
+            if len(situation) > 500 or len(style) > 500:
+                return jsonify({"success": False, "error": "情景/风格过长（上限 500 字）"}), 400
+            key = str(payload.get("key") or "global").strip() or "global"
+            if len(key) > 120:
+                return jsonify({"success": False, "error": "共享组键过长"}), 400
+            expr_id = payload.get("id")
+            if expr_id is not None:
+                try:
+                    expr_id = int(expr_id)
+                except (TypeError, ValueError):
+                    return jsonify({"success": False, "error": "id 必须是整数"}), 400
+            learning_store.ensure_expression_ids()
+            item = learning_store.upsert_expression(
+                situation, style, bool(payload.get("checked", True)),
+                key=key, expr_id=expr_id)
+            if item is None:
+                return jsonify({"success": False,
+                                "error": "条目不存在或内容为空"}, 404 if expr_id else 400)
+            learning_store.ensure_expression_ids()
+            return jsonify({"success": True, "data": {"item": {
+                "id": item.get("id"), "situation": item.get("situation"),
+                "style": item.get("style"), "checked": bool(item.get("checked"))}}})
+
         async def get_status():
             from ..core.trigger import effective_talk_value, message_trigger_threshold
 
@@ -230,6 +301,9 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             context.register_web_api(f"{base}/monitor/replay", get_monitor_replay, ["GET"], "maisoul WebUI: 麦麦观察事件重放")
             context.register_web_api(f"{base}/monitor/stream", get_monitor_stream, ["GET"], "maisoul WebUI: 麦麦观察实时流")
             context.register_web_api(f"{base}/models/list", get_models_list, ["GET"], "maisoul WebUI: Provider 模型列表")
+            context.register_web_api(f"{base}/expressions", get_expressions, ["GET"], "maisoul WebUI: 表达方式审核列表")
+            context.register_web_api(f"{base}/expressions/review", post_expressions_review, ["POST"], "maisoul WebUI: 表达方式批量审核")
+            context.register_web_api(f"{base}/expressions/save", post_expressions_save, ["POST"], "maisoul WebUI: 表达方式创建/修改")
         logger.info("maisoul WebUI API 已注册")
     except Exception:
         logger.error("maisoul WebUI 注册失败", exc_info=True)
