@@ -205,7 +205,6 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             if item is None:
                 return jsonify({"success": False,
                                 "error": "条目不存在或内容为空"}, 404 if expr_id else 400)
-            learning_store.ensure_expression_ids()
             return jsonify({"success": True, "data": {"item": {
                 "id": item.get("id"), "situation": item.get("situation"),
                 "style": item.get("style"), "checked": bool(item.get("checked"))}}})
