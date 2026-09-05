@@ -19,7 +19,7 @@ from astrbot.api.message_components import Reply
 from .ecobridge import _eco_fire_response, _eco_inject_block, _extra_part_text
 from .events_util import _emit_sent, _monitor_stage, _resp_text
 from .modelbind_host import _embedding_provider, _pick_task_model, _task_text_chat
-from .replyer import _schedule_learning
+from .replyer import _deliver_reply, _schedule_learning, _select_expr_block
 
 
 def _schedule_planner(P, event: AstrMessageEvent, st, gid: str, forced: bool,
@@ -549,29 +549,12 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     # v6.9.7 管家迁位（对齐 MaiBot 分工）：replyer 是纯生成器，不带任何工具——
     # 查资料/跑任务全部在 planner 侧经 tool_search 发现 deferred 工具完成，
     # 工作成果由 planner 写进 reply_reference 传入。管家桥仅 independent/native 模式保留。
-    use_expr, _ = learning.learning_flags(eff_cfg, "expression_learning_list", platform, gid,
-                                          deps.is_group)
-    expr_block = ""
-    if use_expr:
-        observe = learning.build_chat_info(list(st.buffer))
-        expr_bind = _pick_task_model(P, "expression_use", eff_cfg)
-        emb = _embedding_provider(P, eff_cfg)
-        expr_block = await learning.select_expression_habits_block(
-            expr_bind[0] if expr_bind else provider, P.learning_store,
-            learning.share_key(eff_cfg, "expression_groups", platform, gid),
-            bool(eff_cfg.get("expression_checked_only", True)),
-            observe, str(eff_cfg.get("bot_name") or "麦麦"), reason,
-            model=expr_bind[1] if expr_bind else None,
-            mode=str(eff_cfg.get("expression_selection_mode") or "legacy"),
-            embedding=emb,
-            embedding_model=str((getattr(emb, "provider_config", None) or {})
-.get("id", "") or "") if emb is not None else "",
-            # query 对齐 _build_expression_query_text：reply 工具的
-            # reply_reference 优先，否则 Planner 推理（reason）
-            query_text=learning.build_expression_query_text(
-                reply_reason=reason,
-                reply_reference=str(args.get("reply_reference") or "")),
-            pool_size=int(eff_cfg.get("expression_vector_candidate_pool_size", 50) or 50))
+    # M8：表达块选择走 replyer 公共段；query 的 reply_reference 优先级
+    # 对齐 _build_expression_query_text（reply 工具参数 > Planner 推理）
+    expr_block = await _select_expr_block(
+        P, st, eff_cfg, platform, gid, provider, reason,
+        reply_reference=str(args.get("reply_reference") or ""),
+        is_group=deps.is_group)
     # 黑话参考已移至 planner 每轮注入（对齐 jargon_context_matcher 位置）
     trigger_text = ""
     for m in reversed(list(st.buffer)):
@@ -611,33 +594,13 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     if not answer:
         return "模型未返回内容，本次未发言"
 
-    # WebUI 聊天页单气泡合并（同 _generate_and_send：accumulator 替换语义）
-    webchat_buf: list[str] = []
+    # M8：投递/记账/学习调度走 replyer 公共段（与 independent 同一实现）；
+    # eco_event 用于回写（deps.event 为 None 时是合成事件）
     quote_id = msg_id if (set_quote and msg_id and deps.send_fn is None) else ""
-    quoted = {"done": False}
-
-    async def send(text: str) -> None:
-        if deps.send_fn is not None:
-            webchat_buf.append(text)
-            return
-        if quote_id and not quoted["done"]:
-            quoted["done"] = True
-            await P.context.send_message(
-                umo, MessageChain([Reply(id=quote_id)]).message(text))
-        else:
-            await P.context.send_message(umo, MessageChain().message(text))
-        _emit_sent(P, gid, text, msg_id, "reply", deps.event)
-
-    sent = await sender.send_humanlike(send, answer, eff_cfg)
-    if webchat_buf:
-        await deps.send_fn("\n\n".join(webchat_buf))
-        for seg_text in webchat_buf:
-            _emit_sent(P, gid, seg_text, msg_id, "reply", deps.event)
-    st.record_self_reply(msg_id or "", sent,
-                         str(eff_cfg.get("bot_name") or P.config["bot_name"]),
-                         quote=quote_id if quoted["done"] else "")
-    await _eco_fire_response(P, eco_event, "\n".join(sent))
-    _schedule_learning(P, provider, eff_cfg, st, platform, gid)
+    sent = await _deliver_reply(
+        P, st=st, eff_cfg=eff_cfg, gid=gid, umo=umo, event=deps.event,
+        provider=provider, platform=platform, answer=answer,
+        msg_id=msg_id or "", quote_id=quote_id, webchat_send=deps.send_fn)
     return f"已发送 {len(sent)} 段" + ("（引用回复）" if quote_id else "")
 
 async def _planner_send_emoji(P, deps) -> str:

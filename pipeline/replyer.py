@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
@@ -43,25 +45,10 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
 
     # 学习注入块（表达习惯选择 + 关键词反应 —— 格式对齐 MaiBot 原文）；
     # 黑话参考已移至 planner 每轮注入（对齐 jargon_context_matcher 位置）
-    use_expr, _ = learning.learning_flags(
-        eff_cfg, "expression_learning_list", platform, gid, is_group)
-    expr_block = ""
-    if use_expr:
-        observe = learning.build_chat_info(list(st.buffer))
-        expr_bind = _pick_task_model(P, "expression_use", eff_cfg)
-        emb = _embedding_provider(P, eff_cfg)
-        expr_block = await learning.select_expression_habits_block(
-            expr_bind[0] if expr_bind else provider, P.learning_store,
-            learning.share_key(eff_cfg, "expression_groups", platform, gid),
-            bool(eff_cfg.get("expression_checked_only", True)),
-            observe, str(eff_cfg.get("bot_name") or "麦麦"), reason,
-            model=expr_bind[1] if expr_bind else None,
-            mode=str(eff_cfg.get("expression_selection_mode") or "legacy"),
-            embedding=emb,
-            embedding_model=str((getattr(emb, "provider_config", None) or {})
-.get("id", "") or "") if emb is not None else "",
-            query_text=learning.build_expression_query_text(reply_reason=reason),
-            pool_size=int(eff_cfg.get("expression_vector_candidate_pool_size", 50) or 50))
+    # M8：表达块选择走公共段（与 planner reply 同一实现）
+    expr_block = await _select_expr_block(
+        P, st, eff_cfg, platform, gid, provider, reason,
+        is_group=is_group)
     keyword_block = learning.keyword_reaction_block(eff_cfg, trigger_text)
 
     user_message = prompt.build_final_user_message(
@@ -111,38 +98,22 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
         logger.info(f"maisoul[{gid}] 模型未返回内容，放弃本次发言")
         return
 
-    # WebUI 聊天页是单气泡：AstrBot 的 run accumulator 对 streaming=False 的
-    # plain 事件做替换，逐段 event.send 会互相覆盖——先攒段，结束后合并一次发。
+    # WebUI 聊天页是单气泡（accumulator 替换语义）：攒段合并一次发；
+    # 引用回复（MaiBot set_quote 默认 true）：首段挂 Reply(触发消息)。
+    # 投递/记账/学习调度走 _deliver_reply 公共段（M8，与 planner reply 同源）
     webchat = str(event.get_platform_name() or "") == "webchat"
-    webchat_buf: list[str] = []
-    # 引用回复（对齐 MaiBot reply 的 set_quote 默认 true）：首段挂 Reply(触发消息)
     quote_id = (_msg_id(event)
                 if not webchat and eff_cfg.get("enable_reply_quote", True) else "")
-    quoted = {"done": False}
 
-    async def send(text: str) -> None:
-        if webchat:
-            webchat_buf.append(text)
-            return
-        if quote_id and not quoted["done"]:
-            quoted["done"] = True
-            await P.context.send_message(
-                umo, MessageChain([Reply(id=quote_id)]).message(text))
-        else:
-            await P.context.send_message(umo, MessageChain().message(text))
-        _emit_sent(P, gid, text, _msg_id(event), "reply", event)
+    async def _webchat_send(text: str) -> None:
+        await event.send(MessageChain().message(text))
 
-    sent = await sender.send_humanlike(send, answer, eff_cfg)
-    if webchat and webchat_buf:
-        await event.send(MessageChain().message("\n\n".join(webchat_buf)))
-        for seg_text in webchat_buf:
-            _emit_sent(P, gid, seg_text, _msg_id(event), "reply", event)
-    st.record_self_reply(_msg_id(event), sent,
-                         str(eff_cfg.get("bot_name") or P.config["bot_name"]),
-                         quote=quote_id if quoted["done"] else "")
+    sent = await _deliver_reply(
+        P, st=st, eff_cfg=eff_cfg, gid=gid, umo=umo, event=event,
+        provider=provider, platform=platform, answer=answer,
+        msg_id=_msg_id(event), quote_id=quote_id,
+        webchat_send=_webchat_send if webchat else None)
     logger.info(f"maisoul[{gid}] 已发言 {len(sent)} 段（人格={pname}）")
-    await _eco_fire_response(P, event, "\n".join(sent))
-    _schedule_learning(P, provider, eff_cfg, st, platform, gid)
 
 # ------------------------------------------------------------------ #
 # 生态注入桥（v6.11.0）：手动触发 on_llm_request/on_llm_response 钩子链，  #
@@ -182,6 +153,68 @@ def _schedule_learning(P, provider, eff_cfg, st, platform: str, gid: str):
         P._spawn(_run(), name=f"learning:{gid}")
     except Exception:
         logger.debug("maisoul: 学习任务调度失败", exc_info=True)
+
+
+async def _select_expr_block(P, st, eff_cfg, platform: str, gid: str, provider,
+                             reason: str, reply_reference: str = "",
+                             is_group: bool = True) -> str:
+    """表达习惯选择块（M8 公共段：independent 与 planner reply 同一实现）。"""
+    use_expr, _ = learning.learning_flags(
+        eff_cfg, "expression_learning_list", platform, gid, is_group)
+    if not use_expr:
+        return ""
+    observe = learning.build_chat_info(list(st.buffer))
+    expr_bind = _pick_task_model(P, "expression_use", eff_cfg)
+    emb = _embedding_provider(P, eff_cfg)
+    return await learning.select_expression_habits_block(
+        expr_bind[0] if expr_bind else provider, P.learning_store,
+        learning.share_key(eff_cfg, "expression_groups", platform, gid),
+        bool(eff_cfg.get("expression_checked_only", True)),
+        observe, str(eff_cfg.get("bot_name") or "麦麦"), reason,
+        model=expr_bind[1] if expr_bind else None,
+        mode=str(eff_cfg.get("expression_selection_mode") or "legacy"),
+        embedding=emb,
+        embedding_model=str((getattr(emb, "provider_config", None) or {})
+                            .get("id", "") or "") if emb is not None else "",
+        query_text=learning.build_expression_query_text(
+            reply_reason=reason, reply_reference=reply_reference),
+        pool_size=int(eff_cfg.get("expression_vector_candidate_pool_size", 50) or 50))
+
+
+async def _deliver_reply(P, *, st, eff_cfg, gid, umo, event, provider,
+                         answer: str, msg_id: str, quote_id: str,
+                         webchat_send=None) -> list[str]:
+    """拟人发送 + 记账 + 学习调度（M8 公共段，两条生成路径的收尾）。
+
+    webchat_send 非 None（WebUI 单气泡）：攒段合并一次发；否则逐段
+    context.send_message，首段挂 Reply(quote_id)。返回实际发送的段。
+    """
+    buf: list[str] = []
+    quoted = {"done": False}
+
+    async def send(text: str) -> None:
+        if webchat_send is not None:
+            buf.append(text)
+            return
+        if quote_id and not quoted["done"]:
+            quoted["done"] = True
+            await P.context.send_message(
+                umo, MessageChain([Reply(id=quote_id)]).message(text))
+        else:
+            await P.context.send_message(umo, MessageChain().message(text))
+        _emit_sent(P, gid, text, msg_id, "reply", event)
+
+    sent = await sender.send_humanlike(send, answer, eff_cfg)
+    if webchat_send is not None and buf:
+        await webchat_send("\n\n".join(buf))
+        for seg_text in buf:
+            _emit_sent(P, gid, seg_text, msg_id, "reply", event)
+    st.record_self_reply(msg_id, sent,
+                         str(eff_cfg.get("bot_name") or P.config["bot_name"]),
+                         quote=quote_id if quoted["done"] else "")
+    await _eco_fire_response(P, event, "\n".join(sent))
+    _schedule_learning(P, provider, eff_cfg, st, str(getattr(event, "get_platform_name", lambda: "")() or ""), gid)
+    return sent
 
 # ------------------------------------------------------------------ #
 # Planner 决策模式：maisaka agent 循环                                  #
