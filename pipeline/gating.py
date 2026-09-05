@@ -10,7 +10,7 @@ import asyncio
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..core import trigger
+from ..core import sanitize, trigger
 from ..core.states import session_key
 from .events_util import _has_at_bot, _is_reply_to_bot, _msg_id, _record, _session_name
 from .planner_host import _schedule_planner
@@ -21,7 +21,12 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     if not P.config["enable"]:
         return
 
-    text = (event.message_str or "").strip()
+    raw_text = (event.message_str or "").strip()
+    # P-F 反注入清洗：引用前缀/合并转发占位不冒充本人发言；提及判定前
+    # 剥掉指向其他 AI 的开头 @呼名（At 组件的 at_bot 强判定不受影响）
+    text = sanitize.sanitize_text(raw_text)
+    mention_text = sanitize.strip_leading_ai_mention(text, str(P.config["bot_name"]),
+                                                     [str(a) for a in (P.config.get("aliases") or [])])
     logger.debug(f"maisoul: 收到消息 [{event.get_platform_name()}] "
                  f"{event.get_sender_name()}: {text[:40]}")
 
@@ -88,7 +93,7 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
 
     aliases = [str(a) for a in (P.config.get("aliases") or [])]
     bot_name = str(P.config["bot_name"])
-    mentioned = any(k and k in text for k in [bot_name, *aliases])
+    mentioned = any(k and k in mention_text for k in [bot_name, *aliases])
     if not mentioned:
         # 回复引用机器人 = 提及（对齐 is_mentioned_bot_in_message 第 6 层：
         # 回复引用算 mention 不算 at；批次内任一命中即算——扫当前消息+未消费积压）

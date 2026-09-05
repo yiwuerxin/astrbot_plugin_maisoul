@@ -154,6 +154,8 @@ def evaluate(
     aliases: list[str],
     bot_name: str,
     frequency: float,
+    feedback_factor: float = 1.0,
+    feedback_note: str = "",
 ) -> NecessityResult:
     """必要性触发模式的评分入口（阈值固定 80 = REPLY_NECESSITY_TRIGGER_SCORE）。
     aliases 即 MaiBot alias_names。"""
@@ -176,7 +178,8 @@ def evaluate(
     penalty = presence_penalty(st)
 
     raw = rel + content + pressure - penalty
-    factor = freq_factor(frequency)
+    # P-E：频率窗口反馈乘数叠加进频率倍率（开关关闭时恒 1.0，行为不变）
+    factor = freq_factor(frequency) * feedback_factor
     final = max(0, int(round(raw * factor)))
 
     parts = [f"最终={final}", f"原始={raw}", f"档位={rel}({rel_reason})"]
@@ -187,6 +190,8 @@ def evaluate(
     if penalty:
         parts.append(f"存在感=-{penalty}")
     parts.append(f"倍率={factor:.2f}")
+    if feedback_note:
+        parts.append(feedback_note)
 
     if rel >= 80 and (len(cleaned) >= 120 or any(r.startswith("请求") for r in reasons)):
         style = "长回复"

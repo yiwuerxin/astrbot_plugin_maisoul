@@ -16,7 +16,8 @@ except ImportError:
     from astrbot.core.message.message_event_result import MessageChain
 from astrbot.api.message_components import Reply
 
-from .ecobridge import _eco_fire_response, _eco_inject_block, _extra_part_text
+from .ecobridge import (_eco_fire_response, _eco_inject_block, _extra_part_text,
+                         xinxian_profile_block as _xinxian_profile_block)
 from .events_util import _emit_sent, _monitor_stage, _resp_text
 from .modelbind_host import _embedding_provider, _pick_task_model, _task_text_chat
 from .replyer import _deliver_reply, _schedule_learning, _select_expr_block
@@ -531,6 +532,7 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     """reply 工具执行：replyer 生成 + 后处理发送（reply_style/set_quote 参数生效）。"""
     st, eff_cfg = deps.st, deps.cfg
     umo, platform, gid = deps.umo, deps.platform, deps.gid
+    reply_baseline = len(st.buffer)  # P-D：reply 开始时的缓冲基线（发送前比对）
     _monitor_stage(P, gid, monitor.STAGE_REPLYER, "生成可见回复")
     provider = P.context.get_using_provider()
     if provider is None:
@@ -546,6 +548,12 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     system_prompt = prompt.build_system_prompt(eff_cfg, chat_id=gid, platform=platform,
                                                is_group=deps.is_group)
     system_prompt += bridge.build_skills_block(eff_cfg)
+    _uid = ""
+    for m in reversed(list(st.buffer)):
+        if str(m.get("msg_id") or "") == msg_id:
+            _uid = str(m.get("sid") or "")
+            break
+    system_prompt += await _xinxian_profile_block(P, gid, _uid)
     # v6.9.7 管家迁位（对齐 MaiBot 分工）：replyer 是纯生成器，不带任何工具——
     # 查资料/跑任务全部在 planner 侧经 tool_search 发现 deferred 工具完成，
     # 工作成果由 planner 写进 reply_reference 传入。管家桥仅 independent/native 模式保留。
@@ -600,7 +608,9 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     sent = await _deliver_reply(
         P, st=st, eff_cfg=eff_cfg, gid=gid, umo=umo, event=deps.event,
         provider=provider, platform=platform, answer=answer,
-        msg_id=msg_id or "", quote_id=quote_id, webchat_send=deps.send_fn)
+        msg_id=msg_id or "", quote_id=quote_id, webchat_send=deps.send_fn,
+        eco_event=eco_event,
+        gen_baseline=reply_baseline)
     return f"已发送 {len(sent)} 段" + ("（引用回复）" if quote_id else "")
 
 async def _planner_send_emoji(P, deps) -> str:

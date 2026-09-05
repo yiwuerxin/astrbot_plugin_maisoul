@@ -15,7 +15,7 @@ except ImportError:
     from astrbot.core.message.message_event_result import MessageChain
 from astrbot.api.message_components import Reply
 
-from .ecobridge import _eco_fire_response, _eco_inject_block
+from .ecobridge import _eco_fire_response, _eco_inject_block, xinxian_profile_block as _xinxian_profile_block
 from .events_util import _emit_sent, _monitor_stage, _msg_id, _resp_text
 from .modelbind_host import _embedding_provider, _pick_task_model, _task_text_chat
 
@@ -26,6 +26,7 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
     if provider is None:
         logger.warning("maisoul: 未配置可用的模型 Provider，本次跳过发言")
         return
+    gen_baseline = len(st.buffer)  # P-D：生成期基线（发送前判断话题是否滚过去）
 
     # 会话键与 _process_chat/on_llm_* 回声钩子同式（群=group_id，私聊=sender_id，
     # 均空才回退 umo——坑 23：私聊漏掉 sender_id 会让观察账本落错会话、
@@ -39,6 +40,7 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
     system_prompt = prompt.build_system_prompt(eff_cfg, chat_id=gid, platform=platform,
                                                is_group=is_group)
     system_prompt += bridge.build_skills_block(eff_cfg)
+    system_prompt += await _xinxian_profile_block(P, gid, str(event.get_sender_id() or ""))
     eco_block, eco_extras = await _eco_inject_block(P, event, trigger_text)
     if eco_block:
         system_prompt += f"\n\n{eco_block}"
@@ -112,7 +114,8 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
         P, st=st, eff_cfg=eff_cfg, gid=gid, umo=umo, event=event,
         provider=provider, platform=platform, answer=answer,
         msg_id=_msg_id(event), quote_id=quote_id,
-        webchat_send=_webchat_send if webchat else None)
+        webchat_send=_webchat_send if webchat else None,
+        gen_baseline=gen_baseline)
     logger.info(f"maisoul[{gid}] 已发言 {len(sent)} 段（人格={pname}）")
 
 # ------------------------------------------------------------------ #
@@ -181,14 +184,21 @@ async def _select_expr_block(P, st, eff_cfg, platform: str, gid: str, provider,
         pool_size=int(eff_cfg.get("expression_vector_candidate_pool_size", 50) or 50))
 
 
-async def _deliver_reply(P, *, st, eff_cfg, gid, umo, event, provider,
+async def _deliver_reply(P, *, st, eff_cfg, gid, umo, event, provider, platform,
                          answer: str, msg_id: str, quote_id: str,
-                         webchat_send=None) -> list[str]:
+                         webchat_send=None, eco_event=None,
+                         gen_baseline: int | None = None) -> list[str]:
     """拟人发送 + 记账 + 学习调度（M8 公共段，两条生成路径的收尾）。
 
     webchat_send 非 None（WebUI 单气泡）：攒段合并一次发；否则逐段
     context.send_message，首段挂 Reply(quote_id)。返回实际发送的段。
     """
+    # P-D 发送队列降级：生成期间新到消息 >3 条或新文本 >200 字时，回复改为
+    # 引用最新一条消息（默认关 send_queue_demotion；群聊非 webchat 才有意义）
+    if gen_baseline is not None and webchat_send is None:
+        demoted = demote_quote(list(st.buffer), eff_cfg, gen_baseline)
+        if demoted is not None:
+            quote_id, msg_id = demoted
     buf: list[str] = []
     quoted = {"done": False}
 
@@ -212,9 +222,24 @@ async def _deliver_reply(P, *, st, eff_cfg, gid, umo, event, provider,
     st.record_self_reply(msg_id, sent,
                          str(eff_cfg.get("bot_name") or P.config["bot_name"]),
                          quote=quote_id if quoted["done"] else "")
-    await _eco_fire_response(P, event, "\n".join(sent))
-    _schedule_learning(P, provider, eff_cfg, st, str(getattr(event, "get_platform_name", lambda: "")() or ""), gid)
+    await _eco_fire_response(P, eco_event if eco_event is not None else event, "\n".join(sent))
+    _schedule_learning(P, provider, eff_cfg, st, platform, gid)
     return sent
 
 # ------------------------------------------------------------------ #
 # Planner 决策模式：maisaka agent 循环                                  #
+
+
+def demote_quote(buffer: list, cfg, baseline: int, *, max_msgs: int = 3,
+                 max_chars: int = 200) -> tuple[str, str] | None:
+    """P-D 纯函数：生成期新消息超阈值 → 返回 (quote_id, msg_id) 引用最新一条。
+
+    仅统计非自发消息；未超阈值/开关关/最新一条无 msg_id 返回 None。"""
+    if not bool(cfg.get("send_queue_demotion", False)):
+        return None
+    arrived = [m for m in buffer[baseline:] if str(m.get("sid") or "") != "self"]
+    new_chars = sum(len(str(m.get("text") or "")) for m in arrived)
+    if not arrived or (len(arrived) <= max_msgs and new_chars <= max_chars):
+        return None
+    mid = str(arrived[-1].get("msg_id") or "").strip()
+    return (mid, mid) if mid else None
