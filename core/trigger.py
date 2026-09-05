@@ -18,6 +18,8 @@ talk_value 规则（enable_talk_value_rules + talk_value_rules）：
 import time
 from math import ceil
 
+from astrbot.api import logger
+
 from . import freqfeedback, scoring
 from .states import GroupState
 
@@ -34,6 +36,8 @@ def _parse_range(range_str: str):
         eh, em = [int(x) for x in end_str.split(":")]
         return sh * 60 + sm, eh * 60 + em
     except Exception:
+        # 降级：时间段格式非法按无时间限制（规则仍按优先级生效）
+        logger.debug("maisoul: talk_value 规则时间段解析失败", exc_info=True)
         return None
 
 
