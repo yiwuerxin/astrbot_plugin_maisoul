@@ -1198,6 +1198,13 @@ function exListDlgHTML(){
       ${exListHTML(list)}
     </div></div>`;
 }
+function exKeyOptions(){
+  /* 候选共享组：global + 配置「表达共享组」派生键（group_0…，见 learning.share_key）+ 库里已出现的键 */
+  const opts=['global'];
+  ((S&&S.expression_groups)||[]).forEach((_,i)=>{if(!opts.includes('group_'+i))opts.push('group_'+i)});
+  (EX.keys||[]).forEach(k=>{if(!opts.includes(k))opts.push(k)});
+  return opts;
+}
 function exDlg(id){
   if(id==null){EX.dlg={id:null,key:EX.keys[0]||'global',situation:'',style:'',checked:true}}
   else{const x=(EX.items||[]).find(i=>i.id===id);if(!x)return;EX.dlg={id:x.id,key:x.key,situation:x.situation,style:x.style,checked:x.checked}}
@@ -1212,7 +1219,9 @@ function exDlgHTML(){
         <p>${d.id==null?'手动添加一条「当 X 时可以用 Y 表达」，创建即视为人工通过':'修改情景或风格，保存后立即生效'}</p></div>
       <div class="exr-dlg-b">
         <div><label>共享组</label>${d.id==null
-          ?`<select class="exr-sel" id="ex_dlg_key">${EX.keys.map(k=>`<option value="${esc(k)}" ${k===d.key?'selected':''}>${esc(k)}</option>`).join('')||'<option value="global">global</option>'}</select>`
+          ?`<input class="exr-sel" id="ex_dlg_key" list="ex_dlg_keys" value="${esc(d.key)}" placeholder="global">
+            <datalist id="ex_dlg_keys">${exKeyOptions().map(k=>`<option value="${esc(k)}">`).join('')}</datalist>
+            <div style="margin-top:4px;font-size:11px;color:hsl(var(--muted-foreground))">组键来自学习页「表达共享组」（group_0…），也可直接输入自定义键；global = 全局共享</div>`
           :`<input class="exr-sel" value="${esc(d.key)}" disabled>`}</div>
         <div><label>情景（当…时）</label><textarea class="exr-ta" id="ex_dlg_sit" placeholder="例：群友分享日常小事时">${esc(d.situation)}</textarea></div>
         <div><label>风格（可以用…表达，逗号分隔多个）</label><textarea class="exr-ta" id="ex_dlg_sty" placeholder="例：简短接话，带点调侃，像熟人之间">${esc(d.style)}</textarea></div>
