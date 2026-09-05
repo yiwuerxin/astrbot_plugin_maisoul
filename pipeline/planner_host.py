@@ -212,6 +212,11 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
             [m for m in all_buf if id(m) not in pending_ids],
             pl.analysis_log, context_limit, is_group)
         history_count = len(history_msgs)
+        # P-A 中期记忆：窗口裁掉的旧消息后台摘要为 {summary, cues} 存会话
+        # 记忆（memory_enable 默认关；任务经注册表，失败静默）
+        if bool(eff_cfg.get("memory_enable", False)):
+            _fold_memory(P, st, [m for m in all_buf if id(m) not in pending_ids][
+                :max(0, len(all_buf) - context_limit)])
         # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
         # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
         use_jargon, _ = learning.learning_flags(
@@ -499,6 +504,39 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
         finalize("error", str(e)[:120])
         logger.error("maisoul planner 循环异常", exc_info=True)
         pl.set_idle_if_current(gen)
+
+async def _summarize_folding_task(P, st, chat_log: str, ts: float) -> None:
+    from ..core import memstore as _ms
+
+    try:
+        bind = _pick_task_model(P, "summarizer", P.config)
+        provider = bind[0] if bind else P.context.get_using_provider()
+        if provider is None:
+            return
+        resp = await _task_text_chat(
+            P, "summarizer", P.config,
+            prompt=_ms.SUMMARIZE_PROMPT.format(chat_log=chat_log[:2000]))
+        parsed = _ms.parse_summary(_resp_text(resp))
+        if parsed:
+            st.memory.add(parsed[0], parsed[1], ts)
+    except Exception:
+        logger.debug("maisoul: 中期记忆摘要失败（静默）", exc_info=True)
+
+
+def _fold_memory(P, st, dropped: list) -> None:
+    """窗口外旧消息 ≥4 条且距上次折叠 ≥5 分钟 → 后台摘要一轮。"""
+    import time as _time
+    now = _time.time()
+    msgs = [m for m in (dropped or []) if str(m.get("sid") or "") != "self"
+            and str(m.get("text") or "").strip()]
+    if len(msgs) < 4 or now - getattr(st.memory, "last_fold_ts", 0.0) < 300:
+        return
+    st.memory.last_fold_ts = now
+    newest_ts = max(float(m.get("ts") or 0) for m in msgs)
+    chat_log = "\n".join(f"{m.get('name')}: {m.get('text')}" for m in msgs[-30:])
+    P._spawn(_summarize_folding_task(P, st, chat_log, newest_ts),
+             name=f"memory_fold:{getattr(st, 'gid', '')}")
+
 
 def _schedule_wait_resume(P, st, cfg, gid: str, seconds: int):
     """wait 到期：必续一轮并注入完成回执（对齐 timeout 触发 + _build_wait_completed_message）。

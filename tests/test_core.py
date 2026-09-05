@@ -1206,6 +1206,23 @@ def test_phase3_mechanisms():
     f4, _ = freqfeedback.frequency_feedback_factor(_St(0, 0), {"freq_feedback_enable": False})
     check("P-E: 开关关闭恒 1.0", f4 == 1.0)
 
+    # P-A 中期记忆
+    from astrbot_plugin_maisoul.core.memstore import (
+        SessionMemory, jaccard, parse_summary, word_set,
+    )
+    mm = SessionMemory()
+    mm.add("阿狸帮忙搬了服务器", ["阿狸", "服务器"], 100.0)
+    mm.add("和小麦约了周末联机", ["周末", "联机"], 200.0)
+    check("P-A: 线索召回命中", mm.recall(["阿狸的服务器还好吗"], threshold=0.05) == ["阿狸帮忙搬了服务器"])
+    check("P-A: 无关不召回", mm.recall(["今天天气不错"], threshold=0.3) == [])
+    check("P-A: 召回条数上限", len(mm.recall(["周末 联机 阿狸 服务器"], threshold=0.0)) <= 3)
+    check("P-A: 渲染含内部参考声明", "不要逐字引用" in SessionMemory.render(["总结"]))
+    check("P-A: 摘要解析容忍杂讯",
+          parse_summary('好的：{"summary": "约定周末联机", "cues": ["周末"]}') == ("约定周末联机", ["周末"]))
+    check("P-A: 解析失败返回 None", parse_summary("我拒绝输出 JSON") is None)
+    check("P-A: 词集二元组", "阿狸" in word_set("阿狸真棒") and len(word_set("ok ok")) >= 1)
+    check("P-A: jaccard 边界", jaccard(set(), {"a"}) == 0.0)
+
     # P-B 情绪 VA
     import time as _tm
     from astrbot_plugin_maisoul.core.emotion import EmotionState, EMOTION_DELTAS

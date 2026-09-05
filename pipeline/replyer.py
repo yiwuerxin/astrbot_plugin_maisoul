@@ -42,6 +42,14 @@ async def _generate_and_send(P, event: AstrMessageEvent, st, reason: str,
                                                is_group=is_group)
     system_prompt += bridge.build_skills_block(eff_cfg)
     system_prompt += await _xinxian_profile_block(P, gid, str(event.get_sender_id() or ""))
+    if bool(eff_cfg.get("memory_enable", False)):  # P-A：中期记忆召回注入
+        from ..core.memstore import SessionMemory as _SM
+
+        recent_texts = [str(m.get("text") or "") for m in list(st.buffer)[-8:]]
+        recalled = st.memory.recall(
+            recent_texts,
+            threshold=float(eff_cfg.get("memory_recall_threshold", 0.18) or 0.18))
+        system_prompt += _SM.render(recalled)
     if bool(eff_cfg.get("emotion_enable", False)):  # P-B：情绪行注入
         system_prompt += "\n" + st.emotion.prompt_line(time.time())
     eco_block, eco_extras = await _eco_inject_block(P, event, trigger_text)

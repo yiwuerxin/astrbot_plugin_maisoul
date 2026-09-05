@@ -5,6 +5,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from .emotion import EmotionState
+from .memstore import SessionMemory
 from .constants import (
     EXTERNAL_BURST_INTERVAL_SECONDS,
     EXTERNAL_MIN_AVERAGE_INTERVAL_SECONDS,
@@ -19,6 +20,7 @@ class GroupState:
     buffer: deque = field(default_factory=lambda: deque(maxlen=200))
     recent_self: deque = field(default_factory=lambda: deque(maxlen=50))     # 自发时间戳
     emotion: EmotionState = field(default_factory=EmotionState)  # P-B 情绪 VA（内存态）
+    memory: "SessionMemory" = field(default_factory=SessionMemory)  # P-A 中期记忆
     last_replies: deque = field(default_factory=lambda: deque(maxlen=20))   # 近期发言文本
     replied_targets: deque = field(default_factory=lambda: deque(maxlen=30))  # (msg_id, ts)
     reply_by_target: dict = field(default_factory=dict)  # msg_id → 对该目标说过的原文（防重复提醒用）
