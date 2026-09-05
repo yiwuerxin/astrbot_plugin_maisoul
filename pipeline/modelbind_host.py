@@ -23,6 +23,8 @@ def _resolve_bound_model(P, cand: dict):
     try:
         inst_map = getattr(P.context, "provider_manager", None).inst_map or {}
     except Exception:
+        # 降级：provider 实例表不可达按未绑定（调用方回落默认 Provider）
+        logger.debug("maisoul: provider 实例表不可达", exc_info=True)
         return None
     pid = str(cand.get("provider"))
     inst = inst_map.get(pid)
@@ -57,6 +59,8 @@ def _embedding_provider(P, eff_cfg):
         insts = list(getattr(P.context.provider_manager,
                              "embedding_provider_insts", None) or [])
     except Exception:
+        # 降级：嵌入实例表不可达按未绑定（调用方回落 legacy 抽样）
+        logger.debug("maisoul: 嵌入实例表不可达", exc_info=True)
         return None
     if not insts:
         return None

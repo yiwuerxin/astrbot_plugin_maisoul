@@ -51,7 +51,8 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
                     escape = True
                     break
         except Exception:
-            pass
+            # 降级：activated_handlers 结构不可达时按非指令处理（仅影响双响应防线）
+            logger.debug("maisoul: 指令过滤器探测失败", exc_info=True)
     explicit = False
     if is_group and event.is_at_or_wake_command:
         if P.config.get("escape_at_wake"):

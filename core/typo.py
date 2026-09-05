@@ -47,6 +47,7 @@ def _shared_pinyin_dict() -> dict:
                 py = pinyin(char, style=Style.TONE3)[0][0]
                 pinyin_dict[py].append(char)
             except Exception:
+                # 降级：个别生僻字无拼音读数，跳过（不参与错字替换）
                 continue
         _PINYIN_DICT_CACHE = pinyin_dict
     return _PINYIN_DICT_CACHE

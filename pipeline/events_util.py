@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import At, Reply
 
@@ -18,6 +19,8 @@ def _msg_id(event: AstrMessageEvent) -> str:
     try:
         return str(event.message_obj.message_id or "")
     except Exception:
+        # 降级：message_id 取不到按空串（适配器结构差异；空串=无引用锚）
+        logger.debug("maisoul: msg_id 提取失败", exc_info=True)
         return ""
 
 def _record(P, event: AstrMessageEvent, text: str, gid: str | None = None):

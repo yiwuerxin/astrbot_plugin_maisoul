@@ -305,7 +305,7 @@ class MonitorBus:
                     q.get_nowait()  # 丢最旧，保最新
                     q.put_nowait({"event": event, "data": data})
                 except Exception:
-                    pass
+                    pass  # 降级：丢旧重放也失败（订阅刚被移除）则放弃本条
             except Exception:
                 self._subscribers.discard(q)
 
