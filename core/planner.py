@@ -35,6 +35,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime as _dt
+from typing import Protocol
 
 from astrbot.api import logger
 
@@ -466,12 +467,24 @@ def build_planner_toolset(deps) -> "object":
     return tool_set
 
 
-class PlannerDeps:
-    """把 planner 工具回调绑定到 maisoul 的 replyer/表情桥/消息缓冲。"""
+class PlannerHost(Protocol):
+    """planner 工具回调的宿主接口（M9）。
 
-    def __init__(self, plugin, st, eff_cfg, event, platform: str, gid: str,
+    由 pipeline/planner_host 的适配器提供；planner 只依赖本协议，
+    不再感知插件对象（解 main↔planner 双向耦合——原 PlannerDeps.plugin
+    直接回调插件私有方法，拆分后即断）。"""
+
+    async def planner_execute_reply(self, deps, reason: str, args: dict) -> str: ...
+    def planner_schedule_wait_resume(self, st, cfg, gid: str, seconds: int) -> None: ...
+    async def planner_send_emoji(self, deps) -> str: ...
+
+
+class PlannerDeps:
+    """把 planner 工具回调绑定到宿主（PlannerHost）的 replyer/表情桥/消息缓冲。"""
+
+    def __init__(self, host: PlannerHost, st, eff_cfg, event, platform: str, gid: str,
                  is_group: bool = True, send_fn=None):
-        self.plugin = plugin
+        self.host = host
         self.st = st
         self.cfg = eff_cfg
         self.event = event
@@ -484,7 +497,7 @@ class PlannerDeps:
         self.deferred_pool: list[dict] = []  # [{name, description, tool}]，由 _planner_cycle 注入
 
     async def on_reply(self, args: dict) -> str:
-        return await self.plugin._planner_execute_reply(self, self.latest_reason, args)
+        return await self.host.planner_execute_reply(self, self.latest_reason, args)
 
     def on_wait(self, args: dict) -> str:
         try:
@@ -494,11 +507,11 @@ class PlannerDeps:
         entered, current, maximum = self.st.planner.try_enter_wait(self.cfg, seconds)
         if not entered:
             return WAIT_LIMIT_RESULT.format(maximum=maximum)
-        self.plugin._schedule_wait_resume(self.st, self.cfg, self.gid, seconds)
+        self.host.planner_schedule_wait_resume(self.st, self.cfg, self.gid, seconds)
         return WAIT_TOOL_RESULT.format(seconds=max(0, seconds), current=current, maximum=maximum)
 
     async def on_send_emoji(self) -> str:
-        return await self.plugin._planner_send_emoji(self)
+        return await self.host.planner_send_emoji(self)
 
     def on_tool_search(self, args: dict) -> str:
         """tool_search 执行：打分匹配 deferred 池 → 命中记入 discovered_tools（下一轮可用）。"""
