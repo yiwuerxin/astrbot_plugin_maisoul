@@ -133,15 +133,33 @@ def session_key(event) -> str:
 
 
 class StateManager:
-    """所有群的会话状态注册表。"""
+    """所有群的会话状态注册表（M12：上限 512 个会话，LRU 淘汰闲置态）。"""
+
+    _MAX_SESSIONS = 512
 
     def __init__(self) -> None:
         self._groups: dict[str, GroupState] = {}
 
     def get(self, gid: str) -> GroupState:
-        if gid not in self._groups:
-            self._groups[gid] = GroupState()
-        return self._groups[gid]
+        st = self._groups.pop(gid, None) or GroupState()
+        self._groups[gid] = st  # 重插到尾 = 最近访问（dict 保序做 LRU）
+        if len(self._groups) > self._MAX_SESSIONS:
+            self._evict_idle(keep=gid)
+        return st
+
+    def _evict_idle(self, keep: str) -> None:
+        """淘汰最久未访问的闲置状态（无在飞循环/生成/重查任务）。
+
+        全部活跃时宁超限也不误杀——淘汰一个正在跑循环的状态会让
+        agent_state/planner 状态凭空消失（比内存超标严重得多）。"""
+        for old_gid, st in self._groups.items():
+            if old_gid == keep:
+                continue
+            pl = st.planner_state()
+            if pl.agent_state != "idle" or st.firing or st.defer_task is not None:
+                continue
+            del self._groups[old_gid]
+            return
 
     def status_all(self) -> dict:
         return {gid: st.status() for gid, st in self._groups.items()}

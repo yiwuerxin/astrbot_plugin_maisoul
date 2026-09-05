@@ -84,6 +84,21 @@ class MaiSoulPlugin(Star):
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
             f"{'开' if self.config.get('maid_bridge', True) else '关'}")
+        # M10：观察账本后台 writer（emit 只入队，落库经 to_thread 移出事件循环）
+        self.monitor.start_writer()
+        # M11：错字引擎预热——首次构建要遍历两万汉字逐个 pinyin() + 读字频表
+        # + jieba 词典，内联在首条回复的发送路径上会卡秒级；装载时后台线程
+        # 提前完成，发送路径只取现成实例
+        if self.config.get("typo_enable", True):
+            from .core import typo as _typo
+
+            async def _preheat():
+                try:
+                    await asyncio.to_thread(_typo.get_typo_generator, self.config)
+                except Exception:
+                    logger.debug("maisoul: 错字引擎预热失败（将在首次使用时构建）",
+                                 exc_info=True)
+            self._spawn(_preheat(), name="typo_preheat")
         webui_routes.register_webui(self.context, self.config, self.states,
                                     self.learning_store, self.monitor)
     def _migrate_legacy_nicknames(self):
@@ -101,9 +116,8 @@ class MaiSoulPlugin(Star):
             logger.debug("maisoul: 别名迁移保存失败（内存已生效）", exc_info=True)
 
     # ------------------------------------------------------------------ #
-    # 门控钩子：聊天消息评分（低优先级 = 在其他被动插件之后运行；群聊+私聊全接管）
-    # -------------------------------------------------------------------------------------------------------------------------------- #
-    # 门控：聊天消息评分（低优先级 = 在其他被动插件之后运行；群聊+私聊全接管）      #
+    # 门控钩子：聊天消息评分（低优先级 = 在其他被动插件之后运行；群聊+私聊全接管）  #
+    # ------------------------------------------------------------------ #
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=-1000)
     async def on_group_message(self, event: AstrMessageEvent):
         await gating._process_chat(self, event, is_group=True)
@@ -131,6 +145,7 @@ class MaiSoulPlugin(Star):
         # 已关闭的连接/旧状态对象上继续跑。WebUI 路由框架无注销接口，热重载
         # 时同路由重注册即替换，无泄漏。
         await self._registry.cancel_and_wait_all(timeout=5.0)
+        await self.monitor.stop_writer()  # M10：冲刷残余事件后再关连接池
         self.monitor.close()
         logger.info("maisoul v6.15.4 已卸载")
 
