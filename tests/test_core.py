@@ -1167,6 +1167,58 @@ def test_learning():
           apivalid.validate_learning_payload(big) is not None)
 
 
+def test_phase3_mechanisms():
+    print("[Phase3 机制：P-E/P-F/P-D]")
+    import time as _t
+    from astrbot_plugin_maisoul.core import sanitize, freqfeedback
+    from astrbot_plugin_maisoul.pipeline.replyer import demote_quote
+
+    # P-F 清洗
+    check("P-F 清洗: 引用前缀剥离",
+          sanitize.sanitize_text("[CQ:reply,id=123] 你好啊") == "你好啊")
+    check("P-F 清洗: 合并转发占位",
+          sanitize.sanitize_text("看这个[合并转发消息]哈哈") == "看这个[转发消息]哈哈")
+    check("P-F 清洗: 干净文本不动", sanitize.sanitize_text("普通消息") == "普通消息")
+    check("P-F 点名: 其他AI前缀识别",
+          sanitize.leading_ai_mention("@别的AI 帮我查一下", "麦麦", ["小麦"]) == "别的AI")
+    check("P-F 点名: 自己的名不算",
+          sanitize.leading_ai_mention("@麦麦 你好", "麦麦", ["小麦"]) == "")
+    check("P-F 点名: 剥离前缀保留剩余正文",
+          sanitize.strip_leading_ai_mention("@别的AI 帮我查天气", "麦麦", []) == "帮我查天气")
+    check("P-F 点名: 指向自己的前缀不剥",
+          sanitize.strip_leading_ai_mention("@麦麦 你好", "麦麦", []) == "@麦麦 你好")
+
+    # P-E 频率窗口反馈
+    class _St:
+        def __init__(self, win10, win5):
+            self._w10, self._w5 = win10, win5
+        def recent_self_count(self, seconds):
+            return self._w10 if seconds >= 600 else self._w5
+    cfg_on = {"freq_feedback_enable": True, "freq_feedback_expected": 6}
+    f0, _ = freqfeedback.frequency_feedback_factor(_St(0, 0), cfg_on)
+    check("P-E: 安静窗口 ×5.0", f0 == 5.0)
+    f1, _ = freqfeedback.frequency_feedback_factor(_St(6, 0), cfg_on)
+    check("P-E: 达标 ×1.0", abs(f1 - 1.0) < 1e-9)
+    f2, _ = freqfeedback.frequency_feedback_factor(_St(12, 0), cfg_on)
+    check("P-E: 超两倍 ×0.2", abs(f2 - 0.2) < 1e-9)
+    f3, _ = freqfeedback.frequency_feedback_factor(_St(3, 3), cfg_on)  # 近5min已3条=超速
+    check("P-E: 近窗超速只降不升", f3 == 1.0)
+    f4, _ = freqfeedback.frequency_feedback_factor(_St(0, 0), {"freq_feedback_enable": False})
+    check("P-E: 开关关闭恒 1.0", f4 == 1.0)
+
+    # P-D 发送队列降级
+    buf = ([{"sid": "self", "msg_id": "", "text": "旧自发"}]
+           + [{"sid": f"u{i}", "msg_id": f"m{i}", "text": "x" * 30} for i in range(4)])
+    check("P-D: 超条数降级到最新",
+          demote_quote(buf, {"send_queue_demotion": True}, 1) == ("m3", "m3"))
+    check("P-D: 未超不降",
+          demote_quote(buf[:3], {"send_queue_demotion": True}, 1) is None)
+    check("P-D: 超字数降级",
+          demote_quote([{"sid": "u1", "msg_id": "m1", "text": "x" * 250}],
+                       {"send_queue_demotion": True}, 0) == ("m1", "m1"))
+    check("P-D: 开关关不降", demote_quote(buf, {}, 1) is None)
+
+
 def test_taskregistry():
     print("[任务注册表 M6]")
     import asyncio as _aio
@@ -1678,6 +1730,7 @@ if __name__ == "__main__":
     test_tool_exec_official_path()
     test_personas()
     test_taskregistry()
+    test_phase3_mechanisms()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
     sys.exit(1 if FAIL else 0)

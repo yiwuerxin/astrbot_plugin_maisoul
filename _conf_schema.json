@@ -89,6 +89,16 @@
       "reply_necessity"
     ]
   },
+  "freq_feedback_enable": {
+    "type": "bool",
+    "default": false,
+    "description": "P-E 频率窗口反馈：10 分钟滚动窗口的自发条数映射期望乘数 [0.2,5.0]（安静×5 鼓励开口/超两倍×0.2 压刷屏），叠加进评分频率倍率；近 5 分钟超速只降不升"
+  },
+  "freq_feedback_expected": {
+    "type": "int",
+    "default": 6,
+    "description": "频率窗口反馈的期望值：10 分钟期望自发条数（≥1）"
+  },
   "talk_value": {
     "description": "群聊里麦麦主动说话的频率；越小越安静。",
     "type": "float",
@@ -149,6 +159,16 @@
     "type": "bool",
     "default": true
   },
+  "send_queue_demotion": {
+    "type": "bool",
+    "default": false,
+    "description": "P-D 发送队列降级：生成期间新到消息 >3 条或新文本 >200 字时，回复自动改为引用最新一条消息（避免回应早已滚过去的话题）"
+  },
+  "xinxian_link": {
+    "type": "bool",
+    "default": false,
+    "description": "P-H 心弦联动：好心弦插件 facade 取好感等级/印象/关系渲染进系统提示词（任一插件缺失自动静默降级）"
+  },
   "talk_value_rules": {
     "description": "动态发言频率规则；可让麦麦在某些群、私聊或时段更活跃或更安静。",
     "type": "list",
@@ -188,6 +208,11 @@
     "description": "用正则过滤消息；适合更复杂的过滤规则。",
     "type": "list",
     "default": []
+  },
+  "anti_injection": {
+    "type": "bool",
+    "default": true,
+    "description": "P-F 反注入：清洗引用前缀/合并转发占位后再进门控；「@其他AI名」开头不计为点名自己；系统提示词附两句防注入声明"
   },
   "enable_image_context": {
     "description": "识图上下文：把最近几张聊天图片直接附给模型理解（需视觉/多模态模型）",
