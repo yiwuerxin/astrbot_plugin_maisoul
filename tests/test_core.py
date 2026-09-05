@@ -530,6 +530,20 @@ def test_prompt():
 def test_states():
     print("[会话状态]")
 
+    # M2 收敛：会话键单一真相——群=群号，私聊=发送者，均空回退 umo
+    from astrbot_plugin_maisoul.core.states import session_key
+
+    class _Ev:
+        def __init__(self, g, s, u):
+            self._g, self._s, self._u = g, s, u
+        def get_group_id(self): return self._g
+        def get_sender_id(self): return self._s
+        @property
+        def unified_msg_origin(self): return self._u
+    check("M2 会话键: 群聊=群号", session_key(_Ev("103", "42", "umo:g")) == "103")
+    check("M2 会话键: 私聊=发送者", session_key(_Ev("", "42", "umo:p:42")) == "42")
+    check("M2 会话键: 双空回退 umo", session_key(_Ev("", "", "umo:p:x")) == "umo:p:x")
+
     # v6.9.13：任务级模型绑定（对齐 model_task_config 的多模型+策略）
     import random as _rnd
     from astrbot_plugin_maisoul.core import modelbind

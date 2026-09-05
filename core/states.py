@@ -124,6 +124,14 @@ class GroupState:
         }
 
 
+def session_key(event) -> str:
+    """会话键（单一真相，M2 收敛）：群=group_id，私聊=sender_id，均空才回退 umo。
+
+    坑 23：私聊漏掉 sender_id 会让观察账本落错会话、学习库 item_id=用户ID
+    的匹配全部失效——门控/生成/记账/回声钩子必须同键，禁止各处内联重写。"""
+    return str(event.get_group_id() or event.get_sender_id() or event.unified_msg_origin)
+
+
 class StateManager:
     """所有群的会话状态注册表。"""
 
