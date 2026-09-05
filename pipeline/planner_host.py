@@ -8,18 +8,13 @@ import time
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..core import bridge, learning, monitor, personas, planner, prompt, sender, trigger
+from ..core import bridge, learning, monitor, personas, planner, prompt, trigger
 from ..core.constants import MESSAGE_DEBOUNCE_SECONDS
-try:
-    from astrbot.api.event import MessageChain
-except ImportError:
-    from astrbot.core.message.message_event_result import MessageChain
-from astrbot.api.message_components import Reply
 
-from .ecobridge import (_eco_fire_response, _eco_inject_block, _extra_part_text,
+from .ecobridge import (_eco_inject_block, _extra_part_text,
                          xinxian_profile_block as _xinxian_profile_block)
 from .events_util import _emit_sent, _monitor_stage, _resp_text
-from .modelbind_host import _embedding_provider, _pick_task_model, _task_text_chat
+from .modelbind_host import _pick_task_model, _task_text_chat
 from .replyer import _deliver_reply, _schedule_learning, _select_expr_block
 
 
@@ -138,6 +133,7 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
     request_messages: list[dict] | None = None
     history_count = 0
     tool_records: list[dict] = []
+    reasoning_by_idx: dict[int, str] = {}  # assistant 轮 index→思考（仅监控副本，坑 54 不回灌）
     pl.eco_injection = ""
     end_reason, end_detail = "", ""
     interrupted = False
@@ -162,7 +158,9 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
             planner_interrupted=interrupted,
             end_reason=reason, end_detail=detail,
             eco_injection=pl.eco_injection,
-            planner_system_prompt=system_prompt)
+            planner_system_prompt=system_prompt,
+                reasoning_by_idx=reasoning_by_idx,
+                replyer_reasoning=getattr(pl, "replyer_reasoning", ""))
 
     try:
         # 消息去抖：等最后一条外部消息静默 ≥1s 再开轮（对齐
@@ -369,6 +367,8 @@ async def _planner_cycle(P, umo: str, platform: str, gid: str, st,
                                       "arguments": c["arguments"]}}
                         for c in planner_calls]
                 contexts.append(assistant_turn)
+                if reasoning:
+                    reasoning_by_idx[len(contexts) - 1] = reasoning  # 推理过程页素材
             if not names:
                 if is_group:
                     pl.record_idle_cycle(eff_cfg)
@@ -639,6 +639,7 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         user_message += ("\n\n【输出要求】请在正文最前面单独一行写 [情绪:愤怒/厌恶/恐惧/悲伤/平静/好奇/开心/兴奋/喜爱]，"
                          "然后换行写正文；这一行会被系统剥离，不会发出。")
 
+    reply_started = time.time()
     try:
         image_parts = prompt.image_context_parts(st, eff_cfg)
         resp = await _task_text_chat(P, 
@@ -653,6 +654,11 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         raise
 
     answer = _resp_text(resp)
+    # 推理过程页素材：reply 工具的回复器思考/耗时（挂在 planner 状态上，
+    # 由 finalize 汇入 planner.finalized——不进麦麦观察时间线）
+    _pl = st.planner_state()
+    _pl.replyer_reasoning = str(getattr(resp, "reasoning_content", None) or "").strip()
+    _pl.replyer_duration_ms = (time.time() - reply_started) * 1000
     if not answer:
         return "模型未返回内容，本次未发言"
 
@@ -668,15 +674,17 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     return f"已发送 {len(sent)} 段" + ("（引用回复）" if quote_id else "")
 
 async def _planner_send_emoji(P, deps) -> str:
-    """send_emoji 工具执行：语境选择表情包（v6.9.7 重写）。
+    """send_emoji 工具执行：语境选择表情包（v6.9.7 重写，v6.16.1 两段制）。
 
-    对齐 MaiBot send_emoji 的子代理选图（emoji_selection.prompt 的精神），适配
-    stealer 两步制：子 LLM 从上下文提炼检索词 → search_meme 取候选 → 取首个
-    候选编号 send_meme（stealer 的 BM25+faiss 检索已按相关性排序，取首条等价
-    于 MaiBot「情绪→最匹配」且省一次视觉选择）。search/send 必须复用同一
-    event 对象——stealer 的候选列表挂在 event._emoji_turn_state 上。
+    对齐 MaiBot send_emoji 子代理「候选中选号」的语义，适配 stealer 三步制：
+    ① 子 LLM 从上下文提炼检索词 → ② search_meme 取候选 → ③ 候选元数据回喂
+    子 LLM 挑编号再 send_meme（原版是 VLM 看 25 宫格拼图选号，stealer 候选
+    自带文字元数据，纯文本挑号等价且免视觉模型）。挑选失败/单候选时回落：
+    多候选随机抽（多样性，对齐原版 top-10 random.choice 的精神），不再恒取
+    检索第一名。search/send 必须复用同一 event 对象——stealer 的候选列表挂
+    在 event._emoji_turn_state 上。
     """
-    import re as _re
+    import random
     try:
         mgr = P.context.get_llm_tool_manager()
         search_tool = mgr.get_func("search_meme")
@@ -687,17 +695,18 @@ async def _planner_send_emoji(P, deps) -> str:
         ev = deps.event or bridge.SyntheticEvent(
             deps.umo, send_message=P.context.send_message)
         provider = P.context.get_using_provider()
+        recent = "\n".join(f"{m.get('name')}: {m.get('text')}"
+                           for m in list(deps.st.buffer)[-15:])
+        bot_name = str(deps.cfg.get("bot_name") or "麦麦")
+        reason = deps.latest_reason or "（无）"
         query = ""
         if provider is not None:
             try:
-                recent = "\n".join(f"{m.get('name')}: {m.get('text')}"
-                                   for m in list(deps.st.buffer)[-15:])
-                resp = await _task_text_chat(P, 
+                resp = await _task_text_chat(P,
                     "emoji", deps.cfg,
                     prompt=planner.EMOJI_QUERY_PROMPT.format(
                         chat_context=recent or "（群聊暂无消息）",
-                        bot_name=str(deps.cfg.get("bot_name") or "麦麦"),
-                        reason=deps.latest_reason or "（无）"),
+                        bot_name=bot_name, reason=reason),
                     session_id=f"maisoul_emoji_{deps.gid}")
                 query = _resp_text(resp).strip().strip('"“”‘’')
             except Exception:
@@ -706,15 +715,35 @@ async def _planner_send_emoji(P, deps) -> str:
             query = "开心"
         search_result = await bridge.call_llm_tool(
             P.context, ev, search_tool, {"query": query})
-        hit = _re.search(r"\[(\d+)\]", search_result or "")
-        if not hit:
+        cands = planner.parse_meme_candidates(search_result)
+        if not cands:
             return f"表情包检索失败: {str(search_result)[:120]}"
+        pick, how = cands[0]["num"], "检索第一名"
+        if len(cands) > 1 and provider is not None:
+            try:
+                resp = await _task_text_chat(P,
+                    "emoji", deps.cfg,
+                    prompt=planner.EMOJI_PICK_PROMPT.format(
+                        chat_context=recent or "（群聊暂无消息）",
+                        bot_name=bot_name, reason=reason,
+                        candidates="\n\n".join(
+                            f"[{c['num']}] {c['text']}" for c in cands)),
+                    session_id=f"maisoul_emoji_{deps.gid}")
+                got = planner.pick_meme_index(
+                    _resp_text(resp), [c["num"] for c in cands])
+                if got is not None:
+                    pick, how = got, "候选挑选"
+                else:
+                    pick, how = random.choice(cands)["num"], "随机候选"
+            except Exception:
+                logger.debug("maisoul: 表情候选挑选失败，随机候选", exc_info=True)
+                pick, how = random.choice(cands)["num"], "随机候选"
         send_result = await bridge.call_llm_tool(
-            P.context, ev, send_tool, {"emoji_id": int(hit.group(1))})
+            P.context, ev, send_tool, {"emoji_id": pick})
         if "发送失败" in send_result:
             return f"表情包发送失败: {send_result[:120]}"
         _emit_sent(P, deps.gid, f"[表情包] {query}", "", "emoji", deps.event)
-        return f"已发送表情包（检索词：{query}）"
+        return f"已发送表情包（检索词：{query}｜{how} #{pick}）"
     except Exception as e:
         return f"表情包发送失败: {e}"
 

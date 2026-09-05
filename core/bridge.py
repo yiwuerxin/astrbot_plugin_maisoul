@@ -71,6 +71,31 @@ def build_chat_toolset(context, cfg):
         return None
 
 
+def _builtin_tool_enabled(context, name: str) -> bool:
+    """builtin 工具是否满足本部署的配置激活条件。
+
+    web_search_* 等核心 builtin 在 @builtin_tool(config=...) 里声明条件
+    （provider_settings.web_search 开 + websearch_provider 匹配 + key），
+    但框架只在 WebUI/主代理注入时求值，get_func 不按它过滤（active 恒默认
+    True）——池里混进调不通的工具会教 planner 白烧轮次，这里按同一规则
+    对部署配置求值。规则缺失（插件工具/旧版框架）视为启用。
+    """
+    try:
+        from astrbot.core.tools.registry import get_builtin_tool_config_rule
+        rule = get_builtin_tool_config_rule(name)
+        if rule is None:
+            return True
+        cfg_all = context.get_config() if hasattr(context, "get_config") else {}
+        if not isinstance(cfg_all, dict):
+            cfg_all = {}
+        conds = rule.evaluate(cfg_all)
+        return all(bool(c.get("matched")) for c in conds)
+    except Exception:
+        logger.debug(f"maisoul: builtin 工具 {name} 激活条件求值失败，按启用处理",
+                     exc_info=True)
+        return True
+
+
 def list_deferred_tools(context, cfg) -> list[dict]:
     """planner 的 deferred 工具池（对齐 MaiBot「第三方工具默认 deferred」）：
     chat_tools 等价物 + call_maid（若开）。返回 [{name, description, tool}]，
@@ -88,6 +113,11 @@ def list_deferred_tools(context, cfg) -> list[dict]:
                 continue
             tool = mgr.get_func(name)
             if tool is None:
+                continue
+            # 未激活（WebUI 停用）或 builtin 配置条件未达标的不进池
+            if not getattr(tool, "active", True):
+                continue
+            if not _builtin_tool_enabled(context, name):
                 continue
             seen.add(name)
             out.append({"name": name,
@@ -130,11 +160,15 @@ async def call_llm_tool(context, event, tool, args: dict | None = None,
 
     装饰器注册的插件工具（如 call_maid/send_meme）不能直接 tool.call()，
     必须走 _execute_local → call_local_llm_tool 的 handler(event, **kwargs) 路径。
+    核心 builtin 工具（web_search_tavily 等 FunctionTool 子类）执行时还要经
+    run_context.context.context.get_config(umo) 读 provider_settings——所以
+    内层必须同时携带 event 与 astrbot Context，只塞 event 会 AttributeError。
     """
     from astrbot.core.agent.run_context import ContextWrapper
     from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
-    wrapper = ContextWrapper(context=SimpleNamespace(event=event))
+    wrapper = ContextWrapper(
+        context=SimpleNamespace(event=event, context=context))
     out: list[str] = []
     agen = FunctionToolExecutor.execute(tool=tool, run_context=wrapper, **(args or {}))
     try:

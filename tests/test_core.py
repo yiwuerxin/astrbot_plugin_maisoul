@@ -712,6 +712,78 @@ def test_deferred_pool_dependencies():
     names = [t["name"] for t in bridge.list_deferred_tools(_Ctx(), cfg)]
     check("无依赖的工具不受影响", names == ["call_maid"], str(names))
 
+
+def test_deferred_pool_gating():
+    """池构建的两道门控：WebUI 停用（active=False）与 builtin 配置激活条件。
+
+    builtin 的条件（如 web_search_exa 需 provider=exa）框架只在 WebUI/主代理
+    求值，get_func 不过滤——池混进调不通的工具会教 planner 白烧轮次。"""
+    print("[deferred 工具池：停用/未达标 builtin 过滤]")
+    import types as _t
+    from astrbot_plugin_maisoul.core import bridge
+
+    class _Tool:
+        def __init__(self, name, active=True):
+            self.name = name
+            self.active = active
+            self.description = name
+
+    class _Mgr:
+        def __init__(self, tools):
+            self._tools = {t.name: t for t in tools}
+
+        def get_func(self, name):
+            return self._tools.get(name)
+
+    # 1) active=False（WebUI 停用）→ 不入池
+    ctx = _t.SimpleNamespace(get_llm_tool_manager=lambda: _Mgr(
+        [_Tool("call_maid"), _Tool("web_search_tavily", active=False)]))
+    names = [t["name"] for t in bridge.list_deferred_tools(
+        ctx, {"chat_tools": ["web_search_tavily"], "maid_bridge": True})]
+    check("WebUI 停用的工具不入池", names == ["call_maid"], str(names))
+
+    # 2) builtin 配置条件未达标 → 不入池（桩掉 registry 规则表）
+    rule = _t.SimpleNamespace(
+        evaluate=lambda cfg: [{"matched": cfg.get("provider_settings", {}).get(
+            "websearch_provider") == "tavily"}])
+    reg = _t.ModuleType("astrbot.core.tools.registry")
+    reg.get_builtin_tool_config_rule = lambda n: rule if n == "web_search_tavily" else None
+    fake = {"astrbot": _t.ModuleType("astrbot"),
+            "astrbot.core": _t.ModuleType("astrbot.core"),
+            "astrbot.core.tools": _t.ModuleType("astrbot.core.tools"),
+            "astrbot.core.tools.registry": reg}
+    saved = {k: sys.modules.get(k) for k in fake}
+    try:
+        sys.modules.update(fake)
+        # 当前部署 provider=bocha（规则要求 tavily）→ 过滤
+        ctx2 = _t.SimpleNamespace(
+            get_llm_tool_manager=lambda: _Mgr([_Tool("web_search_tavily")]),
+            get_config=lambda: {"provider_settings": {"websearch_provider": "bocha"}})
+        names = [t["name"] for t in bridge.list_deferred_tools(
+            ctx2, {"chat_tools": ["web_search_tavily"], "maid_bridge": False})]
+        check("builtin 条件未达标不入池", names == [], str(names))
+        # provider 匹配 → 保留
+        ctx3 = _t.SimpleNamespace(
+            get_llm_tool_manager=lambda: _Mgr([_Tool("web_search_tavily")]),
+            get_config=lambda: {"provider_settings": {"websearch_provider": "tavily"}})
+        names = [t["name"] for t in bridge.list_deferred_tools(
+            ctx3, {"chat_tools": ["web_search_tavily"], "maid_bridge": False})]
+        check("builtin 条件达标保留", names == ["web_search_tavily"], str(names))
+        # 无规则（插件工具）→ 视为启用
+        ctx4 = _t.SimpleNamespace(
+            get_llm_tool_manager=lambda: _Mgr([_Tool("query_favor")]),
+            get_config=lambda: {"provider_settings": {}})
+        names = [t["name"] for t in bridge.list_deferred_tools(
+            ctx4, {"chat_tools": ["query_favor"], "maid_bridge": False})]
+        check("无规则的插件工具不受影响", names == ["query_favor"], str(names))
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
 def test_tool_skill_registry():
     print("[AstrBot 工具/技能注册表]")
     from pathlib import Path
@@ -833,6 +905,62 @@ def test_tool_exec_official_path():
     check("SyntheticEvent: get_extra 默认空", ev.get_extra("k") is None)
 
 
+def test_bridge_builtin_context():
+    """call_llm_tool 的 ContextWrapper 必须同时携带 event 与 astrbot Context。
+
+    核心 builtin 工具（web_search_tavily 等 FunctionTool）执行时经
+    run_context.context.context.get_config(umo=...) 读 provider_settings——
+    只塞 event 会让 builtin 工具 AttributeError → deferred 路径报「执行失败」。
+    强制桩掉 ContextWrapper/FunctionToolExecutor，只验 maisoul 侧的组装。"""
+    print("[builtin 工具桥上下文]")
+    import types as _t
+    from astrbot_plugin_maisoul.core import bridge
+
+    captured: dict = {}
+
+    class _StubWrapper:
+        def __init__(self, context=None):
+            captured["inner"] = context
+
+    class _StubExecutor:
+        @staticmethod
+        def execute(tool=None, run_context=None, **kwargs):
+            async def _gen():
+                yield _t.SimpleNamespace(content=[_t.SimpleNamespace(text="ok")])
+            return _gen()
+
+    rc = _t.ModuleType("astrbot.core.agent.run_context")
+    rc.ContextWrapper = _StubWrapper
+    ex = _t.ModuleType("astrbot.core.astr_agent_tool_exec")
+    ex.FunctionToolExecutor = _StubExecutor
+    fake = {"astrbot": _t.ModuleType("astrbot"),
+            "astrbot.core": _t.ModuleType("astrbot.core"),
+            "astrbot.core.agent": _t.ModuleType("astrbot.core.agent"),
+            "astrbot.core.agent.run_context": rc,
+            "astrbot.core.astr_agent_tool_exec": ex}
+    saved = {k: sys.modules.get(k) for k in fake}
+    try:
+        sys.modules.update(fake)
+        ev = bridge.SyntheticEvent("webchat!u!1")
+        cfg = {"provider_settings": {"websearch_tavily_key": ["k"]}}
+        ctx = _t.SimpleNamespace(get_config=lambda umo=None: cfg)
+        out = asyncio.run(bridge.call_llm_tool(ctx, ev, object(), {}))
+        inner = captured.get("inner")
+        check("call_llm_tool: 内层携带 astrbot Context（builtin get_config 路径）",
+              getattr(inner, "context", None) is ctx, type(inner).__name__)
+        check("call_llm_tool: 内层 event 仍为原事件",
+              getattr(inner, "event", None) is ev, type(inner).__name__)
+        got = inner.context.get_config(umo=inner.event.unified_msg_origin)
+        check("call_llm_tool: builtin 取 provider_settings 路径可用", got is cfg, got)
+        check("call_llm_tool: 结果文本透传", out == "ok", out)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
 def test_monitor():
     print("[麦麦观察]")
     import pathlib
@@ -941,9 +1069,10 @@ def test_monitor():
           == {"event_id", "event_type", "session_id", "timestamp",
               "schema_version", "payload_json", "created_at"})
 
-    # 事件集对齐 MaiBot events.py 的 9 个 emit：timing_gate.result / planner.response /
-    # replier.response 是部署前端的遗留渲染类型，后端不发，maisoul 也不发（禁止编造）
-    check("事件集: 不存在三个前端遗留类型的发射方法",
+    # 事件集对齐 MaiBot events.py：timing_gate.result / planner.response /
+    # replier.response 不进麦麦观察时间线——推理思考由 planner.finalized 的
+    # request.messages[].reasoning / planner.reasoning 承载（推理过程页专属）
+    check("事件集: 三个时间线遗留类型均不发射",
           not any(hasattr(mon, m) for m in
                   ("emit_timing_gate", "emit_planner_response", "emit_replier_response")))
 
@@ -955,6 +1084,70 @@ def test_monitor():
     check("bus: 订阅者收到实时事件", item["event"] == "message.ingested"
           and item["data"]["content"] == "推我")
     mon.bus.unsubscribe(q)
+
+
+def test_expression_review():
+    """审核页后端语义（对齐部署版：通过=可用/拒绝=删除；id 跨共享组定位）。"""
+    print("[表达方式审核]")
+    import json as _json
+    import pathlib
+    import tempfile
+    from astrbot_plugin_maisoul.core import learning
+
+    tmp = pathlib.Path(tempfile.mkdtemp()) / "r.json"
+    store = learning.LearningStore(path=tmp)
+    store.add_expression("global", "惊叹", "使用 我嘞个", False)
+    store.add_expression("g_123", "被夸", "谦虚卖萌", True)
+    store.add_expression("g_123", "深夜", "轻声温和", False)
+    # 旧库条目无 id：ensure 补齐且持久化
+    store.data["global"]["expressions"][0].pop("id", None)
+    changed = store.ensure_expression_ids()
+    ids = [x["id"] for x in store.all_expressions()]
+    check("审核: 旧条目补 id 且落盘", changed and all(isinstance(i, int) for i in ids)
+          and len(set(ids)) == len(ids), str(ids))
+    check("审核: 拉平附 key", {x["key"] for x in store.all_expressions()} == {"global", "g_123"})
+
+    pend = [x for x in store.all_expressions() if not x["checked"]]
+    check("审核: 待审统计", len(pend) == 2 and all(not x["checked"] for x in pend))
+    # 通过 → checked=true（expression_checked_only 门控生效面）
+    ok = store.review_expression(pend[0]["id"], "approve")
+    check("审核: 通过", ok and not [x for x in store.all_expressions()
+          if x["id"] == pend[0]["id"] and not x["checked"]])
+    # 取消人工通过 → checked=false
+    store.review_expression(pend[0]["id"], "unapprove")
+    check("审核: 取消人工通过",
+          [x for x in store.all_expressions() if x["id"] == pend[0]["id"]][0]["checked"] is False)
+    # 拒绝 = 直接删除（部署版语义）
+    n_before = len(store.all_expressions())
+    store.review_expression(pend[0]["id"], "reject")
+    check("审核: 拒绝删除", len(store.all_expressions()) == n_before - 1
+          and store.expressions("global") == [])
+    # 未知动作/未知 id：拒绝且不改库
+    snap = _json.dumps(store.data, sort_keys=True, ensure_ascii=False)
+    check("审核: 未知动作拒绝", not store.review_expression(999999, "approve"))
+    check("审核: 未知 id 未命中", not store.review_expression(999999, "reject")
+          and _json.dumps(store.data, sort_keys=True, ensure_ascii=False) == snap)
+
+    # 弹窗增改：新建（重复并入既有条目）、按 id 修改、空白拒绝
+    item = store.upsert_expression("被夸", "谦虚卖萌", True, key="g_123")
+    check("弹窗: 新建并入既有（去重）", item and item.get("count") == 2, str(item))
+    item2 = store.upsert_expression("全新情境", "全新风格", False, key="g_123")
+    check("弹窗: 全新建（返回库内引用含 id）",
+          item2 and item2.get("count") == 1 and isinstance(item2.get("id"), int),
+          str(item2))
+    store.ensure_expression_ids()
+    target = [x for x in store.all_expressions() if x["situation"] == "全新情境"][0]
+    item3 = store.upsert_expression("改后情境", "改后风格", True, key="g_123",
+                                    expr_id=target["id"])
+    check("弹窗: 按 id 修改", item3 and item3["situation"] == "改后情境"
+          and item3["checked"] is True)
+    check("弹窗: 空白拒绝", store.upsert_expression("  ", "x", True) is None)
+    check("弹窗: 未知 id 修改返回 None",
+          store.upsert_expression("a", "b", True, expr_id=999999) is None)
+    # 落盘结构过 apivalid（WebUI 整包写回同校验）
+    from astrbot_plugin_maisoul.core.apivalid import validate_learning_payload
+    check("审核: 落盘结构过校验",
+          validate_learning_payload(_json.loads(tmp.read_text(encoding="utf-8"))) is None)
 
 
 def test_learning():
@@ -1308,6 +1501,32 @@ def test_taskregistry():
     mon.close()  # 幂等
     check("M6 monitor: close 幂等释放", True)
 
+    # 客户反馈回归：推理思考进 planner.finalized 载荷（推理过程页数据源）
+    from astrbot_plugin_maisoul.core.monitor import (
+        MaisakaMonitorEventRecord as _R3, Monitor as _M2, MonitorStore as _MS2,
+    )
+    s3 = _MS2(pathlib.Path(tempfile.mkdtemp()) / "resp.db")
+    m3 = _M2(s3)
+    m3.emit_planner_finalized(
+        session_id="g1", cycle_id=1,
+        planner_request_messages=[
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "reply"}}]},
+        ],
+        planner_content="去回复", reasoning_by_idx={1: "先想想语气…"},
+        replyer_reasoning="回复器思考：要热情一点")
+    m3.close()
+    import json as _json
+    with s3._session_factory() as sess:
+        rec = sess.query(_R3).one()
+        data = _json.loads(rec.payload_json)
+    msgs = data["request"]["messages"]
+    check("推理过程: assistant 轮附 reasoning（仅监控副本）",
+          msgs[1].get("reasoning") == "先想想语气…" and "reasoning" not in msgs[0],
+          str(msgs[1])[:80])
+    check("推理过程: 回复器思考在 planner 块",
+          data["planner"].get("reasoning") == "回复器思考：要热情一点")
+
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
     import asyncio as _aio2
     from astrbot_plugin_maisoul.core.monitor import (
@@ -1345,6 +1564,42 @@ def test_taskregistry():
     for i in range(6):
         sm2.get(f"x{i}")
     check("M12 states: 活跃会话不被淘汰", "a" in sm2._groups)
+
+
+def test_emoji_pick():
+    """表情两段制：检索词 → 候选列表解析 → 选择模型挑号（对齐 MaiBot 选图语义）。"""
+    print("[表情候选挑选]")
+    from astrbot_plugin_maisoul.core import planner as P
+
+    raw = """找到 3 个匹配的表情包：
+
+[1] 分类：开心
+    角色：猫猫
+    图上文字：哈哈
+    描述：一只猫张大嘴笑
+
+[2] 分类：无语
+    图上文字：6
+    描述：翻白眼
+
+[3] 分类：震惊
+    描述：猫猫震惊"""
+    cands = P.parse_meme_candidates(raw)
+    check("解析: 候选数", len(cands) == 3, str(cands))
+    check("解析: 编号", [c["num"] for c in cands] == [1, 2, 3])
+    check("解析: 细节行并入所属候选",
+          "角色：猫猫" in cands[0]["text"] and "一只猫张大嘴笑" in cands[0]["text"]
+          and "翻白眼" in cands[1]["text"], str(cands[:1]))
+    check("解析: limit 截断", len(P.parse_meme_candidates(raw, limit=2)) == 2)
+    check("解析: 无候选返回空", P.parse_meme_candidates("未找到与'x'匹配的表情包。") == [])
+
+    nums = [c["num"] for c in cands]
+    check("挑号: 纯数字", P.pick_meme_index("3", nums) == 3)
+    check("挑号: 带话述", P.pick_meme_index("我认为选 2 最贴切", nums) == 2)
+    check("挑号: 越界数字跳过取下一个合法值",
+          P.pick_meme_index("12 3", nums) == 3)
+    check("挑号: 全部非法返回 None", P.pick_meme_index("不知道", nums) is None)
+    check("挑号: 空回复 None", P.pick_meme_index("", nums) is None)
 
 
 def test_planner():
@@ -1770,12 +2025,16 @@ if __name__ == "__main__":
     test_prompt()
     test_states()
     test_learning()
+    test_expression_review()
+    test_emoji_pick()
     test_planner()
     test_monitor()
     test_bridge_toolset()
     test_deferred_pool_dependencies()
+    test_deferred_pool_gating()
     test_tool_skill_registry()
     test_tool_exec_official_path()
+    test_bridge_builtin_context()
     test_personas()
     test_taskregistry()
     test_phase3_mechanisms()
