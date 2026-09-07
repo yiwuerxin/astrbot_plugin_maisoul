@@ -2292,6 +2292,36 @@ def test_phase3_mechanisms():
         "P-F 点名: 指向自己的前缀不剥",
         sanitize.strip_leading_ai_mention("@麦麦 你好", "麦麦", []) == "@麦麦 你好",
     )
+    # 坑 61 全接收：waking_check 剥唤醒前缀改写 message_str，全量原文从消息链拼回
+    from types import SimpleNamespace as _NS
+
+    check(
+        "全接收: 唤醒前缀剥除后链上恢复全量原文",
+        sanitize.full_plain_text([_NS(text="麦麦你胖了")], "你胖了") == "麦麦你胖了",
+    )
+    check(
+        "全接收: 多文本段拼接（含空白段跳过）",
+        sanitize.full_plain_text(
+            [_NS(text="麦麦"), _NS(text="  "), _NS(text="你胖了")], ""
+        )
+        == "麦麦你胖了",
+    )
+    check(
+        "全接收: 链上无文本回落 message_str（纯图/表情）",
+        sanitize.full_plain_text([_NS(qq="123"), _NS(url="http://x")], "你胖了")
+        == "你胖了",
+    )
+    check(
+        "全接收: 两者皆空得空串（下游转 [图片/表情] 占位）",
+        sanitize.full_plain_text([], "") == "",
+    )
+    check(
+        "全接收: 非 .text 属性不误收（At/Reply 等组件无文本贡献）",
+        sanitize.full_plain_text(
+            [_NS(qq="10001", name="某人"), _NS(text="你好")], "你好"
+        )
+        == "你好",
+    )
 
     # P-E 频率窗口反馈
     class _St:
