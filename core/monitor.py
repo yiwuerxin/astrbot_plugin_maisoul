@@ -604,6 +604,7 @@ class Monitor:
         model_by_idx=None,
         planner_model_name: str = "",
         replyer_reasoning: str = "",
+        replyer_trace=None,
     ) -> None:
         """广播一轮 planner 结束后的最终聚合事件（MaiBot 原事件名与嵌套结构）。
 
@@ -615,42 +616,44 @@ class Monitor:
         ReasoningLogViewerPage 需要，MaiBot 从 dump 文件取；模型名展示对齐
         部署版「模型：${model_name}」文案，MaiBot 载荷本身不带）。
         """
-        self._broadcast(
-            "planner.finalized",
-            {
-                "session_id": session_id,
-                "cycle_id": cycle_id,
-                "timestamp": time.time(),
-                "request": _serialize_request_block(
-                    planner_request_messages,
-                    planner_selected_history_count,
-                    planner_tool_count,
-                    planner_system_prompt or None,
-                    reasoning_map=reasoning_by_idx,
-                    model_map=model_by_idx,
-                ),
-                "planner": _serialize_planner_block(
-                    planner_content,
-                    planner_tool_calls,
-                    planner_prompt_tokens,
-                    planner_completion_tokens,
-                    planner_total_tokens,
-                    planner_duration_ms,
-                    replyer_reasoning,
-                    model_name=planner_model_name,
-                ),
-                "tools": _serialize_tool_results(list(tools or [])),
-                "interrupted": planner_interrupted,
-                "final_state": {
-                    "time_records": dict(time_records or {}),
-                    "agent_state": agent_state,
-                    "end_reason": end_reason,
-                    "end_detail": end_detail,
-                    # maisoul 扩展：本轮 replyer 收集的生态注入全文（心弦好感/记忆/世界书）
-                    "eco_injection": eco_injection or "",
-                },
+        payload = {
+            "session_id": session_id,
+            "cycle_id": cycle_id,
+            "timestamp": time.time(),
+            "request": _serialize_request_block(
+                planner_request_messages,
+                planner_selected_history_count,
+                planner_tool_count,
+                planner_system_prompt or None,
+                reasoning_map=reasoning_by_idx,
+                model_map=model_by_idx,
+            ),
+            "planner": _serialize_planner_block(
+                planner_content,
+                planner_tool_calls,
+                planner_prompt_tokens,
+                planner_completion_tokens,
+                planner_total_tokens,
+                planner_duration_ms,
+                replyer_reasoning,
+                model_name=planner_model_name,
+            ),
+            "tools": _serialize_tool_results(list(tools or [])),
+            "interrupted": planner_interrupted,
+            "final_state": {
+                "time_records": dict(time_records or {}),
+                "agent_state": agent_state,
+                "end_reason": end_reason,
+                "end_detail": end_detail,
+                # maisoul 扩展：本轮 replyer 收集的生态注入全文（心弦好感/记忆/世界书）
+                "eco_injection": eco_injection or "",
             },
-        )
+        }
+        replyer_block = _serialize_replyer_block(replyer_trace, replyer_reasoning)
+        if replyer_block is not None:
+            # maisoul 扩展：回复器流程素材（推理过程页「类型」切换用），缺省即省
+            payload["replyer"] = replyer_block
+        self._broadcast("planner.finalized", payload)
 
 
 def _serialize_request_block(
@@ -734,6 +737,41 @@ def _serialize_planner_block(
         out["reasoning"] = str(
             replyer_reasoning
         ).strip()  # 推理过程页：reply 工具的回复器思考
+    return out
+
+
+def _serialize_replyer_block(trace, reasoning=""):
+    """推理过程页「回复器」流程素材（maisoul 扩展，v6.19.0）。
+
+    trace 来自 _planner_execute_reply 的 replyer_trace：请求双段 + 输出全文 +
+    本次服务的模型/耗时。全空（本轮无 reply 生成）返回 None，旧事件无此键。
+    """
+    t = dict(trace or {})
+    system_prompt = str(t.get("system_prompt") or "").strip()
+    user_message = str(t.get("user_message") or "").strip()
+    output = str(t.get("output") or "").strip()
+    model_name = str(t.get("model") or "").strip()
+    duration_ms = float(t.get("duration_ms") or 0.0)
+    if not any(
+        (
+            system_prompt,
+            user_message,
+            output,
+            model_name,
+            duration_ms,
+            str(reasoning or "").strip(),
+        )
+    ):
+        return None
+    out = {
+        "system_prompt": system_prompt,
+        "user_message": user_message,
+        "output": output,
+        "model_name": model_name,
+        "duration_ms": duration_ms,
+    }
+    if str(reasoning or "").strip():
+        out["reasoning"] = str(reasoning).strip()
     return out
 
 
