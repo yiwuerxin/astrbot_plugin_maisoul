@@ -250,7 +250,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
 
 9. **Commit / PR 规范（Conventional Commits，<https://www.conventionalcommits.org>；"Angular 规范"是俗称，Angular 私规不照抄）**：
    - **Commit**：`<type>(<scope>): 祈使句摘要`——一行、动词开头，≤72 字符为硬线；正文写**为什么**（72 列手动换行）；破坏性变更用 `feat!:` 或 `BREAKING CHANGE:` footer；**不列文件清单**（仅文件移动/全局配置/对外 API 变更三种情况点名文件）
-   - **PR 四段**：① 改动简述（用户可感知，即 changelog 口径）② 为什么改（背景）③ 核心改动（只挑 1-2 个关键文件或风险点；**UI 改动必须附前后截图**）④ 测试情况
+   - **PR 四段**：① 改动简述（用户可感知，即 changelog 口径）② 为什么改（背景）③ 核心改动（只挑 1-2 个关键文件或风险点）④ 测试情况
    - **版本号联动**：`fix`→patch、`feat`→minor、`BREAKING CHANGE`→major（本插件版本号六处同步见坑 12）
    - **不提交无边界的格式化/ruff/导入整理/大面积实现整理**（MaiBot 原文）——这类 diff 会淹没真实改动、无法 review；确需整理时单独成提交并在正文说明范围，不与功能改动混在一起
    - **自检标准**：reviewer 不点开 Files changed 就能懂 = 合格；只写"优化"= 不及格
