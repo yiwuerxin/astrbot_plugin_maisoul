@@ -38,7 +38,7 @@ _RUNTIME_DATA_FILES = (
 
 
 @register(
-    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.16.0"
+    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.17.0"
 )
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
