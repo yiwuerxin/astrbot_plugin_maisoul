@@ -171,6 +171,10 @@ async def _planner_cycle(
     reasoning_by_idx: dict[int, str] = (
         {}
     )  # assistant 轮 index→思考（仅监控副本，坑 54 不回灌）
+    planner_models: list[str] = []  # 本循环实际调用的模型（去重，麦麦观察展示）
+    model_by_idx: dict[int, str] = (
+        {}
+    )  # assistant 轮 index→该轮模型（仅监控副本，与 reasoning 同机制）
     pl.eco_injection = ""
     end_reason, end_detail = "", ""
     interrupted = False
@@ -200,6 +204,8 @@ async def _planner_cycle(
             eco_injection=pl.eco_injection,
             planner_system_prompt=system_prompt,
             reasoning_by_idx=reasoning_by_idx,
+            model_by_idx=model_by_idx,
+            planner_model_name=" / ".join(planner_models),
             replyer_reasoning=getattr(pl, "replyer_reasoning", ""),
         )
 
@@ -396,11 +402,15 @@ async def _planner_cycle(
                     f"{planner_bind[1]}@{getattr(planner_bind[0], 'provider_config', {}).get('id', '?')}"
                 )
             llm_started = time.time()
+            round_model_used: dict[str, str] = (
+                {}
+            )  # 本次请求实际服务的模型（观察页展示）
             try:
                 resp = await _task_text_chat(
                     P,
                     "planner",
                     eff_cfg,
+                    used=round_model_used,
                     prompt=final_reminder,
                     session_id=f"maisoul_planner_{gid}",
                     system_prompt=system_prompt,
@@ -422,6 +432,10 @@ async def _planner_cycle(
             finally:
                 del contexts[tail_base:]  # 撤销尾部注入（不进历史）
             planner_llm_ms += (time.time() - llm_started) * 1000
+            # 本轮实际模型进观察副本（random/balance 多候选时逐轮可能不同）
+            round_model = str(round_model_used.get("model") or "")
+            if round_model and round_model not in planner_models:
+                planner_models.append(round_model)
             # token 用量累计（LLMResponse.usage：input_other+input_cached=输入，output=输出）
             usage = getattr(resp, "usage", None)
             if usage is not None:
@@ -506,6 +520,8 @@ async def _planner_cycle(
                 contexts.append(assistant_turn)
                 if reasoning:
                     reasoning_by_idx[len(contexts) - 1] = reasoning  # 推理过程页素材
+                if round_model:
+                    model_by_idx[len(contexts) - 1] = round_model  # 推理过程页素材
             if not names:
                 if is_group:
                     pl.record_idle_cycle(eff_cfg)
