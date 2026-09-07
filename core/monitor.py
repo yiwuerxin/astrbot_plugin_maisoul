@@ -381,6 +381,19 @@ class Monitor:
 
     _SENTINEL = object()  # stop_writer 的优雅退出信号
 
+    async def _flush_batch(self, batch: list) -> None:
+        """按序落库并广播一批事件（writer 的批量写路径；单条失败留痕不阻断）。"""
+        for ev, d in batch:
+            try:
+                broadcast_data = d
+                if ev not in NON_PERSISTED_EVENTS:
+                    broadcast_data = await asyncio.to_thread(self.store.record, ev, d)
+                self.bus.publish(ev, broadcast_data)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug(f"maisoul: 麦麦观察事件写入失败: {ev}", exc_info=True)
+
     async def _writer_loop(self) -> None:
         q = self._queue
         while q is not None:
@@ -392,20 +405,13 @@ class Monitor:
             while len(batch) < 64 and not q.empty():
                 nxt = q.get_nowait()
                 if nxt is self._SENTINEL:
-                    return  # 排水中收到停止信号：本批已取项照常落库后退出
+                    # 排水中收到停止信号：本批已取项照常落库后退出
+                    # （直接 return 会把整批已取事件丢掉——忙碌群卸载时丢
+                    # 最后一批观察账本，v6.18.1 修复）
+                    await self._flush_batch(batch)
+                    return
                 batch.append(nxt)
-            for ev, d in batch:
-                try:
-                    broadcast_data = d
-                    if ev not in NON_PERSISTED_EVENTS:
-                        broadcast_data = await asyncio.to_thread(
-                            self.store.record, ev, d
-                        )
-                    self.bus.publish(ev, broadcast_data)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.debug(f"maisoul: 麦麦观察事件写入失败: {ev}", exc_info=True)
+            await self._flush_batch(batch)
 
     async def stop_writer(self, timeout: float = 5.0) -> None:
         """优雅冲刷并停止（terminate 用）。
