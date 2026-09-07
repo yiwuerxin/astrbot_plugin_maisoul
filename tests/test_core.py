@@ -767,6 +767,24 @@ def test_typo():
             "坏字频缓存: 原文件备份为 .corrupt",
             (_tmpdir / "data_char_frequency.json.corrupt").exists() and _bad.exists(),
         )
+        # 合法 JSON 但形状不对（列表/null/标量/非数值）同样走自愈——json.load
+        # 不抛异常，旧实现会把 list/None 当字频表带出，到运行期才 AttributeError
+        for _idx, _bad_shape in enumerate(["[1, 2, 3]", "null", '{"的": "x"}']):
+            _sd = _tmpdir / f"shape{_idx}"
+            _sd.mkdir()
+            _sf = _sd / "data_char_frequency.json"
+            _sf.write_text(_bad_shape, encoding="utf-8")
+            typo_mod._FREQ_FILE = _sf
+            _gs = ChineseTypoGenerator(
+                error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+            )
+            check(
+                f"坏字频缓存: 合法JSON形状不对也自愈#{_idx}",
+                isinstance(_gs.char_frequency, dict)
+                and len(_gs.char_frequency) > 5000
+                and (_sd / "data_char_frequency.json.corrupt").exists(),
+                f"type={type(_gs.char_frequency).__name__}",
+            )
         # 无缓存 → 生成 + 原子落盘
         _fresh_dir = _tmpdir / "freq_fresh"
         _fresh_dir.mkdir()
@@ -2711,7 +2729,9 @@ def test_taskregistry():
             if _entered.is_set():
                 break
             await _aio2.sleep(0.005)
-        # writer 现在停在 m0 的 flush 里（entered 未置位则下方断言自然失败）
+        # 闸门断言：writer 未进入 flush 时尾部排水兜底会让 rows 检查假绿，
+        # 必须先确认时序真的成立（PR review 意见）
+        check("writer 停止: 用例前置 writer 已停在 flush", _entered.is_set())
         m4.emit_message_sent(
             "g1", "麦麦", "m1", "id1", time.time(), "reply", platform="qq"
         )
