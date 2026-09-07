@@ -82,7 +82,16 @@ class ChineseTypoGenerator:
         if _FREQ_FILE.exists():
             try:
                 with open(_FREQ_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    loaded = json.load(f)
+                # 形状校验：json.load 对 null/列表/标量/非数值不抛异常，直接
+                # 带出去会在查频时 AttributeError——形状不对一律按损坏自愈
+                if (
+                    not isinstance(loaded, dict)
+                    or not loaded
+                    or not all(isinstance(v, (int, float)) for v in loaded.values())
+                ):
+                    raise ValueError("invalid frequency cache shape")
+                return loaded
             except (OSError, ValueError):
                 # 坏缓存自愈（对齐 learning 库的 .corrupt 处理）：备份原文件后
                 # 重建，禁止让错字引擎整体不可用
