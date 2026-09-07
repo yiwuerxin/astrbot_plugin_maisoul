@@ -743,7 +743,7 @@ def test_typo():
         "__不存在的音节__" not in typo_mod._shared_pinyin_dict(),
     )
 
-    # 字频缓存自愈（v6.18.1）：坏 JSON 备份为 .corrupt 后重建而非炸掉引擎；
+    # 字频缓存自愈（v6.18.2）：坏 JSON 备份为 .corrupt 后重建而非炸掉引擎；
     # 落盘走 .tmp+replace 原子写（对齐 learning 库），不留 .tmp 残留
     import pathlib as _pl
     import tempfile as _tf
@@ -1062,7 +1062,7 @@ def test_states():
     check("pick: 主候选", pick["model"] == "m1")
     check("pick: 空候选返回 None", modelbind.pick_model([], "random", {}, "x") is None)
 
-    # v6.18.1：LLM 失败时 used 记录实际尝试的候选（旧实现成功才写 used，
+    # v6.18.2：LLM 失败时 used 记录实际尝试的候选（旧实现成功才写 used，
     # planner 的 llm.error 上报只能回落默认 provider——归因错对象）
     from types import SimpleNamespace as _SNS
 
@@ -2684,7 +2684,7 @@ def test_taskregistry():
         n = len(sess.query(_Rec).all())
     check("M10 writer: 事件经后台协程落库", n >= 2, f"rows={n}")
 
-    # v6.18.1 回归：writer 正在 flush（to_thread 落库中）时后续事件入队并停机，
+    # v6.18.2 回归：writer 正在 flush（to_thread 落库中）时后续事件入队并停机，
     # 哨兵会在下一轮批量排水中被取出——旧实现此时直接 return 丢弃已取批次
     # （与同行注释承诺相反）。生产对应：忙碌群消息持续入队时卸载插件。
     # 时序用线程屏障钉死（entered/release），不依赖墙钟 sleep。
@@ -2737,7 +2737,7 @@ def test_taskregistry():
         f"rows={n4}（应为 3，旧实现丢 m1/m2 整批）",
     )
 
-    # v6.18.1：writer 经 TaskRegistry 发起（create_task 唯一入口约束；
+    # v6.18.2：writer 经 TaskRegistry 发起（create_task 唯一入口约束；
     # 旧实现裸 create_task，与 REFACTOR_NOTES「grep 仅 TaskRegistry 本体」的
     # 验收声明不符）
 

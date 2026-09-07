@@ -423,7 +423,7 @@ async def _planner_cycle(
                     session_id=gid,
                     task_name="planner",
                     request_type="text_chat",
-                    # v6.18.1：优先报 _task_text_chat 实际尝试的模型（绑定/
+                    # v6.18.2：优先报 _task_text_chat 实际尝试的模型（绑定/
                     # 降级链），未知才回落默认 provider 标签
                     model_name=str(
                         round_model_used.get("model")
