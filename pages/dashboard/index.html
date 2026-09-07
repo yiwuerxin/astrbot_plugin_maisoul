@@ -368,6 +368,7 @@ code{font-family:var(--mono);font-size:.9em;background:hsl(var(--muted));border-
 .mo-badge.outline{background:transparent;color:var(--mo-fg)}
 /* monitor 内覆盖：text-[10px] / px-1.5 text-[10px] / h-5 px-1.5 / h-4 px-1 / text-xs font-normal / gap-1 */
 .mo-badge.t10{font-size:10px}
+.mo-badge.mono{font-family:var(--mo-mono);font-weight:500}
 .mo-badge.p6{padding-left:6px;padding-right:6px}
 .mo-badge.h20{height:20px;padding-left:6px;padding-right:6px;font-size:10px}
 .mo-badge.h16{height:16px;padding-left:4px;padding-right:4px;font-size:10px}
@@ -612,7 +613,7 @@ let FB = null;
 let maisoulTab = 'core';
 function setMsTab(t){maisoulTab=t;render('maisoul')}
 const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理',exprv:'表达审核'};
-const PAGE_VERSION = 'v6.17.0';
+const PAGE_VERSION = 'v6.18.0';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -1795,6 +1796,7 @@ function moCard(e,waitChain){
     const planCard=`<div class="mo-card plan"><div class="mo-cbody">
       <div class="mo-chead"><span class="mo-ic mo-okc">${moIcon('brain',16)}</span><span class="mo-ctitle">Planner</span>
         ${tools.length?`<button class="mo-rbtn" title="在新页面查看本轮完整工作流（推理过程）" onclick="MO.page='reason';MO.reasoning=${e.id};moRenderTimeline();window.scrollTo(0,0)">${moIcon('file-text',12)} 推理过程</button>`:''}
+        ${p.model_name?`<span class="mo-badge outline t10 mono" title="本次 Planner 调用的模型${(p.model_name.includes(' / ')?'（多轮多模型去重并列）':'')}">${esc(p.model_name)}</span>`:''}
         <span class="mo-badge outline fnorm" style="margin-left:auto">${moFmtMs(p.duration_ms)}</span>
         ${hasReq?`<span class="mo-badge secondary t10">上下文 ${r.selected_history_count==null?0:r.selected_history_count} 条 / 可用工具 ${r.tool_count==null?0:r.tool_count}</span>`:''}
         ${hasTok?`<span class="mo-badge outline t10">${p.prompt_tokens||0}+${p.completion_tokens||0} tokens</span>`:''}
@@ -1988,10 +1990,10 @@ function rrOutItems(d,outIdx,n0){
   }
   return items;
 }
-function rrSection(title,items){
+function rrSection(title,items,extra){
   /* 部署版 fe 分区容器：标题 + secondary 计数徽章；空分区给「没有 Items。」 */
   const cnt=rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm',items.length+' Items');
-  return `<section class="space-y-2 rounded-md border p-2.5 sm:p-3"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">${title}</span>${cnt}</div>${items.length?`<div class="space-y-2">${items.join('')}</div>`:`<p class="text-muted-foreground text-xs">没有 Items。</p>`}</section>`;
+  return `<section class="space-y-2 rounded-md border p-2.5 sm:p-3"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">${title}</span>${cnt}${extra||''}</div>${items.length?`<div class="space-y-2">${items.join('')}</div>`:`<p class="text-muted-foreground text-xs">没有 Items。</p>`}</section>`;
 }
 /* ---- 记录源：每轮动作一条（对齐部署版粒度）+ 会话/类型筛选 + 真分页 ----
    部署版左列 280px 记录列表：记录=一轮推理（assistant.tool_calls 消息开轮，
@@ -2042,16 +2044,24 @@ function rrPageInfo(list){
   const page=Math.min(Math.max(1,(MO.rr&&MO.rr.page)||1),pages);
   return {total:list.length,pages,page};
 }
+/* 本次调用的模型（maisoul 扩展）：工具轮=该轮 assistant 消息的 model_name；
+   收尾轮/旧事件=最后一条带模型的 assistant 轮，再回落整循环去重值 */
+function rrModelOf(rec){
+  const d=rec.ev.data||{},msgs=((d.request||{}).messages)||[];
+  if(rec.slice&&rec.start!=null){const m=msgs[rec.start];if(m&&m.model_name)return String(m.model_name)}
+  for(let i=msgs.length-1;i>=0;i--){const m=msgs[i];if(m&&m.role==='assistant'&&m.model_name)return String(m.model_name)}
+  return String(((d.planner||{}).model_name)||'')
+}
 function rrRecMeta(rec){
   const d=rec.ev.data||{},p=d.planner||{};
   const ts=new Date((d.timestamp||rec.ev.ts)*1000);
   return {tstr:String(ts.getMonth()+1).padStart(2,'0')+'/'+String(ts.getDate()).padStart(2,'0')+' '+ts.toTimeString().slice(0,8),
     dur:((p.duration_ms||0)/1000).toFixed(2),tin:p.prompt_tokens||0,tout:p.completion_tokens||0,
-    size:(JSON.stringify(((d.request||{}).messages)||[]).length/1024).toFixed(1),cycle:d.cycle_id}
+    size:(JSON.stringify(((d.request||{}).messages)||[]).length/1024).toFixed(1),cycle:d.cycle_id,model:rrModelOf(rec)}
 }
 function rrRowHTML(rec,selected){
   const m=rrRecMeta(rec),names=(rec.tools||[]).join('、');
-  const meta=`模型：maisoul planner · 耗时：${m.dur} s · 输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token`;
+  const meta=`模型：${m.model||'maisoul planner'} · 耗时：${m.dur} s · 输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token`;
   const cls='flex w-full flex-col gap-1.5 rounded-md border px-2.5 py-2 text-left text-sm transition-colors sm:gap-2 sm:px-3 '+(selected?'border-primary bg-primary/10 text-foreground selrow':'hover:border-border hover:bg-muted/60 border-transparent');
   return `<button type="button" class="${cls}" data-tools="${esc(names)}" onclick="rrSel('${esc(rec.key)}')"><div class="flex items-start justify-between gap-2"><div class="min-w-0 flex-1"><div class="flex min-w-0 items-start gap-1.5"><div class="text-foreground line-clamp-2 min-w-0 text-sm font-medium" title="${esc(names)}">${esc(names)}</div></div></div><span class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">${RR_SVG_CLOCK}${m.tstr}</span></div><div class="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs" title="${esc(meta)}"><span class="inline-flex min-w-0 items-center gap-1">${RR_SVG_CPU}<span class="truncate">循环 #${m.cycle==null?'-':m.cycle}</span></span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${m.dur} s</span><span class="inline-flex items-center gap-1">输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token</span><span class="shrink-0">${m.size} KB</span></div></button>`
 }
@@ -2067,8 +2077,10 @@ function rrDetailHTML(rec){
   const reqItems=rrMsgItems({request:req},outIdx>=0?outIdx:null,0);
   const outItems=rrOutItems(d,outIdx,reqItems.length);
   const m=rrRecMeta(rec),names=(rec.tools||[]).join('、');
+  /* 输出结果分区：Items 计数徽章后标本次调用的模型（对齐部署版「模型：${model_name}」文案） */
+  const mdlBadge=m.model?rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm font-mono','模型：'+esc(m.model)):'';
   const head=`<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2"><span class="text-sm font-medium">${esc(names)}</span><span class="text-muted-foreground text-xs">${m.tstr}</span><span class="text-muted-foreground ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"><span class="inline-flex items-center gap-1">${RR_SVG_CPU}循环 #${m.cycle==null?'-':m.cycle}</span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${m.dur} s</span><span>输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token</span></span></div>`;
-  return {head:head,items:rrSection('请求 Items',reqItems)+rrSection('输出结果',outItems)}
+  return {head:head,items:rrSection('请求 Items',reqItems)+rrSection('输出结果',outItems,mdlBadge)}
 }
 function rrPagerHTML(pi){
   const cls='inline-flex cursor-pointer items-center gap-2 font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md px-3 text-xs h-8';

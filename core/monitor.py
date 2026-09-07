@@ -592,6 +592,8 @@ class Monitor:
         eco_injection: str = "",
         planner_system_prompt: str = "",
         reasoning_by_idx=None,
+        model_by_idx=None,
+        planner_model_name: str = "",
         replyer_reasoning: str = "",
     ) -> None:
         """广播一轮 planner 结束后的最终聚合事件（MaiBot 原事件名与嵌套结构）。
@@ -599,8 +601,10 @@ class Monitor:
         token 用量来自 AstrBot LLMResponse.usage（TokenUsage：input_other+
         input_cached=输入、output=输出），在 _planner_cycle 逐轮累计。
         native_tool_calls / prompt_html_uri 是 MaiBot Provider 专属，缺省即省。
-        system_prompt / messages[].tool_calls 是 maisoul 扩展（推理过程页复刻
-        部署版 ReasoningLogViewerPage 需要，MaiBot 从 dump 文件取）。
+        system_prompt / messages[].tool_calls / messages[].model_name /
+        planner.model_name 是 maisoul 扩展（推理过程页复刻部署版
+        ReasoningLogViewerPage 需要，MaiBot 从 dump 文件取；模型名展示对齐
+        部署版「模型：${model_name}」文案，MaiBot 载荷本身不带）。
         """
         self._broadcast(
             "planner.finalized",
@@ -614,6 +618,7 @@ class Monitor:
                     planner_tool_count,
                     planner_system_prompt or None,
                     reasoning_map=reasoning_by_idx,
+                    model_map=model_by_idx,
                 ),
                 "planner": _serialize_planner_block(
                     planner_content,
@@ -623,6 +628,7 @@ class Monitor:
                     planner_total_tokens,
                     planner_duration_ms,
                     replyer_reasoning,
+                    model_name=planner_model_name,
                 ),
                 "tools": _serialize_tool_results(list(tools or [])),
                 "interrupted": planner_interrupted,
@@ -639,7 +645,12 @@ class Monitor:
 
 
 def _serialize_request_block(
-    messages, selected_history_count, tool_count, system_prompt=None, reasoning_map=None
+    messages,
+    selected_history_count,
+    tool_count,
+    system_prompt=None,
+    reasoning_map=None,
+    model_map=None,
 ):
     if messages is None and selected_history_count is None and tool_count is None:
         return None
@@ -649,15 +660,19 @@ def _serialize_request_block(
         "tool_count": int(tool_count or 0),
     }
     rmap = {int(k): v for k, v in dict(reasoning_map or {}).items()}
+    mmap = {int(k): v for k, v in dict(model_map or {}).items()}
     for i, m in enumerate(list(messages or [])):
         if not isinstance(m, dict):
             continue
         item = {"role": str(m.get("role", "unknown")), "content": m.get("content")}
-        # 推理过程页：assistant 轮附思考（ReasoningItem）——仅进监控副本，
-        # 回灌 contexts 永不带 reasoning（坑 54），两边互不影响
+        # 推理过程页：assistant 轮附思考（ReasoningItem）与该轮调用的模型名
+        # ——均仅进监控副本，回灌 contexts 永不带（坑 54），两边互不影响
         reasoning = str(rmap.get(i, "") or "").strip()
         if reasoning and item["role"] == "assistant":
             item["reasoning"] = reasoning
+        model_name = str(mmap.get(i, "") or "").strip()
+        if model_name and item["role"] == "assistant":
+            item["model_name"] = model_name
         if m.get("tool_calls"):
             item["tool_calls"] = m["tool_calls"]
         if str(m.get("role")) == "tool" and m.get("tool_call_id"):
@@ -676,6 +691,7 @@ def _serialize_planner_block(
     total_tokens,
     duration_ms,
     replyer_reasoning="",
+    model_name="",
 ):
     if (
         content is None
@@ -684,6 +700,7 @@ def _serialize_planner_block(
         and prompt_tokens is None
         and completion_tokens is None
         and total_tokens is None
+        and not str(model_name or "").strip()
     ):
         return None
     out = {
@@ -702,6 +719,8 @@ def _serialize_planner_block(
         "total_tokens": int(total_tokens or 0),
         "duration_ms": float(duration_ms or 0.0),
     }
+    if str(model_name or "").strip():
+        out["model_name"] = str(model_name).strip()  # 本次循环调用的模型（去重拼接）
     if str(replyer_reasoning or "").strip():
         out["reasoning"] = str(
             replyer_reasoning
