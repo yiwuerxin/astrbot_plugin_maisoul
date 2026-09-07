@@ -114,7 +114,11 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
                 in_quote = True
                 current_quote_char = ch
             else:
-                if ch == current_quote_char or ch in {'"', "'"} and current_quote_char in {'"', "'"}:
+                if (
+                    ch == current_quote_char
+                    or ch in {'"', "'"}
+                    and current_quote_char in {'"', "'"}
+                ):
                     in_quote = False
                     current_quote_char = ""
         else:
@@ -142,8 +146,12 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
                     if prev_char in {"-", "—"} or next_char in {"-", "—"}:
                         can_split = False
                     else:
-                        prev_alnum = prev_char.isdigit() or _is_english_letter(prev_char)
-                        next_alnum = next_char.isdigit() or _is_english_letter(next_char)
+                        prev_alnum = prev_char.isdigit() or _is_english_letter(
+                            prev_char
+                        )
+                        next_alnum = next_char.isdigit() or _is_english_letter(
+                            next_char
+                        )
                         if prev_alnum and next_alnum:
                             can_split = False
             if can_split:
@@ -176,8 +184,12 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
     idx = 0
     while idx < len(segments):
         content, sep = segments[idx]
-        if (idx + 1 < len(segments) and content and sep != "\n"
-                and random.random() < merge_probability):
+        if (
+            idx + 1 < len(segments)
+            and content
+            and sep != "\n"
+            and random.random() < merge_probability
+        ):
             next_content, next_sep = segments[idx + 1]
             if next_content:
                 merged.append((content + sep + next_content, next_sep))
@@ -190,7 +202,11 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
 
     final = [c for c, _ in merged if c]
     final = [s for s in final if s.strip()]
-    final = [n for s in final if (n := re.sub(r"[^\S\r\n]*[\r\n]+[^\S\r\n]*", " ", s).strip())]
+    final = [
+        n
+        for s in final
+        if (n := re.sub(r"[^\S\r\n]*[\r\n]+[^\S\r\n]*", " ", s).strip())
+    ]
     return final
 
 
@@ -220,9 +236,12 @@ def _merge_segments_to_max_count(segments, max_count):
     for gi, gs in enumerate(sorted_starts):
         ge = sorted_starts[gi + 1] if gi + 1 < len(sorted_starts) else count
         group = segments[gs:ge]
-        merged.append(ProcessedResponseSegment(
-            text="".join(s.text for s in group),
-            quote_previous=group[0].quote_previous))
+        merged.append(
+            ProcessedResponseSegment(
+                text="".join(s.text for s in group),
+                quote_previous=group[0].quote_previous,
+            )
+        )
     return merged
 
 
@@ -266,12 +285,17 @@ def process_response_segments(text: str, cfg) -> list[ProcessedResponseSegment]:
             typoed, corrections = generator.create_typo_sentence(sentence)
             if corrections:
                 if random.random() < 0.5:
-                    quote_previous = (
-                        cfg.get("typo_enable_correction_quote", True)
-                        and random.random() < float(cfg.get("typo_correction_quote_probability", 1.0))
+                    quote_previous = cfg.get(
+                        "typo_enable_correction_quote", True
+                    ) and random.random() < float(
+                        cfg.get("typo_correction_quote_probability", 1.0)
                     )
                     segments.append(ProcessedResponseSegment(typoed))
-                    segments.append(ProcessedResponseSegment(corrections, quote_previous=quote_previous))
+                    segments.append(
+                        ProcessedResponseSegment(
+                            corrections, quote_previous=quote_previous
+                        )
+                    )
                 else:
                     segments.append(ProcessedResponseSegment(sentence))
             else:
@@ -289,14 +313,20 @@ def process_response_segments(text: str, cfg) -> list[ProcessedResponseSegment]:
 
     if cfg.get("splitter_enable_kaomoji_protection", False):
         recovered = recover_kaomoji([s.text for s in segments], kaomoji_mapping)
-        segments = [ProcessedResponseSegment(text=t, quote_previous=s.quote_previous)
-                    for s, t in zip(segments, recovered)]
+        segments = [
+            ProcessedResponseSegment(text=t, quote_previous=s.quote_previous)
+            for s, t in zip(segments, recovered)
+        ]
     return segments
 
 
-def calculate_typing_time(input_string: str, typing_speed: float = 1.0,
-                          chinese_time: float = 0.3, english_time: float = 0.15,
-                          is_emoji: bool = False) -> float:
+def calculate_typing_time(
+    input_string: str,
+    typing_speed: float = 1.0,
+    chinese_time: float = 0.3,
+    english_time: float = 0.15,
+    is_emoji: bool = False,
+) -> float:
     """复刻 MaiBot calculate_typing_time：×typing_speed，speed≤0 → 0。"""
     chinese_chars = sum("\u4e00" <= c <= "\u9fff" for c in input_string)
     if chinese_chars == 1 and len(input_string.strip()) == 1:

@@ -56,8 +56,14 @@ def _shared_pinyin_dict() -> dict:
 class ChineseTypoGenerator:
     """参数与 MaiBot chinese_typo 配置一一对应。"""
 
-    def __init__(self, error_rate=0.01, min_freq=9, tone_error_rate=0.1,
-                 word_replace_rate=0.006, max_freq_diff=200):
+    def __init__(
+        self,
+        error_rate=0.01,
+        min_freq=9,
+        tone_error_rate=0.1,
+        word_replace_rate=0.006,
+        max_freq_diff=200,
+    ):
         self.error_rate = error_rate
         self.min_freq = min_freq
         self.tone_error_rate = tone_error_rate
@@ -138,7 +144,9 @@ class ChineseTypoGenerator:
     def _get_similar_frequency_chars(self, char, py, num_candidates=5):
         homophones = []
         if random.random() < self.tone_error_rate:
-            homophones.extend(self.pinyin_dict.get(self._get_similar_tone_pinyin(py), []))
+            homophones.extend(
+                self.pinyin_dict.get(self._get_similar_tone_pinyin(py), [])
+            )
         homophones.extend(self.pinyin_dict.get(py, []))
         if not homophones:
             return None
@@ -179,7 +187,9 @@ class ChineseTypoGenerator:
             if new_word != word and new_word in valid_words:
                 new_freq = valid_words[new_word]
                 if new_freq >= min_word_freq:
-                    char_avg = sum(self.char_frequency.get(c, 0) for c in new_word) / len(new_word)
+                    char_avg = sum(
+                        self.char_frequency.get(c, 0) for c in new_word
+                    ) / len(new_word)
                     score = new_freq * 0.7 + char_avg * 0.3
                     if score >= self.min_freq:
                         homophones.append((new_word, score))
@@ -220,7 +230,8 @@ class ChineseTypoGenerator:
                         typo_char = random.choice(similar)
                         replace_prob = self._calculate_replacement_probability(
                             self.char_frequency.get(char, 0),
-                            self.char_frequency.get(typo_char, 0))
+                            self.char_frequency.get(typo_char, 0),
+                        )
                         if random.random() < replace_prob:
                             result.append(typo_char)
                             char_typos.append((typo_char, char))
@@ -237,7 +248,8 @@ class ChineseTypoGenerator:
                             typo_char = random.choice(similar)
                             replace_prob = self._calculate_replacement_probability(
                                 self.char_frequency.get(char, 0),
-                                self.char_frequency.get(typo_char, 0))
+                                self.char_frequency.get(typo_char, 0),
+                            )
                             if random.random() < replace_prob:
                                 word_result.append(typo_char)
                                 char_typos.append((typo_char, char))
@@ -266,10 +278,22 @@ def get_typo_generator(cfg) -> ChineseTypoGenerator:
         float(cfg.get("typo_tone_error_rate", 0.1)),
         float(cfg.get("typo_word_replace_rate", 0.006)),
     )
-    if _generator is None or tuple(
-            (_generator.error_rate, _generator.min_freq,
-             _generator.tone_error_rate, _generator.word_replace_rate)) != params:
+    if (
+        _generator is None
+        or tuple(
+            (
+                _generator.error_rate,
+                _generator.min_freq,
+                _generator.tone_error_rate,
+                _generator.word_replace_rate,
+            )
+        )
+        != params
+    ):
         _generator = ChineseTypoGenerator(
-            error_rate=params[0], min_freq=params[1],
-            tone_error_rate=params[2], word_replace_rate=params[3])
+            error_rate=params[0],
+            min_freq=params[1],
+            tone_error_rate=params[2],
+            word_replace_rate=params[3],
+        )
     return _generator

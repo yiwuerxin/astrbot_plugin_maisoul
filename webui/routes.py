@@ -28,15 +28,25 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                 # 向旧列表（AstrBot delete_provider 的怪癖）——读旧快照会出现
                 # "已删除的 Provider 还在列表里"
                 live_conf = getattr(getattr(pm, "acm", None), "default_conf", None)
-                configs = list((live_conf or {}).get("provider")
-                               or getattr(pm, "providers_config", []) or [])
-                sources_conf = (live_conf or {}).get("provider_sources") \
-                    or getattr(pm, "provider_sources_config", None) or []
-                sources = [s for s in (sources_conf or [])
-                           if isinstance(s, dict) and s.get("id")
-                           and bool(s.get("enable", True))
-                           and str(s.get("provider_type") or "chat_completion")
-                           in ("chat_completion", "embedding")]
+                configs = list(
+                    (live_conf or {}).get("provider")
+                    or getattr(pm, "providers_config", [])
+                    or []
+                )
+                sources_conf = (
+                    (live_conf or {}).get("provider_sources")
+                    or getattr(pm, "provider_sources_config", None)
+                    or []
+                )
+                sources = [
+                    s
+                    for s in (sources_conf or [])
+                    if isinstance(s, dict)
+                    and s.get("id")
+                    and bool(s.get("enable", True))
+                    and str(s.get("provider_type") or "chat_completion")
+                    in ("chat_completion", "embedding")
+                ]
                 source_ids = {str(s["id"]): s for s in sources}
                 groups: dict = {}
                 for pc in configs:
@@ -49,21 +59,30 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                     g = groups.setdefault(source, {"models": [], "enabled_models": []})
                     if default_model not in g["models"]:
                         g["models"].append(default_model)
-                    if bool(pc.get("enable", True)) and default_model not in g["enabled_models"]:
+                    if (
+                        bool(pc.get("enable", True))
+                        and default_model not in g["enabled_models"]
+                    ):
                         g["enabled_models"].append(default_model)
                 for source_id in source_ids:
                     g = groups.get(source_id) or {}
                     models = g.get("enabled_models") or g.get("models") or []
                     if not models:
                         continue
-                    providers.append({
-                        "id": source_id,
-                        "type": "embedding" if str(
-                            source_ids[source_id].get("provider_type")) == "embedding" else "",
-                        "enable": True,
-                        "default_model": models[0],
-                        "models": models,
-                    })
+                    providers.append(
+                        {
+                            "id": source_id,
+                            "type": (
+                                "embedding"
+                                if str(source_ids[source_id].get("provider_type"))
+                                == "embedding"
+                                else ""
+                            ),
+                            "enable": True,
+                            "default_model": models[0],
+                            "models": models,
+                        }
+                    )
                 # 旧式嵌入条目（自含 embedding_* 字段、无 provider_source_id，
                 # AstrBot 模型设置里「嵌入模型」的形态）——禁用的也列出（带
                 # enable=false，需在 AstrBot 侧启用后才可实际调用）
@@ -71,18 +90,23 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                 for pc in configs:
                     if not isinstance(pc, dict) or str(pc.get("id") or "") in seen_ids:
                         continue
-                    is_embedding = (str(pc.get("provider_type") or "") == "embedding"
-                                    or str(pc.get("type") or "").endswith("embedding"))
-                    emb_model = str(pc.get("embedding_model") or pc.get("model") or "").strip()
+                    is_embedding = str(
+                        pc.get("provider_type") or ""
+                    ) == "embedding" or str(pc.get("type") or "").endswith("embedding")
+                    emb_model = str(
+                        pc.get("embedding_model") or pc.get("model") or ""
+                    ).strip()
                     if not is_embedding or not pc.get("id") or not emb_model:
                         continue
-                    providers.append({
-                        "id": str(pc["id"]),
-                        "type": "embedding",
-                        "enable": bool(pc.get("enable", True)),
-                        "default_model": emb_model,
-                        "models": [emb_model],
-                    })
+                    providers.append(
+                        {
+                            "id": str(pc["id"]),
+                            "type": "embedding",
+                            "enable": bool(pc.get("enable", True)),
+                            "default_model": emb_model,
+                            "models": [emb_model],
+                        }
+                    )
                 providers.sort(key=lambda p: (-len(p["models"]), p["id"]))
             except Exception:
                 logger.error("maisoul: 读取 Provider 模型列表失败", exc_info=True)
@@ -103,7 +127,8 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             from ..core.apivalid import validate_config_payload
 
             accepted, err = validate_config_payload(
-                getattr(config, "schema", None), payload, config)
+                getattr(config, "schema", None), payload, config
+            )
             if err:
                 return jsonify({"success": False, "error": err}), 400
             for k, v in accepted.items():
@@ -113,12 +138,18 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
 
         async def get_learning():
             if learning_store is None:
-                return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+                return (
+                    jsonify({"success": False, "error": "learning store 未初始化"}),
+                    500,
+                )
             return jsonify({"success": True, "data": learning_store.data})
 
         async def post_learning():
             if learning_store is None:
-                return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+                return (
+                    jsonify({"success": False, "error": "learning store 未初始化"}),
+                    500,
+                )
             # 同 post_config：falsey 原值直接进校验。`or {}` 会把空列表洗成合法
             # 空对象，整个学习库被静默清空还返回 200（Sourcery 审查）；空对象 {}
             # 本身仍是合法载荷（WebUI 学习页清空全部条目后保存的语义）
@@ -142,19 +173,34 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
         async def get_expressions():
             """表达方式审核页数据源：跨共享组拉平 + 待审/已通过统计。"""
             if learning_store is None:
-                return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+                return (
+                    jsonify({"success": False, "error": "learning store 未初始化"}),
+                    500,
+                )
             learning_store.ensure_expression_ids()
             items = learning_store.all_expressions()
             pending = sum(1 for x in items if not x["checked"])
-            return jsonify({"success": True, "data": {
-                "items": items,
-                "stats": {"pending": pending, "passed": len(items) - pending,
-                          "total": len(items)}}})
+            return jsonify(
+                {
+                    "success": True,
+                    "data": {
+                        "items": items,
+                        "stats": {
+                            "pending": pending,
+                            "passed": len(items) - pending,
+                            "total": len(items),
+                        },
+                    },
+                }
+            )
 
         async def post_expressions_review():
             """批量审核：approve=通过 / unapprove=取消人工通过 / reject=拒绝删除。"""
             if learning_store is None:
-                return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+                return (
+                    jsonify({"success": False, "error": "learning store 未初始化"}),
+                    500,
+                )
             try:
                 payload = await request.get_json(silent=True) or {}
             except Exception:
@@ -178,7 +224,10 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
         async def post_expressions_save():
             """审核页弹窗：创建（id 空）/修改单条表达。"""
             if learning_store is None:
-                return jsonify({"success": False, "error": "learning store 未初始化"}), 500
+                return (
+                    jsonify({"success": False, "error": "learning store 未初始化"}),
+                    500,
+                )
             try:
                 payload = await request.get_json(silent=True) or {}
             except Exception:
@@ -188,7 +237,12 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             if not situation or not style:
                 return jsonify({"success": False, "error": "情景与风格都不能为空"}), 400
             if len(situation) > 500 or len(style) > 500:
-                return jsonify({"success": False, "error": "情景/风格过长（上限 500 字）"}), 400
+                return (
+                    jsonify(
+                        {"success": False, "error": "情景/风格过长（上限 500 字）"}
+                    ),
+                    400,
+                )
             key = str(payload.get("key") or "global").strip() or "global"
             if len(key) > 120:
                 return jsonify({"success": False, "error": "共享组键过长"}), 400
@@ -200,34 +254,54 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                     return jsonify({"success": False, "error": "id 必须是整数"}), 400
             learning_store.ensure_expression_ids()
             item = learning_store.upsert_expression(
-                situation, style, bool(payload.get("checked", True)),
-                key=key, expr_id=expr_id)
+                situation,
+                style,
+                bool(payload.get("checked", True)),
+                key=key,
+                expr_id=expr_id,
+            )
             if item is None:
-                return jsonify({"success": False,
-                                "error": "条目不存在或内容为空"}, 404 if expr_id else 400)
-            return jsonify({"success": True, "data": {"item": {
-                "id": item.get("id"), "situation": item.get("situation"),
-                "style": item.get("style"), "checked": bool(item.get("checked"))}}})
+                return jsonify(
+                    {"success": False, "error": "条目不存在或内容为空"},
+                    404 if expr_id else 400,
+                )
+            return jsonify(
+                {
+                    "success": True,
+                    "data": {
+                        "item": {
+                            "id": item.get("id"),
+                            "situation": item.get("situation"),
+                            "style": item.get("style"),
+                            "checked": bool(item.get("checked")),
+                        }
+                    },
+                }
+            )
 
         async def get_status():
             from ..core.trigger import effective_talk_value, message_trigger_threshold
 
             talk_value = effective_talk_value(config, "", "")
             mode = str(config.get("reply_trigger_mode", "frequency"))
-            return jsonify({
-                "success": True,
-                "data": {
-                    "version": "6.15.4",
-                    "mode": config.get("mode"),
-                    "enable": config.get("enable"),
-                    "maid_bridge": bool(config.get("maid_bridge", True)),
-                    "bot_name": config.get("bot_name"),
-                    "reply_trigger_mode": mode,
-                    "talk_value": round(talk_value, 3),
-                    "trigger_threshold": message_trigger_threshold(mode, talk_value),
-                    "groups": states.status_all(),
-                },
-            })
+            return jsonify(
+                {
+                    "success": True,
+                    "data": {
+                        "version": "6.15.4",
+                        "mode": config.get("mode"),
+                        "enable": config.get("enable"),
+                        "maid_bridge": bool(config.get("maid_bridge", True)),
+                        "bot_name": config.get("bot_name"),
+                        "reply_trigger_mode": mode,
+                        "talk_value": round(talk_value, 3),
+                        "trigger_threshold": message_trigger_threshold(
+                            mode, talk_value
+                        ),
+                        "groups": states.status_all(),
+                    },
+                }
+            )
 
         async def get_tools():
             """读取 AstrBot 原生注册的 llm_tool 与技能列表（WebUI 暴露工具弹窗的数据源）。"""
@@ -243,7 +317,9 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             except Exception:
                 logger.error("maisoul: 读取 AstrBot 技能列表失败", exc_info=True)
                 skills = []
-            return jsonify({"success": True, "data": {"tools": tools, "skills": skills}})
+            return jsonify(
+                {"success": True, "data": {"tools": tools, "skills": skills}}
+            )
 
         async def get_monitor_replay():
             """麦麦观察：按 event_id 重放事件账本（?since=&limit=）。"""
@@ -257,8 +333,12 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                 limit = int((request.args.get("limit") or "300"))
             except ValueError:
                 limit = 300
-            return jsonify({"success": True, "data": monitor.store.replay(
-                since_event_id=since, limit=limit)})
+            return jsonify(
+                {
+                    "success": True,
+                    "data": monitor.store.replay(since_event_id=since, limit=limit),
+                }
+            )
 
         async def get_monitor_stream():
             """麦麦观察：SSE 实时事件流（先发 hello 再转发订阅队列）。"""
@@ -284,25 +364,73 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                 finally:
                     monitor.bus.unsubscribe(q)
 
-            return Response(_gen(), content_type="text/event-stream",
-                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+            return Response(
+                _gen(),
+                content_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
         # 双前缀注册：扩展 API 按注册路径正则匹配，而插件列表/页面链接用的是
         # metadata 显示名（已改「麦麦之魂」）——两个前缀都注册才能新旧入口都通
         bases = ("/astrbot_plugin_maisoul", "麦麦之魂")
         for base in bases:
-            context.register_web_api(f"{base}/config", get_config, ["GET"], "maisoul WebUI: 读取配置")
-            context.register_web_api(f"{base}/config", post_config, ["POST"], "maisoul WebUI: 保存配置")
-            context.register_web_api(f"{base}/status", get_status, ["GET"], "maisoul WebUI: 运行状态")
-            context.register_web_api(f"{base}/learning", get_learning, ["GET"], "maisoul WebUI: 读取学习库")
-            context.register_web_api(f"{base}/learning", post_learning, ["POST"], "maisoul WebUI: 保存学习库")
-            context.register_web_api(f"{base}/tools", get_tools, ["GET"], "maisoul WebUI: AstrBot 工具与技能列表")
-            context.register_web_api(f"{base}/monitor/replay", get_monitor_replay, ["GET"], "maisoul WebUI: 麦麦观察事件重放")
-            context.register_web_api(f"{base}/monitor/stream", get_monitor_stream, ["GET"], "maisoul WebUI: 麦麦观察实时流")
-            context.register_web_api(f"{base}/models/list", get_models_list, ["GET"], "maisoul WebUI: Provider 模型列表")
-            context.register_web_api(f"{base}/expressions", get_expressions, ["GET"], "maisoul WebUI: 表达方式审核列表")
-            context.register_web_api(f"{base}/expressions/review", post_expressions_review, ["POST"], "maisoul WebUI: 表达方式批量审核")
-            context.register_web_api(f"{base}/expressions/save", post_expressions_save, ["POST"], "maisoul WebUI: 表达方式创建/修改")
+            context.register_web_api(
+                f"{base}/config", get_config, ["GET"], "maisoul WebUI: 读取配置"
+            )
+            context.register_web_api(
+                f"{base}/config", post_config, ["POST"], "maisoul WebUI: 保存配置"
+            )
+            context.register_web_api(
+                f"{base}/status", get_status, ["GET"], "maisoul WebUI: 运行状态"
+            )
+            context.register_web_api(
+                f"{base}/learning", get_learning, ["GET"], "maisoul WebUI: 读取学习库"
+            )
+            context.register_web_api(
+                f"{base}/learning", post_learning, ["POST"], "maisoul WebUI: 保存学习库"
+            )
+            context.register_web_api(
+                f"{base}/tools",
+                get_tools,
+                ["GET"],
+                "maisoul WebUI: AstrBot 工具与技能列表",
+            )
+            context.register_web_api(
+                f"{base}/monitor/replay",
+                get_monitor_replay,
+                ["GET"],
+                "maisoul WebUI: 麦麦观察事件重放",
+            )
+            context.register_web_api(
+                f"{base}/monitor/stream",
+                get_monitor_stream,
+                ["GET"],
+                "maisoul WebUI: 麦麦观察实时流",
+            )
+            context.register_web_api(
+                f"{base}/models/list",
+                get_models_list,
+                ["GET"],
+                "maisoul WebUI: Provider 模型列表",
+            )
+            context.register_web_api(
+                f"{base}/expressions",
+                get_expressions,
+                ["GET"],
+                "maisoul WebUI: 表达方式审核列表",
+            )
+            context.register_web_api(
+                f"{base}/expressions/review",
+                post_expressions_review,
+                ["POST"],
+                "maisoul WebUI: 表达方式批量审核",
+            )
+            context.register_web_api(
+                f"{base}/expressions/save",
+                post_expressions_save,
+                ["POST"],
+                "maisoul WebUI: 表达方式创建/修改",
+            )
         logger.info("maisoul WebUI API 已注册")
     except Exception:
         logger.error("maisoul WebUI 注册失败", exc_info=True)

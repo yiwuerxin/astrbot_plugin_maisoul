@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 
-def demote_quote(buffer: list, cfg, baseline: int, *, max_msgs: int = 3,
-                 max_chars: int = 200) -> tuple[str, str] | None:
+def demote_quote(
+    buffer: list, cfg, baseline: int, *, max_msgs: int = 3, max_chars: int = 200
+) -> tuple[str, str] | None:
     """生成期新消息超阈值 → 返回 (quote_id, msg_id) 引用最新一条。
 
     仅统计非自发消息；未超阈值/开关关/最新一条无 msg_id 返回 None。"""

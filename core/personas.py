@@ -19,8 +19,15 @@ find_persona 对该名字（或"主配置"）返回主配置本身，因此群�
 
 from astrbot.api import logger
 
-PERSONA_FIELDS = ("bot_name", "personality", "behavior_style", "reply_style",
-                  "group_chat_prompt", "aliases", "preset_dialogues")
+PERSONA_FIELDS = (
+    "bot_name",
+    "personality",
+    "behavior_style",
+    "reply_style",
+    "group_chat_prompt",
+    "aliases",
+    "preset_dialogues",
+)
 
 MAIN_PERSONA_KEY = "主配置"
 
@@ -33,7 +40,9 @@ def chat_id_match(chat_id: str, target: str) -> bool:
     if target == "*":
         return True
     chat_id = str(chat_id or "")
-    return bool(chat_id) and (target == chat_id or chat_id.endswith(target) or target.endswith(chat_id))
+    return bool(chat_id) and (
+        target == chat_id or chat_id.endswith(target) or target.endswith(chat_id)
+    )
 
 
 def main_persona(cfg) -> dict:
@@ -51,7 +60,7 @@ def find_persona(cfg, name: str) -> dict | None:
     name = str(name or "").strip()
     if not name:
         return None
-    for p in (cfg.get("personas") or []):
+    for p in cfg.get("personas") or []:
         if isinstance(p, dict) and str(p.get("name") or "").strip() == name:
             return p
     # 主配置人格：名字即机器人昵称（如"麦麦"），库内同名人格优先
@@ -63,8 +72,11 @@ def find_persona(cfg, name: str) -> dict | None:
 
 def list_persona_names(cfg) -> list[str]:
     """人格名单（测试/调试断言用；生产路径按名直查 find_persona）。"""
-    return [str(p.get("name") or "").strip() for p in (cfg.get("personas") or [])
-            if isinstance(p, dict) and str(p.get("name") or "").strip()]
+    return [
+        str(p.get("name") or "").strip()
+        for p in (cfg.get("personas") or [])
+        if isinstance(p, dict) and str(p.get("name") or "").strip()
+    ]
 
 
 def overlay(cfg, persona: dict) -> dict:
@@ -98,7 +110,7 @@ async def resolve_active(context, cfg, gid: str, umo: str) -> tuple[dict, str]:
             logger.debug("maisoul: 读取会话人格失败", exc_info=True)
 
     # 2) 静态群绑定
-    for m in (cfg.get("group_persona") or []):
+    for m in cfg.get("group_persona") or []:
         if not isinstance(m, dict):
             continue
         name = str(m.get("name") or "").strip()

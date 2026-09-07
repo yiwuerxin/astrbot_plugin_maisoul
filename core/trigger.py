@@ -56,7 +56,9 @@ def _rule_time_priority(rule_time: str, now_min: int):
     return 2 if now_min >= start_min or now_min <= end_min else None
 
 
-def _rule_target_priority(rule: dict, platform: str, chat_id: str, is_group: bool) -> int | None:
+def _rule_target_priority(
+    rule: dict, platform: str, chat_id: str, is_group: bool
+) -> int | None:
     p = str(rule.get("platform") or "").strip()
     item = str(rule.get("item_id") or "").strip()
     rule_type = str(rule.get("rule_type") or "").strip()
@@ -83,11 +85,15 @@ def _rule_value(rule: dict) -> float:
         return 0.0
 
 
-def effective_talk_value(cfg, platform: str, chat_id: str,
-                         now: float | None = None, is_group: bool = True) -> float:
+def effective_talk_value(
+    cfg, platform: str, chat_id: str, now: float | None = None, is_group: bool = True
+) -> float:
     """基础 talk_value（私聊用 private_talk_value）+ 动态规则覆盖（无规则命中回落基础值）。"""
-    base = float(cfg.get("talk_value", 1.0) if is_group
-                 else cfg.get("private_talk_value", 1.0) or 0.0)
+    base = float(
+        cfg.get("talk_value", 1.0)
+        if is_group
+        else cfg.get("private_talk_value", 1.0) or 0.0
+    )
     if not cfg.get("enable_talk_value_rules", False):
         return base
     rules = [r for r in (cfg.get("talk_value_rules") or []) if isinstance(r, dict)]
@@ -122,8 +128,9 @@ def message_trigger_threshold(mode: str, frequency: float) -> int:
 # ---------------------------------------------------------------------- #
 # 门控判定
 # ---------------------------------------------------------------------- #
-def idle_compensation(st: GroupState, pending: int, threshold: int,
-                      now: float | None = None) -> tuple[bool, str]:
+def idle_compensation(
+    st: GroupState, pending: int, threshold: int, now: float | None = None
+) -> tuple[bool, str]:
     """复刻 FrequencyThresholdTurnGate._calculate_idle_compensation。
 
     空窗折算封顶 threshold-1，杜绝纯沉默触发；平均间隔带下限保护。
@@ -137,13 +144,16 @@ def idle_compensation(st: GroupState, pending: int, threshold: int,
     idle = max(0.0, now - (st.last_ext_ts or now))
     idle_equiv = min(idle / avg_interval, float(max(0, threshold - 1)))
     equivalent = pending + idle_equiv
-    detail = (f"平均间隔={avg_interval:.2f}s 空窗={idle:.2f}s "
-              f"空窗折算={idle_equiv:.2f} 等效消息数={equivalent:.2f}/{threshold}")
+    detail = (
+        f"平均间隔={avg_interval:.2f}s 空窗={idle:.2f}s "
+        f"空窗折算={idle_equiv:.2f} 等效消息数={equivalent:.2f}/{threshold}"
+    )
     return equivalent >= threshold, detail
 
 
-def frequency_recheck_delay(st: GroupState, pending: int, threshold: int,
-                            now: float | None = None) -> float | None:
+def frequency_recheck_delay(
+    st: GroupState, pending: int, threshold: int, now: float | None = None
+) -> float | None:
     """复刻 FrequencyThresholdTurnGate.evaluate 的 delay 分支：
     预计再过多久等效消息数将达到阈值（到点无新消息也重查 → 主动补话）。"""
     if threshold <= 0 or pending < 1:
@@ -162,11 +172,12 @@ def hit_ban_filter(text: str, words, regexes) -> bool:
     if not text:
         return False
     import re as _re
-    for word in (words or []):
+
+    for word in words or []:
         word = str(word or "")
         if word and word in text:
             return True
-    for pattern in (regexes or []):
+    for pattern in regexes or []:
         pattern = str(pattern or "")
         if not pattern:
             continue
@@ -203,27 +214,46 @@ def should_trigger(
     if talk_value <= 0:
         return False, f"{freq_detail} 判定=静默接收", None
 
-    forced = (at_bot and cfg.get("inevitable_at_reply", True)) or \
-             (mentioned and cfg.get("mentioned_bot_reply", False))
+    forced = (at_bot and cfg.get("inevitable_at_reply", True)) or (
+        mentioned and cfg.get("mentioned_bot_reply", False)
+    )
     if forced:
         reason = "@" if at_bot else "提及"
         detail = f"{freq_detail} 判定=强制触发({reason}必回复)"
         if mode == "reply_necessity":
             fb_factor, fb_note = freqfeedback.frequency_feedback_factor(st, cfg)
-            result = scoring.evaluate(st, at_bot=at_bot, text=text, aliases=aliases,
-                                      feedback_factor=fb_factor, feedback_note=fb_note,
-                                      bot_name=bot_name, frequency=talk_value)
+            result = scoring.evaluate(
+                st,
+                at_bot=at_bot,
+                text=text,
+                aliases=aliases,
+                feedback_factor=fb_factor,
+                feedback_note=fb_note,
+                bot_name=bot_name,
+                frequency=talk_value,
+            )
             return True, detail, result
         return True, detail, None
 
     if mode == "reply_necessity":
         fb_factor, fb_note = freqfeedback.frequency_feedback_factor(st, cfg)
-        result = scoring.evaluate(st, at_bot=at_bot, text=text, aliases=aliases,
-                                  feedback_factor=fb_factor, feedback_note=fb_note,
-                                  bot_name=bot_name, frequency=talk_value)
+        result = scoring.evaluate(
+            st,
+            at_bot=at_bot,
+            text=text,
+            aliases=aliases,
+            feedback_factor=fb_factor,
+            feedback_note=fb_note,
+            bot_name=bot_name,
+            frequency=talk_value,
+        )
         fired = result.score >= TRIGGER_SCORE
         decision = "进入生成" if fired else "等待更多消息"
-        return fired, f"{freq_detail}[{result.detail}][评分阈值={TRIGGER_SCORE}][{decision}]", result
+        return (
+            fired,
+            f"{freq_detail}[{result.detail}][评分阈值={TRIGGER_SCORE}][{decision}]",
+            result,
+        )
 
     if threshold > 0 and pending >= threshold:
         return True, f"{freq_detail} 判定=达到阈值进入生成", None
