@@ -410,7 +410,7 @@ class Monitor:
                 if nxt is self._SENTINEL:
                     # 排水中收到停止信号：本批已取项照常落库后退出
                     # （直接 return 会把整批已取事件丢掉——忙碌群卸载时丢
-                    # 最后一批观察账本，v6.18.1 修复）
+                    # 麦麦观察事件库最后一批，v6.18.1 修复）
                     await self._flush_batch(batch)
                     return
                 batch.append(nxt)
