@@ -8,6 +8,8 @@
 - **字频缓存自愈与原子落盘**（core/typo.py）：损坏的 data_char_frequency.json
   此前会让错字引擎整体抛错不可用；现在读取失败先备份 `.corrupt` 再按 jieba
   词典重建（对齐 learning 库的损坏处理惯例），落盘改 tmp+replace 原子写。
+  PR review 补充形状校验：合法 JSON 但 null/列表/非数值 json.load 不抛异常，
+  会在查频时才炸——形状不对同样备份重建
 - **events_util 四处裸 `except: pass` 补 debug 日志**（识图引用/引用 ID/@bot
   判定/回复判定）：GOAL 验收要求 except 必带留痕——这些 helper 在反注入清洗
   路径上，此前降级完全无痕。行为不变（仍按空/False 降级），仅加 exc_info 日志。
