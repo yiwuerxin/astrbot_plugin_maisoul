@@ -10,10 +10,20 @@ from math import ceil, log1p
 import re
 
 from .constants import (
-    DIRECT_REQUEST_TERMS, IDLE_PRESSURE_BONUS, IGNORED_TEXT_PREFIXES,
-    MEDIA_PLACEHOLDER_PREFIXES, OPINION_TERMS, OTHER_ASSISTANT_PATTERN,
-    PRESSURE_FULL_RATIO, PRESSURE_MAX, PRESSURE_STANDARD, QUESTION_TERMS,
-    SELF_PENALTY_MAX, SELF_RATIO_FREE, SELF_RATIO_FULL, SHORT_REACTIONS,
+    DIRECT_REQUEST_TERMS,
+    IDLE_PRESSURE_BONUS,
+    IGNORED_TEXT_PREFIXES,
+    MEDIA_PLACEHOLDER_PREFIXES,
+    OPINION_TERMS,
+    OTHER_ASSISTANT_PATTERN,
+    PRESSURE_FULL_RATIO,
+    PRESSURE_MAX,
+    PRESSURE_STANDARD,
+    QUESTION_TERMS,
+    SELF_PENALTY_MAX,
+    SELF_RATIO_FREE,
+    SELF_RATIO_FULL,
+    SHORT_REACTIONS,
     WEAK_REQUEST_TERMS,
 )
 from .states import GroupState
@@ -95,7 +105,10 @@ def pressure_score(pending: int, msg_threshold: int, idle_reached: bool) -> int:
         return min(PRESSURE_STANDARD, score)
     overflow = ratio - 1.0
     factor = min(1.0, log1p(overflow) / log1p(PRESSURE_FULL_RATIO - 1.0))
-    return min(PRESSURE_MAX, PRESSURE_STANDARD + int(round((PRESSURE_MAX - PRESSURE_STANDARD) * factor)))
+    return min(
+        PRESSURE_MAX,
+        PRESSURE_STANDARD + int(round((PRESSURE_MAX - PRESSURE_STANDARD) * factor)),
+    )
 
 
 def presence_penalty(st: GroupState) -> int:
@@ -111,7 +124,9 @@ def presence_penalty(st: GroupState) -> int:
     return int(round(SELF_PENALTY_MAX * progress))
 
 
-def score_content(cleaned: str, is_direct: bool, bot_names: list[str]) -> tuple[int, list[str]]:
+def score_content(
+    cleaned: str, is_direct: bool, bot_names: list[str]
+) -> tuple[int, list[str]]:
     score, reasons = 0, []
     if is_question(cleaned):
         score += 15
@@ -172,7 +187,9 @@ def evaluate(
     content, reasons = score_content(cleaned, is_direct, bot_names)
 
     avg_interval = st.avg_external_interval()
-    idle_reached = bool(avg_interval and st.last_ext_ts and time.time() - st.last_ext_ts >= avg_interval)
+    idle_reached = bool(
+        avg_interval and st.last_ext_ts and time.time() - st.last_ext_ts >= avg_interval
+    )
     pending = st.pending_since_fire
     pressure = pressure_score(pending, msg_trigger_threshold(frequency), idle_reached)
     penalty = presence_penalty(st)
@@ -186,14 +203,18 @@ def evaluate(
     if content:
         parts.append(f"内容={content}({','.join(reasons)})")
     if pressure:
-        parts.append(f"压力={pressure}(积压{pending}/闲置{'是' if idle_reached else '否'})")
+        parts.append(
+            f"压力={pressure}(积压{pending}/闲置{'是' if idle_reached else '否'})"
+        )
     if penalty:
         parts.append(f"存在感=-{penalty}")
     parts.append(f"倍率={factor:.2f}")
     if feedback_note:
         parts.append(feedback_note)
 
-    if rel >= 80 and (len(cleaned) >= 120 or any(r.startswith("请求") for r in reasons)):
+    if rel >= 80 and (
+        len(cleaned) >= 120 or any(r.startswith("请求") for r in reasons)
+    ):
         style = "长回复"
     elif rel == 0:
         style = "简短表达"

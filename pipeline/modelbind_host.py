@@ -37,7 +37,9 @@ def _resolve_bound_model(P, cand: dict):
         return None
     return inst, str(cand.get("model"))
 
+
 _task_model_rr: dict[str, int] = {}  # balance 轮转计数器
+
 
 def _pick_task_model(P, task: str, cfg):
     """按策略选主候选（小任务子调用用：无降级链）。None = 跟随默认 Provider。"""
@@ -48,6 +50,7 @@ def _pick_task_model(P, task: str, cfg):
     pick = modelbind.pick_model(candidates, strategy, _task_model_rr, task)
     return _resolve_bound_model(P, pick) if pick else None
 
+
 def _embedding_provider(P, eff_cfg):
     """embedding 任务绑定的嵌入 Provider（vector_intent 表达召回用）。
 
@@ -56,8 +59,9 @@ def _embedding_provider(P, eff_cfg):
     可用嵌入实例，无则 None（调用方回落 legacy 抽样）。
     """
     try:
-        insts = list(getattr(P.context.provider_manager,
-                             "embedding_provider_insts", None) or [])
+        insts = list(
+            getattr(P.context.provider_manager, "embedding_provider_insts", None) or []
+        )
     except Exception:
         # 降级：嵌入实例表不可达按未绑定（调用方回落 legacy 抽样）
         logger.debug("maisoul: 嵌入实例表不可达", exc_info=True)
@@ -67,6 +71,7 @@ def _embedding_provider(P, eff_cfg):
     resolved = _pick_task_model(P, "embedding", eff_cfg)
     return resolved if resolved is not None else insts[0]
 
+
 async def _task_text_chat(P, task: str, cfg, **kwargs):
     """按任务绑定调 text_chat：策略选主候选，异常时依次降级链上后续候选；
     无绑定走 AstrBot 当前默认 Provider。"""
@@ -75,22 +80,25 @@ async def _task_text_chat(P, task: str, cfg, **kwargs):
     if not candidates:
         return await provider.text_chat(**kwargs)
     strategy = modelbind.task_model_strategy(cfg, task)
-    chain = modelbind.build_model_chain(candidates, strategy,
-                                        _task_model_rr, task)
+    chain = modelbind.build_model_chain(candidates, strategy, _task_model_rr, task)
     last_err: Exception | None = None
     for cand in chain:
         resolved = _resolve_bound_model(P, cand)
         if resolved is None:
-            logger.warning(f"maisoul: 任务 {task} 绑定的 provider "
-                           f"{cand.get('provider')} 不存在，跳过")
+            logger.warning(
+                f"maisoul: 任务 {task} 绑定的 provider "
+                f"{cand.get('provider')} 不存在，跳过"
+            )
             continue
         inst, model = resolved
         try:
             return await inst.text_chat(model=model, **kwargs)
         except Exception as e:
             last_err = e
-            logger.warning(f"maisoul: 任务 {task} 模型 {cand.get('provider')}/{model} "
-                           f"调用失败，尝试下一候选: {e}")
+            logger.warning(
+                f"maisoul: 任务 {task} 模型 {cand.get('provider')}/{model} "
+                f"调用失败，尝试下一候选: {e}"
+            )
     if last_err is not None:
         raise last_err
     return await provider.text_chat(**kwargs)

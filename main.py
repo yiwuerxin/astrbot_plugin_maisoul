@@ -37,15 +37,21 @@ _RUNTIME_DATA_FILES = (
 )
 
 
-@register("astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.16.0")
+@register(
+    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.16.0"
+)
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
         self.states = StateManager()
         data_dir = self._persistent_data_dir()
-        self.learning_store = learning.LearningStore(path=data_dir / "data_learning.json")
-        self.monitor = monitor.Monitor(monitor.MonitorStore(data_dir / "data_monitor.db"))
+        self.learning_store = learning.LearningStore(
+            path=data_dir / "data_learning.json"
+        )
+        self.monitor = monitor.Monitor(
+            monitor.MonitorStore(data_dir / "data_monitor.db")
+        )
         self._cycle_counter: dict[str, int] = {}
         self._group_sessions: set[str] = set()
         self._monitor_sessions: set[str] = set()
@@ -76,18 +82,21 @@ class MaiSoulPlugin(Star):
                 shutil.move(str(src), str(dst))
                 logger.info(f"maisoul: 运行时数据 {name} 已迁移至持久化目录 {data_dir}")
         return data_dir
+
     async def initialize(self):
         self._migrate_legacy_nicknames()
         # Phase4：task_models 规范器接线（历史任意形态 → 五任务齐全，内存态；
         # 不写回配置文件——清洗结果只影响本次运行的候选链）
         self.config["task_models"] = modelbind.normalize_task_models(
-            self.config.get("task_models"))
+            self.config.get("task_models")
+        )
         logger.info(
             f"maisoul v6.16.0 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
-            f"{'开' if self.config.get('maid_bridge', True) else '关'}")
+            f"{'开' if self.config.get('maid_bridge', True) else '关'}"
+        )
         # M10：观察账本后台 writer（emit 只入队，落库经 to_thread 移出事件循环）
         self.monitor.start_writer()
         # M11：错字引擎预热——首次构建要遍历两万汉字逐个 pinyin() + 读字频表
@@ -100,17 +109,27 @@ class MaiSoulPlugin(Star):
                 try:
                     await asyncio.to_thread(_typo.get_typo_generator, self.config)
                 except Exception:
-                    logger.debug("maisoul: 错字引擎预热失败（将在首次使用时构建）",
-                                 exc_info=True)
+                    logger.debug(
+                        "maisoul: 错字引擎预热失败（将在首次使用时构建）", exc_info=True
+                    )
+
             self._spawn(_preheat(), name="typo_preheat")
-        webui_routes.register_webui(self.context, self.config, self.states,
-                                    self.learning_store, self.monitor)
+        webui_routes.register_webui(
+            self.context, self.config, self.states, self.learning_store, self.monitor
+        )
+
     def _migrate_legacy_nicknames(self):
         """v6.3 前别名拆在 nicknames（提及检测）里：合并进统一的 aliases，避免丢词。"""
-        legacy = [str(n).strip() for n in (self.config.get("nicknames") or []) if str(n).strip()]
+        legacy = [
+            str(n).strip()
+            for n in (self.config.get("nicknames") or [])
+            if str(n).strip()
+        ]
         if not legacy:
             return
-        aliases = [str(a).strip() for a in (self.config.get("aliases") or []) if str(a).strip()]
+        aliases = [
+            str(a).strip() for a in (self.config.get("aliases") or []) if str(a).strip()
+        ]
         merged = aliases + [n for n in legacy if n not in aliases]
         self.config["aliases"] = merged
         try:
@@ -152,4 +171,3 @@ class MaiSoulPlugin(Star):
         await self.monitor.stop_writer()  # M10：冲刷残余事件后再关连接池
         self.monitor.close()
         logger.info("maisoul v6.16.0 已卸载")
-

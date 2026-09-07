@@ -23,7 +23,9 @@ async def send_humanlike(send, answer: str, cfg, typing_mult: float = 1.0) -> li
     for index, seg in enumerate(segments):
         if index > 0:
             # P-B：情绪激昂度放大打字节奏（typing_mult=1.5^arousal，默认 1）
-            delay = calculate_typing_time(seg.text, typing_speed=typing_speed) * typing_mult
+            delay = (
+                calculate_typing_time(seg.text, typing_speed=typing_speed) * typing_mult
+            )
             if delay > 0:
                 await asyncio.sleep(delay)
         await send(seg.text)

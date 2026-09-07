@@ -36,8 +36,9 @@ def validate_config_payload(schema, payload: dict, current) -> tuple[dict, str |
         meta = (schema or {}).get(k) if isinstance(schema, dict) else None
         checker = _TYPE_CHECKERS.get(str((meta or {}).get("type") or ""))
         if checker is not None and not checker(v):
-            return accepted, (f"字段 {k} 期望 {meta.get('type')} 类型，"
-                              f"收到 {type(v).__name__}")
+            return accepted, (
+                f"字段 {k} 期望 {meta.get('type')} 类型，" f"收到 {type(v).__name__}"
+            )
         accepted[k] = v
     return accepted, None
 

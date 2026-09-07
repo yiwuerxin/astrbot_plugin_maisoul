@@ -25,23 +25,37 @@ async def maisoul_cmd_impl(P, event: AstrMessageEvent):
     # 此处 raw 仍带命令名"maisoul"，子命令解析先剥掉它（否则 sim 等子命令
     # 全部落到状态分支，v6.13.4 修复）
     if raw.lower().startswith("maisoul"):
-        raw = raw[len("maisoul"):].strip()
+        raw = raw[len("maisoul") :].strip()
     arg = raw.lower()
     if arg.startswith("sim ") and raw[4:].strip():
         # 调试：把文本灌进完整管线（门控→planner→replyer），不依赖群聊适配器
         text = raw[4:].strip()
         st = P.states.get("sim")
-        st.record_external({"name": event.get_sender_name() or "测试者",
-                            "sid": str(event.get_sender_id()), "msg_id": "sim",
-                            "text": text, "at_bot": False, "reply_bot": False,
-                            "ts": time.time()})
+        st.record_external(
+            {
+                "name": event.get_sender_name() or "测试者",
+                "sid": str(event.get_sender_id()),
+                "msg_id": "sim",
+                "text": text,
+                "at_bot": False,
+                "reply_bot": False,
+                "ts": time.time(),
+            }
+        )
         aliases = [str(a) for a in (P.config.get("aliases") or [])]
         bot_name = str(P.config["bot_name"])
         fired, detail, _ = trigger.should_trigger(
-            st, P.config, at_bot=False,
+            st,
+            P.config,
+            at_bot=False,
             mentioned=any(k and k in text for k in [bot_name, *aliases]),
-            text=text, aliases=aliases, bot_name=bot_name,
-            platform="sim", chat_id="sim", is_group=False)
+            text=text,
+            aliases=aliases,
+            bot_name=bot_name,
+            platform="sim",
+            chat_id="sim",
+            is_group=False,
+        )
         yield event.plain_result(f"[sim 门控] {detail}")
         if not fired:
             return
@@ -51,9 +65,19 @@ async def maisoul_cmd_impl(P, event: AstrMessageEvent):
         pl.umo = event.unified_msg_origin
         pl.platform = "webchat"
         pl.is_group = False
-        await _planner_cycle(P, event.unified_msg_origin, "webchat", "sim", st, False,
-                                  event=event, gen=gen)
-        yield event.plain_result(f"[sim 完成] 人格={st.last_persona}，决策结果见上方发言/日志")
+        await _planner_cycle(
+            P,
+            event.unified_msg_origin,
+            "webchat",
+            "sim",
+            st,
+            False,
+            event=event,
+            gen=gen,
+        )
+        yield event.plain_result(
+            f"[sim 完成] 人格={st.last_persona}，决策结果见上方发言/日志"
+        )
         return
     if arg in ("on", "off"):
         P.config["enable"] = arg == "on"
@@ -71,7 +95,8 @@ async def maisoul_cmd_impl(P, event: AstrMessageEvent):
     else:
         f = max(0.0, float(P.config.get("talk_value", 1.0) or 0.0))
         th = trigger.message_trigger_threshold(
-            str(P.config.get("reply_trigger_mode", "frequency")), f)
+            str(P.config.get("reply_trigger_mode", "frequency")), f
+        )
         yield event.plain_result(
             f"maisoul v6.15.4状态：{'运行中' if P.config['enable'] else '已停用'} | "
             f"模式={P.config['mode']} | bot={P.config['bot_name']}\n"
@@ -80,6 +105,7 @@ async def maisoul_cmd_impl(P, event: AstrMessageEvent):
             f"错字={'开' if P.config.get('typo_enable', True) else '关'} 活跃群数={len(P.states)}\n"
             f"指令：/maisoul on|off | /maisoul planner|native|independent | /maisoul sim <文本>（WebUI 调试走完整管线）"
         )
+
 
 # ------------------------------------------------------------------ #
 # 工具函数                                                             #
