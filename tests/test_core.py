@@ -157,6 +157,10 @@ def check(name, cond, info=""):
     else:
         FAIL += 1
         print(f"  FAIL {name} {info}")
+        # pytest 套件下失败即抛——让对应 test_* 用例红掉；自执行模式保持
+        # 聚合计数、跑完全部再汇总退出（两种入口共用同一套用例）
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            raise AssertionError(f"{name} {info}")
 
 
 def make_state(msgs, *, pending=None, self_times=None, intervals=None):
