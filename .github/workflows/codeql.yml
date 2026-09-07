@@ -1,0 +1,33 @@
+# CodeQL 代码扫描（python）。当前仅手动触发：本仓库为个人账号下的私有仓，
+# 未启用 GitHub Advanced Security，CodeQL 分析无法运行（analyze 步骤会因
+# "Code scanning is not enabled" 失败）。具备条件后（仓库转公开，或转入
+# 组织并启用 GHAS），把 on 改回 push/pull_request 即全量生效。
+name: CodeQL
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
