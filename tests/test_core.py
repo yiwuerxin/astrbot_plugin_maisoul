@@ -2600,8 +2600,10 @@ def test_taskregistry():
         == "m-x",
     )
 
+
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
     import asyncio as _aio2
+    from astrbot_plugin_maisoul.core.taskregistry import TaskRegistry as _TR
     from astrbot_plugin_maisoul.core.monitor import (
         MaisakaMonitorEventRecord as _Rec,
         Monitor as _M,
@@ -2611,7 +2613,7 @@ def test_taskregistry():
     async def _writer_scenario():
         s2 = _MS(pathlib.Path(tempfile.mkdtemp()) / "m10.db")
         m2 = _M(s2)
-        m2.start_writer()
+        m2.start_writer(_TR())
         m2.emit_session_start(
             "g1",
             "群 g1",
@@ -2651,7 +2653,7 @@ def test_taskregistry():
             return _orig_record(event, data)
 
         s4.record = _gated_record
-        m4.start_writer()
+        m4.start_writer(_TR())
         m4.emit_message_sent(
             "g1", "麦麦", "m0", "id0", time.time(), "reply", platform="qq"
         )
@@ -2683,6 +2685,38 @@ def test_taskregistry():
         "writer 停止: 排水中撞哨兵不丢已取批次",
         n4 == 3,
         f"rows={n4}（应为 3，旧实现丢 m1/m2 整批）",
+    )
+
+    # v6.18.1：writer 经 TaskRegistry 发起（create_task 唯一入口约束；
+    # 旧实现裸 create_task，与 REFACTOR_NOTES「grep 仅 TaskRegistry 本体」的
+    # 验收声明不符）
+
+    async def _writer_reg_scenario():
+        s5 = _MS(pathlib.Path(tempfile.mkdtemp()) / "reg.db")
+        m5 = _M(s5)
+        reg5 = _TR()
+        m5.start_writer(reg5)
+        size_running = reg5.size
+        m5.emit_message_sent(
+            "g1", "麦麦", "x", "i", time.time(), "reply", platform="qq"
+        )
+        await m5.stop_writer()
+        await _aio2.sleep(0)  # done_callback 清理一拍
+        return size_running, reg5.size
+
+    try:
+        _size_running, _size_after = _aio2.run(_writer_reg_scenario())
+    except TypeError:
+        _size_running, _size_after = -1, -1  # 旧签名无 registry 参数
+    check(
+        "writer 注册: start_writer 经 TaskRegistry spawn",
+        _size_running == 1,
+        f"size={_size_running}",
+    )
+    check(
+        "writer 注册: 停止后自动移除",
+        _size_after == 0,
+        f"size={_size_after}",
     )
 
     # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
