@@ -23,9 +23,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: 安装依赖
-        run: pip install -r astrbot_plugin_maisoul/requirements.txt
+        run: pip install -r astrbot_plugin_maisoul/requirements.txt pytest
       - name: 运行测试
-        run: python astrbot_plugin_maisoul/tests/test_core.py
+        # pytest 套件（21 个 test_* 用例，覆盖自执行的 369 项 check）：
+        # check() 在 pytest 环境下失败即抛 AssertionError；本地手跑仍可用
+        # python3 tests/test_core.py 走聚合计数模式，两入口共用同一套用例
+        run: python -m pytest astrbot_plugin_maisoul/tests/ -q
 
   purity:
     name: 纯净交付检查
