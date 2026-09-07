@@ -544,7 +544,7 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 9. SQLModel 表类热重载会重复注册同名表 → 定义前 `SQLModel.metadata.remove(...)`；sessionmaker 用 `class_=sqlmodel.Session`。
 10. `@filter.llm_tool` 工具不能直接 `tool.call()`，必须走 `FunctionToolExecutor.execute()`；统一入口 `bridge.call_llm_tool(context, event, tool, args)`，无原始 event 用 `bridge.SyntheticEvent(umo)`。
 11. 插件 WebAPI 的 HTTP 前缀带 `/api/v1`（§6）。
-12. 版本四处同步：metadata.yaml（日志读它）、`@register`、PAGE_VERSION、status API。
+12. 版本**六处**同步（Sourcery 曾抓到漏改）：metadata.yaml（日志读它）、`@register`、PAGE_VERSION、status API（webui/routes.py）、main.py 模块 docstring 与加载/卸载日志、pipeline/admin.py 的 `/maisoul` 状态行。
 
 ### 8.2 插件页与桥
 
