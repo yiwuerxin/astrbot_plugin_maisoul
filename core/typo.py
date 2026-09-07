@@ -95,7 +95,9 @@ class ChineseTypoGenerator:
                         _FREQ_FILE.parent / (_FREQ_FILE.name + ".corrupt")
                     )
                 except OSError:
-                    logger.debug("maisoul: 字频缓存损坏备份失败（继续重建）", exc_info=True)
+                    logger.debug(
+                        "maisoul: 字频缓存损坏备份失败（继续重建）", exc_info=True
+                    )
         # 无缓存时按 MaiBot 逻辑从 jieba 词典生成并落盘
         char_freq = defaultdict(int)
         dict_path = os.path.join(os.path.dirname(jieba.__file__), "dict.txt")

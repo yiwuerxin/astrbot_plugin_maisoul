@@ -1,3 +1,34 @@
+# REFACTOR_NOTES — v6.18.1（健壮性修复批次）
+
+外部评审复核后的小修批次，全部为局部修复，**零行为面变更、零数据迁移**。
+升级：覆盖代码文件后重启（或重载插件）即可。
+
+## 修复清单
+
+- **字频缓存自愈与原子落盘**（core/typo.py）：损坏的 data_char_frequency.json
+  此前会让错字引擎整体抛错不可用；现在读取失败先备份 `.corrupt` 再按 jieba
+  词典重建（对齐 learning 库的损坏处理惯例），落盘改 tmp+replace 原子写。
+- **events_util 四处裸 `except: pass` 补 debug 日志**（识图引用/引用 ID/@bot
+  判定/回复判定）：GOAL 验收要求 except 必带留痕——这些 helper 在反注入清洗
+  路径上，此前降级完全无痕。行为不变（仍按空/False 降级），仅加 exc_info 日志。
+- **观察 writer 停机丢批次**（core/monitor.py）：writer 正在 flush（to_thread
+  落库中）时后续事件入队并停机，哨兵会在下一轮批量排水中被取出——旧实现
+  直接 return 把已取整批丢弃（与同行注释承诺相反）；生产对应「忙碌群消息
+  持续入队时卸载插件」场景。现在排水中撞哨兵先冲刷已取批次再退出。
+- **writer 经 TaskRegistry 发起**：start_writer 改为必传 registry（main.py 与
+  测试同步更新），消灭最后一处裸 `asyncio.create_task`——使
+  「grep create_task 仅 TaskRegistry 本体」的验收声明重新成立。
+- **LLM 失败上报归因**（pipeline/modelbind_host.py + planner_host.py）：
+  `_task_text_chat` 改为每次尝试前写 `used`（成功路径重写同值，语义不变），
+  planner 的 llm.error 据此上报**实际尝试的模型**（任务绑定/降级链场景），
+  不再恒记默认 provider 标签。
+
+## 验证
+
+- pytest 与自执行双入口全绿（22 用例 / 381 项检查，本次新增 5 项回归，全部
+  先在旧代码上验证失败后转绿；writer 丢批次用例用线程屏障钉死时序）。
+- black 26.5.1 全仓 `--check` 通过；`grep create_task` 审计干净。
+
 # REFACTOR_NOTES — v6.16.0（GOAL 双插件加固重构）
 
 本次按外部审查报告与 GOAL 任务书完成 P0 修复、结构重构与 MaiBot 机制移植。
