@@ -97,8 +97,9 @@ class MaiSoulPlugin(Star):
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
             f"{'开' if self.config.get('maid_bridge', True) else '关'}"
         )
-        # M10：观察账本后台 writer（emit 只入队，落库经 to_thread 移出事件循环）
-        self.monitor.start_writer()
+        # M10：观察账本后台 writer（emit 只入队，落库经 to_thread 移出事件循环）；
+        # 经 TaskRegistry 发起（create_task 唯一入口约束，v6.18.1）
+        self.monitor.start_writer(self._registry)
         # M11：错字引擎预热——首次构建要遍历两万汉字逐个 pinyin() + 读字频表
         # + jieba 词典，内联在首条回复的发送路径上会卡秒级；装载时后台线程
         # 提前完成，发送路径只取现成实例

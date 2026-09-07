@@ -372,12 +372,15 @@ class Monitor:
             # 观察账本写入失败不阻断聊天管线，但必须留痕（高频路径用 debug）
             logger.debug(f"maisoul: 麦麦观察事件写入失败: {event}", exc_info=True)
 
-    def start_writer(self) -> None:
-        """启动后台落库 writer 协程（M10）。幂等；需在事件循环内调用。"""
+    def start_writer(self, registry) -> None:
+        """启动后台落库 writer 协程（M10）。幂等；需在事件循环内调用。
+
+        registry（TaskRegistry）：create_task 唯一入口约束——writer 必须
+        经注册表发起（强引用 + 卸载时 cancel_and_wait_all 统一管理）。"""
         if self._writer is not None and not self._writer.done():
             return
         self._queue = asyncio.Queue(maxsize=2000)
-        self._writer = asyncio.create_task(self._writer_loop(), name="monitor_writer")
+        self._writer = registry.spawn(self._writer_loop(), name="monitor_writer")
 
     _SENTINEL = object()  # stop_writer 的优雅退出信号
 
