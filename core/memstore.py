@@ -13,9 +13,9 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 
-MAX_POINTS = 64          # 每会话记忆点上限（FIFO 淘汰）
-MAX_RECALL_ITEMS = 3     # 单轮召回上限
-MAX_RECALL_CHARS = 900   # 召回总字数上限
+MAX_POINTS = 64  # 每会话记忆点上限（FIFO 淘汰）
+MAX_RECALL_ITEMS = 3  # 单轮召回上限
+MAX_RECALL_CHARS = 900  # 召回总字数上限
 DEFAULT_THRESHOLD = 0.18  # Jaccard 词集命中阈值（无 embedding 的召回近似）
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
@@ -41,7 +41,7 @@ def word_set(text: str) -> set[str]:
 
 def _add_cjk(words: set[str], s: str) -> None:
     for i in range(len(s) - 1):
-        words.add(s[i:i + 2])
+        words.add(s[i : i + 2])
     if len(s) == 1:
         words.add(s)
 
@@ -70,11 +70,20 @@ class SessionMemory:
         s = str(summary or "").strip()[:300]
         if not s:
             return
-        self.points.append(MemoryPoint(s, [str(c).strip() for c in (cues or [])[:5] if str(c).strip()], ts))
+        self.points.append(
+            MemoryPoint(
+                s, [str(c).strip() for c in (cues or [])[:5] if str(c).strip()], ts
+            )
+        )
 
-    def recall(self, texts: list[str], *, k: int = MAX_RECALL_ITEMS,
-               threshold: float = DEFAULT_THRESHOLD,
-               max_chars: int = MAX_RECALL_CHARS) -> list[str]:
+    def recall(
+        self,
+        texts: list[str],
+        *,
+        k: int = MAX_RECALL_ITEMS,
+        threshold: float = DEFAULT_THRESHOLD,
+        max_chars: int = MAX_RECALL_CHARS,
+    ) -> list[str]:
         """最近消息词集 × 线索词集 Jaccard 最大值 ≥ threshold → 命中，按分取前 k。"""
         target = set()
         for t in texts or []:
@@ -110,6 +119,7 @@ class SessionMemory:
 def parse_summary(raw: str) -> tuple[str, list[str]] | None:
     """解析摘要 LLM 输出 {"summary":…,"cues":[…]}；失败返回 None（静默跳过）。"""
     import json
+
     text = str(raw or "").strip()
     m = re.search(r"\{[\s\S]*\}", text)
     if not m:

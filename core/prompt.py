@@ -19,16 +19,24 @@ def build_identity(cfg) -> str:
 def select_reply_style(cfg) -> str:
     """基础说话风格 + 临时备用风格彩票（复刻 _select_temporary_reply_style）。"""
     style = str(cfg.get("reply_style") or "").strip()
-    candidates = [str(s).strip() for s in (cfg.get("multiple_reply_style") or []) if str(s).strip()]
+    candidates = [
+        str(s).strip()
+        for s in (cfg.get("multiple_reply_style") or [])
+        if str(s).strip()
+    ]
     prob = float(cfg.get("multiple_probability", 0) or 0)
     if candidates and prob > 0 and random.random() * 100 < prob:
         style += f"\n本次临时风格（仅本次回复生效）：{random.choice(candidates)}"
     return style
 
 
-def build_attention_block(cfg, chat_id: str | None = None, platform: str | None = None,
-                          is_group: bool = True,
-                          include_chat_prompt: bool = True) -> str:
+def build_attention_block(
+    cfg,
+    chat_id: str | None = None,
+    platform: str | None = None,
+    is_group: bool = True,
+    include_chat_prompt: bool = True,
+) -> str:
     """复刻 _build_group_chat_attention_block：通用注意事项（群聊/私聊各自提示词）。
 
     部署版的「当前聊天额外注意事项」（chat_prompts 精确匹配）不在系统提示词里，
@@ -50,8 +58,9 @@ def build_attention_block(cfg, chat_id: str | None = None, platform: str | None 
     return "在该聊天中的注意事项：\n" + "\n\n".join(lines) + "\n"
 
 
-def chat_attention_tail(cfg, chat_id: str | None, platform: str | None = None,
-                        is_group: bool = True) -> str:
+def chat_attention_tail(
+    cfg, chat_id: str | None, platform: str | None = None, is_group: bool = True
+) -> str:
     """chat_prompts 命中 → 请求末尾的独立 user 消息（对齐部署版
     _build_current_chat_attention_tail_message 原文格式）。"""
     extra = _match_chat_prompt(cfg, chat_id, platform, is_group)
@@ -60,14 +69,15 @@ def chat_attention_tail(cfg, chat_id: str | None, platform: str | None = None,
     return f"当前聊天额外注意事项：\n{extra}"
 
 
-def _match_chat_prompt(cfg, chat_id: str | None, platform: str | None = None,
-                       is_group: bool = True) -> str:
+def _match_chat_prompt(
+    cfg, chat_id: str | None, platform: str | None = None, is_group: bool = True
+) -> str:
     """chat_prompts: [{platform, item_id, rule_type, prompt}] —— 复刻 ChatConfigUtils.
     _iter_matching_chat_prompts：精确匹配 platform+item_id，多条命中以换行拼接。"""
     if not chat_id:
         return ""
     matched = []
-    for item in (cfg.get("chat_prompts") or []):
+    for item in cfg.get("chat_prompts") or []:
         if not isinstance(item, dict):
             continue
         p = str(item.get("platform") or "").strip()
@@ -89,7 +99,7 @@ def build_preset_dialogues_block(cfg) -> str:
     条目 {user, reply} 均非空才收录；只示范语气与习惯，明确告知不照搬内容。
     """
     items = []
-    for d in (cfg.get("preset_dialogues") or []):
+    for d in cfg.get("preset_dialogues") or []:
         if not isinstance(d, dict):
             continue
         u = str(d.get("user") or "").strip()
@@ -98,13 +108,16 @@ def build_preset_dialogues_block(cfg) -> str:
             items.append((u, r))
     if not items:
         return ""
-    lines = ["【预设对话】以下示例展示你应有的说话风格，只参考语气与用词习惯，不要照搬内容："]
+    lines = [
+        "【预设对话】以下示例展示你应有的说话风格，只参考语气与用词习惯，不要照搬内容："
+    ]
     lines += [f"用户：{u}\n你：{r}" for u, r in items]
     return "\n".join(lines) + "\n"
 
 
-def build_system_prompt(cfg, chat_id: str | None = None, platform: str | None = None,
-                        is_group: bool = True) -> str:
+def build_system_prompt(
+    cfg, chat_id: str | None = None, platform: str | None = None, is_group: bool = True
+) -> str:
     """逐行复刻 prompts/zh-CN/maisaka_replyer.prompt 的结构。"""
     from .sanitize import ANTI_INJECTION_LINES
 
@@ -122,7 +135,9 @@ def build_system_prompt(cfg, chat_id: str | None = None, platform: str | None = 
     return base
 
 
-REPLY_INSTRUCTION = "请自然地回复。不要输出多余说明、括号、@ 或额外标记，只输出实际要发言的内容。"
+REPLY_INSTRUCTION = (
+    "请自然地回复。不要输出多余说明、括号、@ 或额外标记，只输出实际要发言的内容。"
+)
 
 # reply 工具 reply_style 参数的篇幅指令（maisaka_generator_base.
 # _build_requested_reply_style_message 三档原文；"正常回复"为空=不注入）
@@ -143,7 +158,11 @@ def image_context_parts(st: "GroupState", cfg, max_num: int | None = None) -> li
     """
     if not cfg.get("enable_image_context", False):
         return []
-    limit = max_num if max_num is not None else max(0, int(cfg.get("image_context_max_num", 3)))
+    limit = (
+        max_num
+        if max_num is not None
+        else max(0, int(cfg.get("image_context_max_num", 3)))
+    )
     if limit == 0:
         return []
     refs: list[str] = []
@@ -171,9 +190,15 @@ def _optimize_transcript(buf: list[dict], bot_name: str, keep: int = 3) -> list[
 
 
 def build_final_user_message(
-    st: GroupState, cfg, reason: str, style: str = "",
-    *, expression_habits: str = "", jargon_reference: str = "",
-    keyword_reaction: str = "", reference_override: str = "",
+    st: GroupState,
+    cfg,
+    reason: str,
+    style: str = "",
+    *,
+    expression_habits: str = "",
+    jargon_reference: str = "",
+    keyword_reaction: str = "",
+    reference_override: str = "",
     is_group: bool = True,
 ) -> str:
     """复刻 _build_final_user_message 的段结构。
@@ -187,15 +212,18 @@ def build_final_user_message(
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     bot_name = str(cfg.get("bot_name") or "麦麦")
     context_key = "max_context_size" if is_group else "max_private_context_size"
-    buf = list(st.buffer)[-int(cfg.get(context_key, 40 if is_group else 60)):]
+    buf = list(st.buffer)[-int(cfg.get(context_key, 40 if is_group else 60)) :]
     if cfg.get("enable_context_optimization", True):
         from .learning import ASSISTANT_OPTIMIZATION_KEEP_COUNT
+
         buf = _optimize_transcript(buf, bot_name, ASSISTANT_OPTIMIZATION_KEEP_COUNT)
     transcript = "\n".join(
         f"{m['name']}{'(@了我)' if m['at_bot'] else ''}: {m['text']}" for m in buf
     )
 
-    reference = reference_override.strip() or (f"当前思考：\n{reason}" if reason else "")
+    reference = reference_override.strip() or (
+        f"当前思考：\n{reason}" if reason else ""
+    )
     if style:
         # 篇幅指令 = MaiBot 三档原文（"正常回复"映射空串=完全不注入）；
         # 独立注入（MaiBot 是独立 user 消息，此处内联，且不再依赖

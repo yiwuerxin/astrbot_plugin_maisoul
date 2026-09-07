@@ -11,7 +11,8 @@ import re
 
 # 引用/转发占位（QQ OneBot 常见形态 + 通用文案形态）
 _REPLY_PREFIX_RE = re.compile(
-    r"^\s*(?:\[CQ:reply[^\]]*\]|\[回复[^\]]*\]|\[引用[^\]]*\]|<reply>[^<]*</reply>)\s*")
+    r"^\s*(?:\[CQ:reply[^\]]*\]|\[回复[^\]]*\]|\[引用[^\]]*\]|<reply>[^<]*</reply>)\s*"
+)
 _FORWARD_RE = re.compile(r"\[CQ:forward[^\]]*\]|\[合并转发[^\]]*\]")
 _AT_LEAD_RE = re.compile(r"^\s*@([\w\u4e00-\u9fff·\-]+)\s*")
 
@@ -43,7 +44,10 @@ def leading_ai_mention(text: str, bot_name: str, aliases: list[str]) -> str:
     name = m.group(1)
     if not name:
         return ""
-    mine = {str(bot_name or "").strip().lstrip("@"), *(str(a).strip().lstrip("@") for a in (aliases or []))}
+    mine = {
+        str(bot_name or "").strip().lstrip("@"),
+        *(str(a).strip().lstrip("@") for a in (aliases or [])),
+    }
     mine.discard("")
     if name in mine:
         return ""

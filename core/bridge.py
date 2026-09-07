@@ -82,6 +82,7 @@ def _builtin_tool_enabled(context, name: str) -> bool:
     """
     try:
         from astrbot.core.tools.registry import get_builtin_tool_config_rule
+
         rule = get_builtin_tool_config_rule(name)
         if rule is None:
             return True
@@ -91,8 +92,9 @@ def _builtin_tool_enabled(context, name: str) -> bool:
         conds = rule.evaluate(cfg_all)
         return all(bool(c.get("matched")) for c in conds)
     except Exception:
-        logger.debug(f"maisoul: builtin 工具 {name} 激活条件求值失败，按启用处理",
-                     exc_info=True)
+        logger.debug(
+            f"maisoul: builtin 工具 {name} 激活条件求值失败，按启用处理", exc_info=True
+        )
         return True
 
 
@@ -120,9 +122,13 @@ def list_deferred_tools(context, cfg) -> list[dict]:
             if not _builtin_tool_enabled(context, name):
                 continue
             seen.add(name)
-            out.append({"name": name,
-                        "description": str(getattr(tool, "description", "") or ""),
-                        "tool": tool})
+            out.append(
+                {
+                    "name": name,
+                    "description": str(getattr(tool, "description", "") or ""),
+                    "tool": tool,
+                }
+            )
     except Exception:
         logger.debug("maisoul: 构建 deferred 工具池失败", exc_info=True)
     return out
@@ -154,8 +160,9 @@ def _result_text(r) -> str:
     return str(r or "")
 
 
-async def call_llm_tool(context, event, tool, args: dict | None = None,
-                        timeout: int = 120) -> str:
+async def call_llm_tool(
+    context, event, tool, args: dict | None = None, timeout: int = 120
+) -> str:
     """按 AstrBot 原生 agent 的路径执行一个 llm_tool（FunctionToolExecutor.execute）。
 
     装饰器注册的插件工具（如 call_maid/send_meme）不能直接 tool.call()，
@@ -167,8 +174,7 @@ async def call_llm_tool(context, event, tool, args: dict | None = None,
     from astrbot.core.agent.run_context import ContextWrapper
     from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
-    wrapper = ContextWrapper(
-        context=SimpleNamespace(event=event, context=context))
+    wrapper = ContextWrapper(context=SimpleNamespace(event=event, context=context))
     out: list[str] = []
     agen = FunctionToolExecutor.execute(tool=tool, run_context=wrapper, **(args or {}))
     try:
@@ -190,7 +196,11 @@ async def exec_tool_calls(context, event, resp) -> str:
         names = list(getattr(resp, "tools_call_name", None) or [])
         args_list = list(getattr(resp, "tools_call_args", None) or [])
         for i, name in enumerate(names):
-            args = args_list[i] if i < len(args_list) and isinstance(args_list[i], dict) else {}
+            args = (
+                args_list[i]
+                if i < len(args_list) and isinstance(args_list[i], dict)
+                else {}
+            )
             tool = mgr.get_func(name)
             if tool is None:
                 out.append(f"{name}: 工具不存在")
@@ -236,13 +246,15 @@ def list_astrbot_tools(context) -> list[dict]:
             origin, origin_name = "plugin", str(star_map[tool.handler_module_path].name)
         else:
             origin, origin_name = "unknown", "unknown"
-        out.append({
-            "name": tool.name,
-            "description": tool.description,
-            "active": bool(getattr(tool, "active", True)),
-            "origin": origin,
-            "origin_name": origin_name,
-        })
+        out.append(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "active": bool(getattr(tool, "active", True)),
+                "origin": origin,
+                "origin_name": origin_name,
+            }
+        )
     return out
 
 
@@ -294,8 +306,11 @@ def _build_skills_block_uncached(names: set) -> str:
     try:
         from astrbot.core.skills.skill_manager import SkillManager, build_skills_prompt
 
-        skills = [s for s in SkillManager().list_skills(active_only=True, runtime="local")
-                  if s.name in names]
+        skills = [
+            s
+            for s in SkillManager().list_skills(active_only=True, runtime="local")
+            if s.name in names
+        ]
         if not skills:
             return ""
         return f"\n{build_skills_prompt(skills)}\n"

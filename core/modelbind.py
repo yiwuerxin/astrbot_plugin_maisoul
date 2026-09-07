@@ -20,7 +20,7 @@ def _task_entry(cfg, task: str) -> dict:
     if isinstance(tm, dict):
         entry = tm.get(task) or {}
         return entry if isinstance(entry, dict) else {}
-    for entry in (tm or []):
+    for entry in tm or []:
         if isinstance(entry, dict) and entry.get("task") == task:
             return entry
     return {}
@@ -40,20 +40,31 @@ def normalize_task_models(value) -> list[dict]:
                 known[str(entry["task"])] = entry
     for task in TASKS:
         entry = known.get(task) or {}
-        out.append({
-            "task": task,
-            "models": [m for m in (entry.get("models") or [])
-                       if isinstance(m, dict) and m.get("provider") and m.get("model")],
-            "strategy": entry.get("strategy") if entry.get("strategy") in STRATEGIES
-            else "sequential",
-        })
+        out.append(
+            {
+                "task": task,
+                "models": [
+                    m
+                    for m in (entry.get("models") or [])
+                    if isinstance(m, dict) and m.get("provider") and m.get("model")
+                ],
+                "strategy": (
+                    entry.get("strategy")
+                    if entry.get("strategy") in STRATEGIES
+                    else "sequential"
+                ),
+            }
+        )
     return out
 
 
 def task_model_candidates(cfg, task: str) -> list[dict]:
     """任务绑定的有效候选（provider+model 双全才算数；过滤手动改坏的条目）。"""
-    return [m for m in (_task_entry(cfg, task).get("models") or [])
-            if isinstance(m, dict) and m.get("provider") and m.get("model")]
+    return [
+        m
+        for m in (_task_entry(cfg, task).get("models") or [])
+        if isinstance(m, dict) and m.get("provider") and m.get("model")
+    ]
 
 
 def task_model_strategy(cfg, task: str) -> str:
@@ -61,8 +72,9 @@ def task_model_strategy(cfg, task: str) -> str:
     return strategy if strategy in STRATEGIES else "sequential"
 
 
-def build_model_chain(candidates: list[dict], strategy: str,
-                      rr: dict, task: str) -> list[dict]:
+def build_model_chain(
+    candidates: list[dict], strategy: str, rr: dict, task: str
+) -> list[dict]:
     """本次调用的尝试链：主候选在前，其余按列表顺序作降级。
 
     rr：balance 策略的轮转计数器（调用方持有，跨次累计）。

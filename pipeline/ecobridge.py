@@ -21,6 +21,7 @@ def _normalize_extra_parts(parts: list) -> list:
       ——绝不 str() 整个对象，repr 垃圾既进不了模型也不能进观察页。
     """
     from astrbot.core.agent.message import ContentPart, TextPart
+
     normalized = []
     for x in parts or []:
         if isinstance(x, ContentPart):
@@ -34,10 +35,12 @@ def _normalize_extra_parts(parts: list) -> list:
                 normalized.append(TextPart(text=text))
     return normalized
 
+
 def _extra_part_text(part) -> str:
     """观察页展示用：ContentPart/组件 → 纯文本（图片等无文本段以类名占位）。"""
     text = getattr(part, "text", None)
     return str(text) if text is not None else f"<{type(part).__name__}>"
+
 
 async def _eco_inject_block(P, event: AstrMessageEvent, text: str):
     """触发生态插件的 on_llm_request 钩子，收集两个注入通道的内容。
@@ -56,30 +59,40 @@ async def _eco_inject_block(P, event: AstrMessageEvent, text: str):
     if not P.config.get("eco_injection", True):
         return "", []
     try:
-        req = ProviderRequest(prompt=text or "",
-                              session_id=event.unified_msg_origin,
-                              system_prompt="", contexts=[], func_tool=None)
+        req = ProviderRequest(
+            prompt=text or "",
+            session_id=event.unified_msg_origin,
+            system_prompt="",
+            contexts=[],
+            func_tool=None,
+        )
         fired = 0
         for handler in star_handlers_registry.get_handlers_by_event_type(
-                EventType.OnLLMRequestEvent, plugins_name=event.plugins_name):
+            EventType.OnLLMRequestEvent, plugins_name=event.plugins_name
+        ):
             if "astrbot_plugin_maisoul" in str(handler.handler_module_path):
                 continue  # 自家 native 模式钩子，防三件套重复注入
             try:
                 await handler.handler(event, req)
                 fired += 1
             except BaseException:
-                logger.error(f"maisoul: 生态注入 {handler.handler_name} 异常",
-                             exc_info=True)
+                logger.error(
+                    f"maisoul: 生态注入 {handler.handler_name} 异常", exc_info=True
+                )
         block = (req.system_prompt or "").strip()
         extras = _normalize_extra_parts(
-            getattr(req, "extra_user_content_parts", None) or [])
-        logger.info(f"maisoul: 生态注入桥执行 {fired} 个钩子，system {len(block)} 字符"
-                    f" + 用户内容附加 {len(extras)} 段"
-                    f"（好感/记忆/世界书；私聊心弦不注入属正常）")
+            getattr(req, "extra_user_content_parts", None) or []
+        )
+        logger.info(
+            f"maisoul: 生态注入桥执行 {fired} 个钩子，system {len(block)} 字符"
+            f" + 用户内容附加 {len(extras)} 段"
+            f"（好感/记忆/世界书；私聊心弦不注入属正常）"
+        )
         return block, extras
     except Exception:
         logger.error("maisoul: 生态注入桥失败", exc_info=True)
         return "", []
+
 
 async def _eco_fire_response(P, event: AstrMessageEvent, answer: str):
     """发言后触发 on_llm_response 钩子（livingmemory 记忆沉淀等生态回写）。"""
@@ -89,14 +102,16 @@ async def _eco_fire_response(P, event: AstrMessageEvent, answer: str):
         event.set_extra("maisoul_eco_resp", True)  # 自家回声钩子防重入
         resp = LLMResponse(role="assistant", completion_text=answer)
         for handler in star_handlers_registry.get_handlers_by_event_type(
-                EventType.OnLLMResponseEvent, plugins_name=event.plugins_name):
+            EventType.OnLLMResponseEvent, plugins_name=event.plugins_name
+        ):
             if "astrbot_plugin_maisoul" in str(handler.handler_module_path):
                 continue
             try:
                 await handler.handler(event, resp)
             except BaseException:
-                logger.error(f"maisoul: 生态回写 {handler.handler_name} 异常",
-                             exc_info=True)
+                logger.error(
+                    f"maisoul: 生态回写 {handler.handler_name} 异常", exc_info=True
+                )
     except Exception:
         logger.error("maisoul: 生态回写失败", exc_info=True)
 
@@ -116,9 +131,11 @@ async def xinxian_profile_block(P, gid: str, uid: str) -> str:
         prof = await api.get_profile(gid, uid)
         if not prof:
             return ""
-        lines = ["\n\n【好感档案（来自心弦插件）】",
-                 f"你与对方的好感度：{prof.get('favor')}（等级：{prof.get('level')}）",
-                 f"态度参考：{prof.get('guidance')}"]
+        lines = [
+            "\n\n【好感档案（来自心弦插件）】",
+            f"你与对方的好感度：{prof.get('favor')}（等级：{prof.get('level')}）",
+            f"态度参考：{prof.get('guidance')}",
+        ]
         if prof.get("impression"):
             tag = f"（{'、'.join(prof.get('tags') or [])}）" if prof.get("tags") else ""
             lines.append(f"你对 TA 的印象：{prof['impression']}{tag}")
