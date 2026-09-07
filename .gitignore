@@ -9,3 +9,6 @@ data_monitor.json.imported
 
 # 本地私有规则与备注（永不入库）
 AGENTS.local.md
+
+# 本机容器运行残骸（测试容器以插件目录为 cwd 时生成的 data/ 子目录）
+/data/

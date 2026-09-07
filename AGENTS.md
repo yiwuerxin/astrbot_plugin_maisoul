@@ -470,7 +470,16 @@ v6.7.0 追加：
   `LLMResponse.usage`（TokenUsage：input_other+input_cached=输入、output=输出）
   真实回传，`_planner_cycle` 逐轮累计进 `planner.prompt_tokens/completion_tokens/
   total_tokens`，前端 Planner 卡头部按部署版形态渲染「输入+输出 tokens」outline
-  徽章（>0 才显示）。native_tool_calls/prompt_html_uri 仍是 MaiBot Provider
+  徽章（>0 才显示）。**模型名已接通（v6.18.0，maisoul 扩展）**——LLMResponse
+  不回传模型名，`_task_text_chat` 经 `used` 参数上报本次成功调用实际服务的
+  `{"model", "provider"}`（按次覆盖优先、空回落 provider.get_model；降级链换
+  候选时以最终成功者为准），`planner.model_name`=整循环去重拼接（random/
+  balance 多候选时逐轮可能不同）、`request.messages[].model_name`=assistant
+  轮逐轮标注（与 reasoning 同机制仅进监控副本，不回灌）；展示对齐部署版
+  「模型：${model_name}」文案：Planner 卡「推理过程」按钮后 mono 徽章、
+  推理页「输出结果」分区 Items 计数徽章后 secondary 徽章（工具轮取该轮
+  assistant 消息标注、收尾轮取最后一条，旧事件无字段自然不渲染）。
+  native_tool_calls/prompt_html_uri 仍是 MaiBot Provider
   专属，缺省即无；end_reason 用 maisoul 真实出口名（reply/wait/no_action/
   max_rounds/no_new_message/interrupted/error/no_provider）。
 
