@@ -12,6 +12,13 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import At, Reply
 
+try:
+    from astrbot.api.message_components import AtAll
+except ImportError:
+    # 老版本框架未导出 AtAll：置空元组使 isinstance 恒 False，
+    # At(qq="all") 形态判定仍然覆盖（_has_at_all 兼容两种形态）
+    AtAll = ()
+
 from ..core.states import session_key
 
 
@@ -150,6 +157,37 @@ def _has_at_bot(P, event: AstrMessageEvent) -> bool:
         # 降级：按未被 @ 处理，留痕（点名触发静默失效可查）
         logger.debug("maisoul: @bot 判定失败（按未点名降级）", exc_info=True)
     return False
+
+
+def _has_at_all(P, event: AstrMessageEvent) -> bool:
+    """消息是否含 @全体成员（AtAll，或 OneBot 形态 At(qq="all")）。
+
+    waking_check 对 @全体也置 is_at_or_wake_command=True；explicit 旁路需
+    据此降级——@全体不是点名本机（ignore_at_all 平台开关由框架层处理）。
+    """
+    try:
+        for seg in event.get_messages():
+            if isinstance(seg, AtAll) or (isinstance(seg, At) and str(seg.qq) == "all"):
+                return True
+    except Exception:
+        # 降级：按无 @全体处理，留痕（不影响 At 段的权威判定）
+        logger.debug("maisoul: @全体判定失败（按无@全体降级）", exc_info=True)
+    return False
+
+
+def _other_at_names(P, event: AstrMessageEvent) -> list[str]:
+    """消息里 @其他人 的昵称（提及判定的排除名单：他人名字含触发词也不算点名本机）。"""
+    names: list[str] = []
+    try:
+        for seg in event.get_messages():
+            if isinstance(seg, At) and str(seg.qq) != str(event.get_self_id()):
+                name = str(getattr(seg, "name", "") or "").strip()
+                if name and name not in names:
+                    names.append(name)
+    except Exception:
+        # 降级：拿不到昵称就交给文本层剥除（@昵称(QQ号) 渲染 token）
+        logger.debug("maisoul: 他人 At 昵称提取失败（仅按文本剥除兜底）", exc_info=True)
+    return names
 
 
 def _is_reply_to_bot(P, event: AstrMessageEvent) -> bool:
