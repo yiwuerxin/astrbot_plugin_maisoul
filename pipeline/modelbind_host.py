@@ -88,6 +88,8 @@ async def _task_text_chat(P, task: str, cfg, used: dict | None = None, **kwargs)
     candidates = modelbind.task_model_candidates(cfg, task)
     if not candidates:
         if used is not None:
+            # 先写再调（v6.18.1）：失败时 used 已带本次尝试的默认 provider
+            # 标签——llm.error 上报据此归因，不再恒记调用方回落的猜测值
             used["model"] = _provider_model_label(provider, "")
             used["provider"] = str(
                 getattr(provider, "provider_config", {}).get("id", "") or ""
@@ -105,13 +107,15 @@ async def _task_text_chat(P, task: str, cfg, used: dict | None = None, **kwargs)
             )
             continue
         inst, model = resolved
+        if used is not None:
+            # 先写再调（v6.18.1）：失败时 used 保留实际尝试的候选，
+            # 供调用方（planner llm.error）归因；成功路径重写同值不变
+            used["model"] = _provider_model_label(inst, model)
+            used["provider"] = str(
+                getattr(inst, "provider_config", {}).get("id", "") or ""
+            )
         try:
             resp = await inst.text_chat(model=model, **kwargs)
-            if used is not None:
-                used["model"] = _provider_model_label(inst, model)
-                used["provider"] = str(
-                    getattr(inst, "provider_config", {}).get("id", "") or ""
-                )
             return resp
         except Exception as e:
             last_err = e

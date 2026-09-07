@@ -765,8 +765,7 @@ def test_typo():
         )
         check(
             "坏字频缓存: 原文件备份为 .corrupt",
-            (_tmpdir / "data_char_frequency.json.corrupt").exists()
-            and _bad.exists(),
+            (_tmpdir / "data_char_frequency.json.corrupt").exists() and _bad.exists(),
         )
         # 无缓存 → 生成 + 原子落盘
         _fresh_dir = _tmpdir / "freq_fresh"
@@ -1062,6 +1061,58 @@ def test_states():
     pick = modelbind.pick_model(cands, "sequential", {}, "planner")
     check("pick: 主候选", pick["model"] == "m1")
     check("pick: 空候选返回 None", modelbind.pick_model([], "random", {}, "x") is None)
+
+    # v6.18.1：LLM 失败时 used 记录实际尝试的候选（旧实现成功才写 used，
+    # planner 的 llm.error 上报只能回落默认 provider——归因错对象）
+    from types import SimpleNamespace as _SNS
+
+    from astrbot_plugin_maisoul.pipeline import modelbind_host as _mh
+
+    class _FailBound:
+        provider_config = {"id": "prov-bound"}
+
+        def get_model(self):
+            return "ignored"
+
+        async def text_chat(self, model=None, **kw):
+            raise RuntimeError(f"boom:{model}")
+
+    class _Ctx:
+        provider_manager = _SNS(inst_map={"prov-bound": _FailBound()})
+
+        def get_using_provider(self):
+            return _SNS(
+                provider_config={"id": "prov-default"},
+                get_model=lambda: "default-model",
+            )
+
+    _P = _SNS(context=_Ctx())
+    _cfg_bind = {
+        "task_models": [
+            {
+                "task": "planner",
+                "models": [{"provider": "prov-bound", "model": "agnes-2.5-flash"}],
+                "strategy": "sequential",
+            }
+        ]
+    }
+    _used = {}
+    try:
+        asyncio.run(
+            _mh._task_text_chat(_P, "planner", _cfg_bind, used=_used, prompt="x")
+        )
+    except RuntimeError:
+        pass
+    check(
+        "失败上报: used 记录实际尝试的模型",
+        _used.get("model") == "agnes-2.5-flash",
+        str(_used),
+    )
+    check(
+        "失败上报: used 记录实际尝试的 provider",
+        _used.get("provider") == "prov-bound",
+        str(_used),
+    )
 
     sm = StateManager()
     st = sm.get("g1")
@@ -2599,7 +2650,6 @@ def test_taskregistry():
         )
         == "m-x",
     )
-
 
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
     import asyncio as _aio2
