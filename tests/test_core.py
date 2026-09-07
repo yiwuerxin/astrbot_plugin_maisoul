@@ -2632,6 +2632,59 @@ def test_taskregistry():
         n = len(sess.query(_Rec).all())
     check("M10 writer: 事件经后台协程落库", n >= 2, f"rows={n}")
 
+    # v6.18.1 回归：writer 正在 flush（to_thread 落库中）时后续事件入队并停机，
+    # 哨兵会在下一轮批量排水中被取出——旧实现此时直接 return 丢弃已取批次
+    # （与同行注释承诺相反）。生产对应：忙碌群消息持续入队时卸载插件。
+    # 时序用线程屏障钉死（entered/release），不依赖墙钟 sleep。
+    import threading as _th
+
+    async def _sentinel_scenario():
+        s4 = _MS(pathlib.Path(tempfile.mkdtemp()) / "sen.db")
+        m4 = _M(s4)
+        _orig_record = s4.record
+        _entered = _th.Event()
+        _release = _th.Event()
+
+        def _gated_record(event, data):
+            _entered.set()  # writer 已进入 flush（to_thread 线程内）
+            _release.wait(timeout=5)
+            return _orig_record(event, data)
+
+        s4.record = _gated_record
+        m4.start_writer()
+        m4.emit_message_sent(
+            "g1", "麦麦", "m0", "id0", time.time(), "reply", platform="qq"
+        )
+        for _ in range(200):
+            if _entered.is_set():
+                break
+            await _aio2.sleep(0.005)
+        # writer 现在停在 m0 的 flush 里（entered 未置位则下方断言自然失败）
+        m4.emit_message_sent(
+            "g1", "麦麦", "m1", "id1", time.time(), "reply", platform="qq"
+        )
+        m4.emit_message_sent(
+            "g1", "麦麦", "m2", "id2", time.time(), "reply", platform="qq"
+        )
+        _qref = m4._queue
+        _stop_task = _aio2.create_task(m4.stop_writer())
+        for _ in range(200):  # 等 stop_writer 同步序言把哨兵放进队列
+            if m4._queue is None and _qref is not None and _qref.qsize() >= 3:
+                break
+            await _aio2.sleep(0.005)
+        _release.set()  # 放行 writer：取 m1 → 排水 m2 → 撞哨兵
+        await _stop_task
+        return s4
+
+    s4 = _aio2.run(_sentinel_scenario())
+    with s4._session_factory() as sess:
+        n4 = len(sess.query(_Rec).all())
+    check(
+        "writer 停止: 排水中撞哨兵不丢已取批次",
+        n4 == 3,
+        f"rows={n4}（应为 3，旧实现丢 m1/m2 整批）",
+    )
+
     # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
     from astrbot_plugin_maisoul.core.states import StateManager as _SM
 
