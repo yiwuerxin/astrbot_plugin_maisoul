@@ -733,6 +733,51 @@ def test_typo():
         "__不存在的音节__" not in typo_mod._shared_pinyin_dict(),
     )
 
+    # 字频缓存自愈（v6.18.1）：坏 JSON 备份为 .corrupt 后重建而非炸掉引擎；
+    # 落盘走 .tmp+replace 原子写（对齐 learning 库），不留 .tmp 残留
+    import pathlib as _pl
+    import tempfile as _tf
+
+    _orig_freq = typo_mod._FREQ_FILE
+    try:
+        _tmpdir = _pl.Path(_tf.mkdtemp())
+        # 坏缓存 → 重建 + 备份
+        _bad = _tmpdir / "data_char_frequency.json"
+        _bad.write_text('{"截断的坏', encoding="utf-8")
+        typo_mod._FREQ_FILE = _bad
+        _gen3 = ChineseTypoGenerator(
+            error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+        )
+        check(
+            "坏字频缓存: 不抛异常且重建可用",
+            len(_gen3.char_frequency) > 5000,
+            str(len(_gen3.char_frequency)),
+        )
+        check(
+            "坏字频缓存: 原文件备份为 .corrupt",
+            (_tmpdir / "data_char_frequency.json.corrupt").exists()
+            and _bad.exists(),
+        )
+        # 无缓存 → 生成 + 原子落盘
+        _fresh_dir = _tmpdir / "freq_fresh"
+        _fresh_dir.mkdir()
+        _new = _fresh_dir / "data_char_frequency.json"
+        typo_mod._FREQ_FILE = _new
+        ChineseTypoGenerator(
+            error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+        )
+        check(
+            "字频缓存: 无缓存时生成并落盘",
+            _new.exists()
+            and isinstance(json.loads(_new.read_text(encoding="utf-8")), dict),
+        )
+        check(
+            "字频缓存: 落盘无 .tmp 残留",
+            not (_fresh_dir / "data_char_frequency.json.tmp").exists(),
+        )
+    finally:
+        typo_mod._FREQ_FILE = _orig_freq
+
 
 def test_prompt():
     print("[Prompt 组装]")
