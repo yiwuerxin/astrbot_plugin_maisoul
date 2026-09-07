@@ -1658,6 +1658,11 @@ def test_monitor():
         "finalized: native_tool_calls 无信号不编造",
         "native_tool_calls" not in fin["planner"],
     )
+    check(
+        "finalized: 未上报模型时 planner.model_name 缺省（旧事件不渲染模型）",
+        "model_name" not in fin["planner"]
+        and all("model_name" not in m for m in fin["request"]["messages"]),
+    )
 
     since = events[1]["data"]["event_id"]
     tail = store.replay(since_event_id=since, limit=10)
@@ -2470,6 +2475,8 @@ def test_taskregistry():
         ],
         planner_content="去回复",
         reasoning_by_idx={1: "先想想语气…"},
+        model_by_idx={1: "test-planner-model"},
+        planner_model_name="test-planner-model",
         replyer_reasoning="回复器思考：要热情一点",
     )
     m3.close()
@@ -2485,8 +2492,27 @@ def test_taskregistry():
         str(msgs[1])[:80],
     )
     check(
+        "推理过程: assistant 轮附 model_name（与 reasoning 同机制不回灌）",
+        msgs[1].get("model_name") == "test-planner-model"
+        and "model_name" not in msgs[0],
+        str(msgs[1])[:80],
+    )
+    check(
         "推理过程: 回复器思考在 planner 块",
         data["planner"].get("reasoning") == "回复器思考：要热情一点",
+    )
+    check(
+        "推理过程: 整循环模型名在 planner 块（多模型去重拼接）",
+        data["planner"].get("model_name") == "test-planner-model",
+    )
+    from astrbot_plugin_maisoul.core.monitor import _serialize_planner_block as _spb
+
+    check(
+        "推理过程: 仅模型名也产出 planner 块（model_name 进 None 守卫）",
+        (_spb(None, None, None, None, None, None, model_name="m-x") or {}).get(
+            "model_name"
+        )
+        == "m-x",
     )
 
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
