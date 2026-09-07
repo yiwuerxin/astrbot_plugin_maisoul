@@ -75,8 +75,10 @@ PLANNER_SYSTEM_TEMPLATE = """你的任务是分析聊天和聊天中的互动情
 现在，请你输出你对{bot_name}发言的分析，视情况输出文本内容的分析、进行工具调用："""
 
 # 防复读固定反思文本（对齐 reasoning_engine._should_replace_reasoning 的替换内容）
-PLANNER_REFLECT_ON_REPEAT = ("我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，"
-                             "我需要分析当前场景，对话，然后直接输出我的想法：")
+PLANNER_REFLECT_ON_REPEAT = (
+    "我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，"
+    "我需要分析当前场景，对话，然后直接输出我的想法："
+)
 
 # 表情检索词子提示（emoji_selection.prompt 的 maisoul 适配：MaiBot 用视觉子代理
 # 从 25 宫格选编号，stealer 生态是关键词检索 → 让子 LLM 产检索词）
@@ -128,31 +130,42 @@ def pick_meme_index(reply: str, nums: list[int]) -> int | None:
             return v
     return None
 
-WAIT_TOOL_RESULT = ("当前对话循环进入等待状态，将固定等待 {seconds} 秒；期间收到的新消息不会提前打断本次等待。"
-                    "连续 wait 次数：{current}/{maximum}。")
-WAIT_LIMIT_RESULT = ("连续 wait 已达到上限 {maximum} 次，本次不再进入等待；视为多次等待后仍无后续，当前对话进入休息。")
+
+WAIT_TOOL_RESULT = (
+    "当前对话循环进入等待状态，将固定等待 {seconds} 秒；期间收到的新消息不会提前打断本次等待。"
+    "连续 wait 次数：{current}/{maximum}。"
+)
+WAIT_LIMIT_RESULT = "连续 wait 已达到上限 {maximum} 次，本次不再进入等待；视为多次等待后仍无后续，当前对话进入休息。"
 
 # wait 完成回执（对齐 reasoning_engine._build_wait_completed_message 原文；
 # requested 为 None 时省略"原计划"段）
-WAIT_COMPLETED_HAS_NEW = ("等待已结束，实际等待 {elapsed:.1f} 秒{requested_text}，"
-                          "期间收到了新的用户输入。请结合这些新消息继续下一轮思考。")
-WAIT_COMPLETED_TIMEOUT = ("等待已超时，实际等待 {elapsed:.1f} 秒{requested_text}，"
-                          "期间没有收到新的用户输入。请基于现有上下文继续下一轮思考。")
+WAIT_COMPLETED_HAS_NEW = (
+    "等待已结束，实际等待 {elapsed:.1f} 秒{requested_text}，"
+    "期间收到了新的用户输入。请结合这些新消息继续下一轮思考。"
+)
+WAIT_COMPLETED_TIMEOUT = (
+    "等待已超时，实际等待 {elapsed:.1f} 秒{requested_text}，"
+    "期间没有收到新的用户输入。请基于现有上下文继续下一轮思考。"
+)
 
 
-def build_wait_completed_message(elapsed: float, requested: float | None,
-                                 has_new_messages: bool) -> str:
+def build_wait_completed_message(
+    elapsed: float, requested: float | None, has_new_messages: bool
+) -> str:
     requested_text = f"，原计划等待 {requested:.1f} 秒" if requested is not None else ""
     template = WAIT_COMPLETED_HAS_NEW if has_new_messages else WAIT_COMPLETED_TIMEOUT
     return template.format(elapsed=elapsed, requested_text=requested_text)
 
 
 FOLDED_TOOL_HISTORY_PREFIX = "[已折叠的历史工具调用]"
-TURN_CONTEXT_KEEP_COUNT = 6  # 保留最近 3 组 user/assistant（对齐 ASSISTANT_OPTIMIZATION_KEEP_COUNT=3）
+TURN_CONTEXT_KEEP_COUNT = (
+    6  # 保留最近 3 组 user/assistant（对齐 ASSISTANT_OPTIMIZATION_KEEP_COUNT=3）
+)
 
 
-def fold_old_turns(contexts: list[dict], turn_start: int,
-                   keep: int = TURN_CONTEXT_KEEP_COUNT) -> None:
+def fold_old_turns(
+    contexts: list[dict], turn_start: int, keep: int = TURN_CONTEXT_KEEP_COUNT
+) -> None:
     """本轮循环产生的旧轮次折叠（对齐 _build_trimmed_assistant_tool_user_message：
     保留最近 3 组 user/assistant，更早的一次性折叠为「[已折叠的历史工具调用]」摘要。
     MaiBot 保留工具调用详情且超 1024 字符转 Complex 消息；maisoul 无该基建，
@@ -162,16 +175,21 @@ def fold_old_turns(contexts: list[dict], turn_start: int,
     if excess <= 0:
         return
     fold_end = turn_start + excess
-    lines = [f"- {m.get('role')}: " + " ".join(str(m.get("content") or "").split())[:80]
-             for m in contexts[turn_start:fold_end]]
-    contexts[turn_start:fold_end] = [{
-        "role": "user",
-        "content": FOLDED_TOOL_HISTORY_PREFIX + "\n" + "\n".join(lines)}]
+    lines = [
+        f"- {m.get('role')}: " + " ".join(str(m.get("content") or "").split())[:80]
+        for m in contexts[turn_start:fold_end]
+    ]
+    contexts[turn_start:fold_end] = [
+        {
+            "role": "user",
+            "content": FOLDED_TOOL_HISTORY_PREFIX + "\n" + "\n".join(lines),
+        }
+    ]
 
 
-def build_history_contexts(history_msgs: list[dict], analyses,
-                           context_limit: int,
-                           is_group: bool = True) -> tuple[list[dict], list[dict]]:
+def build_history_contexts(
+    history_msgs: list[dict], analyses, context_limit: int, is_group: bool = True
+) -> tuple[list[dict], list[dict]]:
     """合并聊天历史与历史 planner 分析，按时间戳交错构建 contexts 初始段。
 
     对齐 MaiBot 会话历史机制：build_model_output_context_messages 把 planner
@@ -190,11 +208,18 @@ def build_history_contexts(history_msgs: list[dict], analyses,
     """
     merged: list[dict] = [
         {"kind": "chat", "ts": float(m.get("ts") or 0), "msg": m}
-        for m in history_msgs if str(m.get("text") or "").strip()]
+        for m in history_msgs
+        if str(m.get("text") or "").strip()
+    ]
     merged += [
-        {"kind": "analysis", "ts": float(a.get("ts") or 0),
-         "text": str(a.get("text") or "").strip()}
-        for a in analyses if str(a.get("text") or "").strip()]
+        {
+            "kind": "analysis",
+            "ts": float(a.get("ts") or 0),
+            "text": str(a.get("text") or "").strip(),
+        }
+        for a in analyses
+        if str(a.get("text") or "").strip()
+    ]
     # 稳定排序：同 ts 时聊天消息在前（先插入，分析是响应、天然晚于触发消息）
     merged.sort(key=lambda x: x["ts"])
     if context_limit > 0:
@@ -205,29 +230,43 @@ def build_history_contexts(history_msgs: list[dict], analyses,
     for item in merged:
         day = _dt.fromtimestamp(item["ts"]).date()
         if _last_day is not None and day != _last_day:
-            contexts.append({"role": "user", "content": (
-                f"时间：{_dt.fromtimestamp(item['ts']).strftime('%Y-%m-%d %H:%M:%S')}")})
+            contexts.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"时间：{_dt.fromtimestamp(item['ts']).strftime('%Y-%m-%d %H:%M:%S')}"
+                    ),
+                }
+            )
         _last_day = day
         if item["kind"] == "analysis":
             contexts.append({"role": "assistant", "content": item["text"]})
             continue
-        contexts.append({"role": "user",
-                         "content": render_planner_message(item["msg"], is_group)})
+        contexts.append(
+            {"role": "user", "content": render_planner_message(item["msg"], is_group)}
+        )
         included_chat.append(item["msg"])
     return contexts, included_chat
+
 
 REPLY_TOOL_SPEC = {
     "type": "object",
     "properties": {
         "msg_id": {"type": "string", "description": "要回复的消息msg_id。"},
-        "set_quote": {"type": "boolean",
-                      "description": "以引用回复的方式发送这条回复，当发言人数过多，聊天比较乱时使用。",
-                      "default": True},
-        "reply_reference": {"type": "string",
-                            "description": "有助于回复的信息，包括当前聊天状态、人物关系、事实信息、回忆信息。"},
-        "reply_style": {"type": "string",
-                        "description": "可选。控制本次回复的篇幅和表达方式；正常回复不会附加额外要求。",
-                        "enum": ["简短表达", "正常回复", "长回复"]},
+        "set_quote": {
+            "type": "boolean",
+            "description": "以引用回复的方式发送这条回复，当发言人数过多，聊天比较乱时使用。",
+            "default": True,
+        },
+        "reply_reference": {
+            "type": "string",
+            "description": "有助于回复的信息，包括当前聊天状态、人物关系、事实信息、回忆信息。",
+        },
+        "reply_style": {
+            "type": "string",
+            "description": "可选。控制本次回复的篇幅和表达方式；正常回复不会附加额外要求。",
+            "enum": ["简短表达", "正常回复", "长回复"],
+        },
     },
     "required": ["msg_id"],
 }
@@ -243,12 +282,18 @@ TOOL_SEARCH_SPEC = {
     "type": "object",
     "properties": {
         "query": {"type": "string", "description": "要搜索的工具名、前缀或关键词。"},
-        "limit": {"type": "integer", "description": "最多返回多少个工具。", "minimum": 1},
+        "limit": {
+            "type": "integer",
+            "description": "最多返回多少个工具。",
+            "minimum": 1,
+        },
     },
     "required": ["query"],
 }
 
-TOOL_SEARCH_NO_HIT = "未找到匹配的 deferred tools，请尝试更完整的工具名、前缀或其他关键词。"
+TOOL_SEARCH_NO_HIT = (
+    "未找到匹配的 deferred tools，请尝试更完整的工具名、前缀或其他关键词。"
+)
 
 
 def search_deferred_tools(pool: list[dict], query: str, limit: int = 5) -> list[dict]:
@@ -256,6 +301,7 @@ def search_deferred_tools(pool: list[dict], query: str, limit: int = 5) -> list[
     精确=1000 / 名称前缀=300 / 名称包含=200 / 描述包含=100 / 分词名称=25 / 分词描述=10，
     同分按名称排序，取前 limit 个。"""
     import re as _re
+
     normalized = str(query or "").strip().lower()
     if not normalized:
         return []
@@ -281,7 +327,7 @@ def search_deferred_tools(pool: list[dict], query: str, limit: int = 5) -> list[
         if score > 0:
             scored.append((score, item))
     scored.sort(key=lambda x: (-x[0], str(x[1].get("name") or "")))
-    return [item for _, item in scored[:max(1, int(limit))]]
+    return [item for _, item in scored[: max(1, int(limit))]]
 
 
 def build_deferred_reminder(deferred_pool: list[dict], discovered: set) -> str:
@@ -299,14 +345,16 @@ def build_deferred_reminder(deferred_pool: list[dict], discovered: set) -> str:
     if not lines:
         return ""
     numbered = [f"{index}. {line}" for index, line in enumerate(lines, start=1)]
-    return "\n".join([
-        "<system-reminder>",
-        "以下工具当前未直接暴露给你，但可以通过 tool_search 工具发现并在后续轮次中使用：",
-        *numbered,
-        "",
-        "如需其中某个工具，请先调用 tool_search。tool_search 只负责发现工具，不直接执行。",
-        "</system-reminder>",
-    ])
+    return "\n".join(
+        [
+            "<system-reminder>",
+            "以下工具当前未直接暴露给你，但可以通过 tool_search 工具发现并在后续轮次中使用：",
+            *numbered,
+            "",
+            "如需其中某个工具，请先调用 tool_search。tool_search 只负责发现工具，不直接执行。",
+            "</system-reminder>",
+        ]
+    )
 
 
 def tool_search_result_text(hits: list[dict], discovered_after: set) -> str:
@@ -316,8 +364,9 @@ def tool_search_result_text(hits: list[dict], discovered_after: set) -> str:
         name = str(item.get("name") or "")
         fresh = name not in discovered_after
         lines.append(f"- {name}（{'本次新发现' if fresh else '此前已发现'}）")
-    return ("已找到 " + str(len(hits)) + " 个 deferred tools，"
-            "它们会在后续轮次中加入可用工具列表：\n" + "\n".join(lines))
+    return "已找到 " + str(
+        len(hits)
+    ) + " 个 deferred tools，" "它们会在后续轮次中加入可用工具列表：\n" + "\n".join(lines)
 
 
 def build_planner_system(cfg, attention_block: str) -> str:
@@ -334,8 +383,12 @@ def build_planner_system(cfg, attention_block: str) -> str:
 
 def _attr_escape(value: str) -> str:
     """XML 属性值转义（对齐 xml.sax.saxutils.escape(quote=True)：& < > \" ）。"""
-    return (value.replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;").replace('"', "&quot;"))
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def _format_quote_ids(quote: str) -> str:
@@ -389,21 +442,29 @@ PLANNER_FINAL_USER_REMINDER = (
 class PlannerState:
     """单群 Planner 运行时（WAIT/RUNNING 状态机 + 退避 + 打断）。"""
 
-    agent_state: str = "idle"        # idle / running / wait
-    cycle_gen: int = 0               # 循环代际号（M3：打断后旧代退出不得回写状态）
+    agent_state: str = "idle"  # idle / running / wait
+    cycle_gen: int = 0  # 循环代际号（M3：打断后旧代退出不得回写状态）
     consecutive_wait_count: int = 0
     wait_until: float = 0.0
     backoff_count: int = 0
     backoff_until: float = 0.0
     running_task: object = None
     interrupt_count: int = 0
-    last_analysis: str = ""  # 上一轮 planner 思考（防复读比对用，对齐 _should_replace_reasoning）
-    analysis_log: deque = field(default_factory=lambda: deque(maxlen=200))  # 历史分析 {ts,text}（跨轮回灌，对齐 build_model_output_context_messages 写会话历史；2× 稳定窗外的旧条目随界淘汰）
-    discovered_tools: set = field(default_factory=set)  # tool_search 已发现的 deferred 工具（会话级；MaiBot 跟上下文裁切走，此处简化）
-    last_event: object = None  # 最近一次真实触发 event（wait 续轮复用：候选列表挂 event 上，换对象=candidate_expired）
+    last_analysis: str = (
+        ""  # 上一轮 planner 思考（防复读比对用，对齐 _should_replace_reasoning）
+    )
+    analysis_log: deque = field(
+        default_factory=lambda: deque(maxlen=200)
+    )  # 历史分析 {ts,text}（跨轮回灌，对齐 build_model_output_context_messages 写会话历史；2× 稳定窗外的旧条目随界淘汰）
+    discovered_tools: set = field(
+        default_factory=set
+    )  # tool_search 已发现的 deferred 工具（会话级；MaiBot 跟上下文裁切走，此处简化）
+    last_event: object = (
+        None  # 最近一次真实触发 event（wait 续轮复用：候选列表挂 event 上，换对象=candidate_expired）
+    )
     eco_injection: str = ""  # 本轮 replyer 收集的生态注入全文（观察页展示用，轮始清空）
-    last_cycle_ts: float = 0.0   # 上一轮消费到的消息时间戳（pending 排水用）
-    umo: str = ""        # wait 恢复续轮所需的发送上下文
+    last_cycle_ts: float = 0.0  # 上一轮消费到的消息时间戳（pending 排水用）
+    umo: str = ""  # wait 恢复续轮所需的发送上下文
     platform: str = ""
     is_group: bool = True
 
@@ -454,7 +515,7 @@ class PlannerState:
         if self.backoff_count < start_count:
             return
         exponent = max(0, self.backoff_count - start_count)
-        self.backoff_until = time.time() + min(cap, base * (2 ** exponent))
+        self.backoff_until = time.time() + min(cap, base * (2**exponent))
 
     def reset_backoff(self):
         self.backoff_count = 0
@@ -492,19 +553,38 @@ def build_planner_toolset(deps) -> "object":
         return deps.on_tool_search(kwargs)
 
     tool_set = ToolSet()
-    tool_set.add_tool(FunctionTool(
-        name="reply", description="根据当前思考生成并发送一条可见回复。",
-        parameters=REPLY_TOOL_SPEC, handler=_reply))
-    tool_set.add_tool(FunctionTool(
-        name="wait", description="暂停当前对话并固定等待一段时间。",
-        parameters=WAIT_TOOL_SPEC, handler=_wait))
-    tool_set.add_tool(FunctionTool(
-        name="send_emoji", description="发送一个表情包来表达情绪，参与聊天。",
-        parameters={"type": "object", "properties": {}}, handler=_send_emoji))
-    tool_set.add_tool(FunctionTool(
-        name="tool_search",
-        description="在 deferred tools 列表中按名称或关键词搜索工具，并将命中的工具加入后续轮次的可用工具列表。",
-        parameters=TOOL_SEARCH_SPEC, handler=_tool_search))
+    tool_set.add_tool(
+        FunctionTool(
+            name="reply",
+            description="根据当前思考生成并发送一条可见回复。",
+            parameters=REPLY_TOOL_SPEC,
+            handler=_reply,
+        )
+    )
+    tool_set.add_tool(
+        FunctionTool(
+            name="wait",
+            description="暂停当前对话并固定等待一段时间。",
+            parameters=WAIT_TOOL_SPEC,
+            handler=_wait,
+        )
+    )
+    tool_set.add_tool(
+        FunctionTool(
+            name="send_emoji",
+            description="发送一个表情包来表达情绪，参与聊天。",
+            parameters={"type": "object", "properties": {}},
+            handler=_send_emoji,
+        )
+    )
+    tool_set.add_tool(
+        FunctionTool(
+            name="tool_search",
+            description="在 deferred tools 列表中按名称或关键词搜索工具，并将命中的工具加入后续轮次的可用工具列表。",
+            parameters=TOOL_SEARCH_SPEC,
+            handler=_tool_search,
+        )
+    )
     return tool_set
 
 
@@ -523,8 +603,17 @@ class PlannerHost(Protocol):
 class PlannerDeps:
     """把 planner 工具回调绑定到宿主（PlannerHost）的 replyer/表情桥/消息缓冲。"""
 
-    def __init__(self, host: PlannerHost, st, eff_cfg, event, platform: str, gid: str,
-                 is_group: bool = True, send_fn=None):
+    def __init__(
+        self,
+        host: PlannerHost,
+        st,
+        eff_cfg,
+        event,
+        platform: str,
+        gid: str,
+        is_group: bool = True,
+        send_fn=None,
+    ):
         self.host = host
         self.st = st
         self.cfg = eff_cfg
@@ -535,7 +624,9 @@ class PlannerDeps:
         self.umo = ""
         self.latest_reason = ""
         self.send_fn = send_fn  # WebUI 聊天页等需要走 event.send 流式回填的发送通道
-        self.deferred_pool: list[dict] = []  # [{name, description, tool}]，由 _planner_cycle 注入
+        self.deferred_pool: list[dict] = (
+            []
+        )  # [{name, description, tool}]，由 _planner_cycle 注入
 
     async def on_reply(self, args: dict) -> str:
         return await self.host.planner_execute_reply(self, self.latest_reason, args)
@@ -549,7 +640,9 @@ class PlannerDeps:
         if not entered:
             return WAIT_LIMIT_RESULT.format(maximum=maximum)
         self.host.planner_schedule_wait_resume(self.st, self.cfg, self.gid, seconds)
-        return WAIT_TOOL_RESULT.format(seconds=max(0, seconds), current=current, maximum=maximum)
+        return WAIT_TOOL_RESULT.format(
+            seconds=max(0, seconds), current=current, maximum=maximum
+        )
 
     async def on_send_emoji(self) -> str:
         return await self.host.planner_send_emoji(self)
@@ -560,7 +653,9 @@ class PlannerDeps:
             limit = max(1, int(args.get("limit", 5) or 5))
         except (TypeError, ValueError):
             limit = 5
-        hits = search_deferred_tools(self.deferred_pool, str(args.get("query") or ""), limit)
+        hits = search_deferred_tools(
+            self.deferred_pool, str(args.get("query") or ""), limit
+        )
         if not hits:
             return TOOL_SEARCH_NO_HIT
         discovered = self.st.planner_state().discovered_tools

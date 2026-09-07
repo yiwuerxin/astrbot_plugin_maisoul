@@ -18,26 +18,38 @@ class GroupState:
     """单个群的运行时状态（缓冲/积压/存在感/防重复）。"""
 
     buffer: deque = field(default_factory=lambda: deque(maxlen=200))
-    recent_self: deque = field(default_factory=lambda: deque(maxlen=50))     # 自发时间戳
+    recent_self: deque = field(default_factory=lambda: deque(maxlen=50))  # 自发时间戳
     emotion: EmotionState = field(default_factory=EmotionState)  # P-B 情绪 VA（内存态）
     memory: "SessionMemory" = field(default_factory=SessionMemory)  # P-A 中期记忆
-    last_replies: deque = field(default_factory=lambda: deque(maxlen=20))   # 近期发言文本
-    replied_targets: deque = field(default_factory=lambda: deque(maxlen=30))  # (msg_id, ts)
-    reply_by_target: dict = field(default_factory=dict)  # msg_id → 对该目标说过的原文（防重复提醒用）
+    last_replies: deque = field(
+        default_factory=lambda: deque(maxlen=20)
+    )  # 近期发言文本
+    replied_targets: deque = field(
+        default_factory=lambda: deque(maxlen=30)
+    )  # (msg_id, ts)
+    reply_by_target: dict = field(
+        default_factory=dict
+    )  # msg_id → 对该目标说过的原文（防重复提醒用）
     last_fire_ts: float = 0.0
     pending_since_fire: int = 0
-    ext_intervals: deque = field(default_factory=lambda: deque(maxlen=360))  # 外部消息时间戳（30min 采样窗最多 360 条）
+    ext_intervals: deque = field(
+        default_factory=lambda: deque(maxlen=360)
+    )  # 外部消息时间戳（30min 采样窗最多 360 条）
     last_ext_ts: float = 0.0
     firing: bool = False
-    defer_task: object = None  # 空窗补偿到点重查任务（对齐 runtime._defer_message_turn_check）
+    defer_task: object = (
+        None  # 空窗补偿到点重查任务（对齐 runtime._defer_message_turn_check）
+    )
     # Planner 决策层运行时（mode=planner）；惰性导入避免循环依赖
     planner: object = None
 
     def planner_state(self):
         from .planner import PlannerState
+
         if self.planner is None:
             self.planner = PlannerState()
         return self.planner
+
     last_persona: str = "默认"
 
     def record_external(self, record: dict) -> None:
@@ -62,8 +74,9 @@ class GroupState:
             self.defer_task.cancel()
             self.defer_task = None
 
-    def record_self_reply(self, msg_id: str, segments: list[str], bot_name: str,
-                          quote: str = "") -> None:
+    def record_self_reply(
+        self, msg_id: str, segments: list[str], bot_name: str, quote: str = ""
+    ) -> None:
         """自发回写。segments 全文拼接进缓冲（对齐 MaiBot 保存完整可见文本，
         旧版只存首段前 80 字，planner 上下文里自发消息被截断，v6.13.5 修正）；
         quote=本次回复引用的目标 msg_id（发送侧带 Reply 时传入，渲染进
@@ -76,9 +89,15 @@ class GroupState:
         self.cancel_defer()
         if msg_id:
             self.reply_by_target[msg_id] = "\n".join(segments)
-        record = {"name": bot_name, "sid": "self", "msg_id": "",
-                  "text": "\n".join(segments),
-                  "at_bot": False, "reply_bot": False, "ts": now}
+        record = {
+            "name": bot_name,
+            "sid": "self",
+            "msg_id": "",
+            "text": "\n".join(segments),
+            "at_bot": False,
+            "reply_bot": False,
+            "ts": now,
+        }
         if str(quote or "").strip():
             record["quote"] = str(quote).strip()
         self.buffer.append(record)
@@ -103,9 +122,14 @@ class GroupState:
         30 分钟样本窗、间隔 <5s 连发不采样、平均间隔下限 30s、
         见过消息但无可用样本回退 30s（从未见过外部消息才 None）。"""
         now = time.time()
-        ts = [t for t in self.ext_intervals if now - t <= EXTERNAL_SAMPLE_WINDOW_SECONDS]
-        gaps = [b - a for a, b in zip(ts, ts[1:])
-                if b - a >= EXTERNAL_BURST_INTERVAL_SECONDS]
+        ts = [
+            t for t in self.ext_intervals if now - t <= EXTERNAL_SAMPLE_WINDOW_SECONDS
+        ]
+        gaps = [
+            b - a
+            for a, b in zip(ts, ts[1:])
+            if b - a >= EXTERNAL_BURST_INTERVAL_SECONDS
+        ]
         if not gaps:
             return EXTERNAL_MIN_AVERAGE_INTERVAL_SECONDS if self.last_ext_ts else None
         return max(EXTERNAL_MIN_AVERAGE_INTERVAL_SECONDS, sum(gaps) / len(gaps))
@@ -114,7 +138,9 @@ class GroupState:
         if not msg_id:
             return False
         now = time.time()
-        return any(mid == msg_id and now - ts < within for mid, ts in self.replied_targets)
+        return any(
+            mid == msg_id and now - ts < within for mid, ts in self.replied_targets
+        )
 
     def status(self) -> dict:
         now = time.time()
@@ -122,7 +148,9 @@ class GroupState:
             "buffer": len(self.buffer),
             "pending": self.pending_since_fire,
             "recent_self": self.recent_self_count(),
-            "last_fire_ago": int(now - self.last_fire_ts) if self.last_fire_ts else None,
+            "last_fire_ago": (
+                int(now - self.last_fire_ts) if self.last_fire_ts else None
+            ),
             "persona": self.last_persona,
         }
 
@@ -132,7 +160,9 @@ def session_key(event) -> str:
 
     坑 23：私聊漏掉 sender_id 会让观察账本落错会话、学习库 item_id=用户ID
     的匹配全部失效——门控/生成/记账/回声钩子必须同键，禁止各处内联重写。"""
-    return str(event.get_group_id() or event.get_sender_id() or event.unified_msg_origin)
+    return str(
+        event.get_group_id() or event.get_sender_id() or event.unified_msg_origin
+    )
 
 
 class StateManager:

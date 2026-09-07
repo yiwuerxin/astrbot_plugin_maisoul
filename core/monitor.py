@@ -30,7 +30,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-from sqlalchemy import Column, DateTime, Float, Index, Integer, Text, create_engine, text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    Text,
+    create_engine,
+    text,
+)
 from sqlmodel import Field, Session, SQLModel, select
 from sqlalchemy.orm import sessionmaker
 
@@ -80,9 +89,13 @@ class MaisakaMonitorEventRecord(SQLModel, table=True):
     event_type: str = Field(max_length=100)
     session_id: str = Field(default="", max_length=255)
     timestamp: float = Field(sa_column=Column(Float, nullable=False))
-    schema_version: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default="1"))
+    schema_version: int = Field(
+        default=1, sa_column=Column(Integer, nullable=False, server_default="1")
+    )
     payload_json: str = Field(sa_column=Column(Text, nullable=False))
-    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime))
+    created_at: datetime = Field(
+        default_factory=datetime.now, sa_column=Column(DateTime)
+    )
 
 
 class MonitorStore:
@@ -96,9 +109,12 @@ class MonitorStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(
-            f"sqlite:///{self.path}", connect_args={"check_same_thread": False})
+            f"sqlite:///{self.path}", connect_args={"check_same_thread": False}
+        )
         SQLModel.metadata.create_all(self.engine)
-        self._session_factory = sessionmaker(bind=self.engine, class_=Session, expire_on_commit=False)
+        self._session_factory = sessionmaker(
+            bind=self.engine, class_=Session, expire_on_commit=False
+        )
         self._cleanup_lock = threading.Lock()
         self._records_since_cleanup = 0
         self._last_cleanup_at = 0.0
@@ -125,20 +141,28 @@ class MonitorStore:
                 if session.exec(select(MaisakaMonitorEventRecord).limit(1)).first():
                     return
                 raw = json.loads(legacy.read_text(encoding="utf-8"))
-                for r in (raw.get("records") or []):
-                    session.add(MaisakaMonitorEventRecord(
-                        event_type=str(r.get("event_type") or ""),
-                        session_id=str(r.get("session_id") or ""),
-                        timestamp=_coerce_float(r.get("timestamp"), default=time.time()),
-                        schema_version=int(r.get("schema_version") or 1),
-                        payload_json=str(r.get("payload_json") or "{}"),
-                        created_at=datetime.fromtimestamp(
-                            _coerce_float(r.get("created_at"), default=time.time()))))
+                for r in raw.get("records") or []:
+                    session.add(
+                        MaisakaMonitorEventRecord(
+                            event_type=str(r.get("event_type") or ""),
+                            session_id=str(r.get("session_id") or ""),
+                            timestamp=_coerce_float(
+                                r.get("timestamp"), default=time.time()
+                            ),
+                            schema_version=int(r.get("schema_version") or 1),
+                            payload_json=str(r.get("payload_json") or "{}"),
+                            created_at=datetime.fromtimestamp(
+                                _coerce_float(r.get("created_at"), default=time.time())
+                            ),
+                        )
+                    )
                 session.commit()
             legacy.rename(legacy.with_suffix(".json.imported"))
         except Exception:
-            logger.debug("maisoul: 旧 JSON 观察账本迁移失败（保留原文件，不影响运行）",
-                         exc_info=True)
+            logger.debug(
+                "maisoul: 旧 JSON 观察账本迁移失败（保留原文件，不影响运行）",
+                exc_info=True,
+            )
 
     def record(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         """写入一条麦麦观察时间线事件，并返回带 event_id 的清洗后 payload。"""
@@ -164,7 +188,8 @@ class MonitorStore:
             cleaned_payload["event_id"] = record.event_id
             cleaned_payload["schema_version"] = MONITOR_EVENT_SCHEMA_VERSION
             record.payload_json = json.dumps(
-                cleaned_payload, ensure_ascii=False, separators=(",", ":"))
+                cleaned_payload, ensure_ascii=False, separators=(",", ":")
+            )
             session.add(record)
 
             if self._should_cleanup_monitor_events():
@@ -172,8 +197,9 @@ class MonitorStore:
             session.commit()
             return cleaned_payload
 
-    def replay(self, *, since_event_id: int = 0,
-               limit: int = DEFAULT_REPLAY_LIMIT) -> list[dict[str, Any]]:
+    def replay(
+        self, *, since_event_id: int = 0, limit: int = DEFAULT_REPLAY_LIMIT
+    ) -> list[dict[str, Any]]:
         """按 event_id 返回可重放的麦麦观察事件。"""
         normalized_limit = max(1, min(limit, MAX_REPLAY_LIMIT))
         with self._session_factory() as session:
@@ -209,8 +235,7 @@ class MonitorStore:
             {"cutoff": cutoff},
         )
         count_result = session.execute(
-            text(
-                """
+            text("""
                 DELETE FROM maisaka_monitor_events
                 WHERE event_id NOT IN (
                     SELECT event_id
@@ -218,8 +243,7 @@ class MonitorStore:
                     ORDER BY event_id DESC
                     LIMIT :max_records
                 )
-                """
-            ),
+                """),
             {"max_records": MAX_MONITOR_EVENT_RECORDS},
         )
         removed_count = int(age_result.rowcount or 0) + int(count_result.rowcount or 0)
@@ -241,8 +265,10 @@ class MonitorStore:
         with self._cleanup_lock:
             self._records_since_cleanup += 1
             now = time.time()
-            if (self._records_since_cleanup < CLEANUP_CHECK_INTERVAL_RECORDS
-                    and now - self._last_cleanup_at < CLEANUP_CHECK_INTERVAL_SECONDS):
+            if (
+                self._records_since_cleanup < CLEANUP_CHECK_INTERVAL_RECORDS
+                and now - self._last_cleanup_at < CLEANUP_CHECK_INTERVAL_SECONDS
+            ):
                 return False
             self._records_since_cleanup = 0
             self._last_cleanup_at = now
@@ -372,7 +398,9 @@ class Monitor:
                 try:
                     broadcast_data = d
                     if ev not in NON_PERSISTED_EVENTS:
-                        broadcast_data = await asyncio.to_thread(self.store.record, ev, d)
+                        broadcast_data = await asyncio.to_thread(
+                            self.store.record, ev, d
+                        )
                     self.bus.publish(ev, broadcast_data)
                 except asyncio.CancelledError:
                     raise
@@ -406,101 +434,166 @@ class Monitor:
 
     # ---- emit_*（字段与 MaiBot events.py 一致；MaiBot 为 async，插件侧统一同步发射） ----
 
-    def emit_session_start(self, session_id: str, session_name: str, *,
-                           is_group_chat: bool, group_id, user_id, platform: str) -> None:
-        self._broadcast("session.start", {
-            "session_id": session_id,
-            "session_name": session_name,
-            "is_group_chat": is_group_chat,
-            "group_id": group_id,
-            "user_id": user_id,
-            "platform": platform,
-            "timestamp": time.time(),
-        })
+    def emit_session_start(
+        self,
+        session_id: str,
+        session_name: str,
+        *,
+        is_group_chat: bool,
+        group_id,
+        user_id,
+        platform: str,
+    ) -> None:
+        self._broadcast(
+            "session.start",
+            {
+                "session_id": session_id,
+                "session_name": session_name,
+                "is_group_chat": is_group_chat,
+                "group_id": group_id,
+                "user_id": user_id,
+                "platform": platform,
+                "timestamp": time.time(),
+            },
+        )
 
-    def emit_stage_status(self, *, session_id: str, session_name: str, stage: str,
-                          detail: str = "", round_text: str = "", agent_state: str = "",
-                          stage_started_at: float = 0.0, updated_at: float = 0.0,
-                          timestamp: float = 0.0) -> None:
+    def emit_stage_status(
+        self,
+        *,
+        session_id: str,
+        session_name: str,
+        stage: str,
+        detail: str = "",
+        round_text: str = "",
+        agent_state: str = "",
+        stage_started_at: float = 0.0,
+        updated_at: float = 0.0,
+        timestamp: float = 0.0,
+    ) -> None:
         now = time.time()
-        self._broadcast("stage.status", {
-            "session_id": session_id,
-            "session_name": session_name,
-            "stage": stage,
-            "detail": detail,
-            "round_text": round_text,
-            "agent_state": agent_state,
-            "stage_started_at": stage_started_at or now,
-            "updated_at": updated_at or now,
-            "timestamp": timestamp or now,
-        })
+        self._broadcast(
+            "stage.status",
+            {
+                "session_id": session_id,
+                "session_name": session_name,
+                "stage": stage,
+                "detail": detail,
+                "round_text": round_text,
+                "agent_state": agent_state,
+                "stage_started_at": stage_started_at or now,
+                "updated_at": updated_at or now,
+                "timestamp": timestamp or now,
+            },
+        )
 
-    def emit_llm_error(self, *, session_id: str, task_name: str, request_type: str,
-                       model_name: str, message: str) -> None:
-        self._broadcast("llm.error", {
-            "session_id": session_id,
-            "task_name": task_name,
-            "request_type": request_type,
-            "model_name": model_name,
-            "message": message,
-            "timestamp": time.time(),
-        })
+    def emit_llm_error(
+        self,
+        *,
+        session_id: str,
+        task_name: str,
+        request_type: str,
+        model_name: str,
+        message: str,
+    ) -> None:
+        self._broadcast(
+            "llm.error",
+            {
+                "session_id": session_id,
+                "task_name": task_name,
+                "request_type": request_type,
+                "model_name": model_name,
+                "message": message,
+                "timestamp": time.time(),
+            },
+        )
 
-    def emit_message_ingested(self, session_id: str, speaker_name: str, content: str,
-                              message_id: str, timestamp: float, *, platform: str = "",
-                              user_id: str = "", group_id: str = "",
-                              reply_to=None, media=None) -> None:
-        self._broadcast("message.ingested", {
-            "session_id": session_id,
-            "speaker_name": speaker_name,
-            "content": content,
-            "message_id": message_id,
-            "platform": platform,
-            "user_id": user_id,
-            "group_id": group_id,
-            "reply_to": reply_to,
-            "media": media or [],
-            "timestamp": timestamp or time.time(),
-        })
+    def emit_message_ingested(
+        self,
+        session_id: str,
+        speaker_name: str,
+        content: str,
+        message_id: str,
+        timestamp: float,
+        *,
+        platform: str = "",
+        user_id: str = "",
+        group_id: str = "",
+        reply_to=None,
+        media=None,
+    ) -> None:
+        self._broadcast(
+            "message.ingested",
+            {
+                "session_id": session_id,
+                "speaker_name": speaker_name,
+                "content": content,
+                "message_id": message_id,
+                "platform": platform,
+                "user_id": user_id,
+                "group_id": group_id,
+                "reply_to": reply_to,
+                "media": media or [],
+                "timestamp": timestamp or time.time(),
+            },
+        )
 
-    def emit_message_sent(self, session_id: str, speaker_name: str, content: str,
-                          message_id: str, timestamp: float, source_kind: str = "", *,
-                          platform: str = "", user_id: str = "", group_id: str = "",
-                          reply_to=None, media=None) -> None:
-        self._broadcast("message.sent", {
-            "session_id": session_id,
-            "speaker_name": speaker_name,
-            "content": content,
-            "message_id": message_id,
-            "source_kind": source_kind,
-            "platform": platform,
-            "user_id": user_id,
-            "group_id": group_id,
-            "reply_to": reply_to,
-            "media": media or [],
-            "timestamp": timestamp or time.time(),
-        })
+    def emit_message_sent(
+        self,
+        session_id: str,
+        speaker_name: str,
+        content: str,
+        message_id: str,
+        timestamp: float,
+        source_kind: str = "",
+        *,
+        platform: str = "",
+        user_id: str = "",
+        group_id: str = "",
+        reply_to=None,
+        media=None,
+    ) -> None:
+        self._broadcast(
+            "message.sent",
+            {
+                "session_id": session_id,
+                "speaker_name": speaker_name,
+                "content": content,
+                "message_id": message_id,
+                "source_kind": source_kind,
+                "platform": platform,
+                "user_id": user_id,
+                "group_id": group_id,
+                "reply_to": reply_to,
+                "media": media or [],
+                "timestamp": timestamp or time.time(),
+            },
+        )
 
-    def emit_planner_finalized(self, *, session_id: str, cycle_id: int,
-                               planner_request_messages=None,
-                               planner_selected_history_count=None,
-                               planner_tool_count=None,
-                               planner_content=None,
-                               planner_tool_calls=None,
-                               planner_prompt_tokens=None,
-                               planner_completion_tokens=None,
-                               planner_total_tokens=None,
-                               planner_duration_ms=None,
-                               tools=None,
-                               time_records=None,
-                               agent_state: str = "",
-                               planner_interrupted: bool = False,
-                               end_reason: str = "",
-                               end_detail: str = "",
-                               eco_injection: str = "",
-                               planner_system_prompt: str = "",
-                               reasoning_by_idx=None,
-                               replyer_reasoning: str = "") -> None:
+    def emit_planner_finalized(
+        self,
+        *,
+        session_id: str,
+        cycle_id: int,
+        planner_request_messages=None,
+        planner_selected_history_count=None,
+        planner_tool_count=None,
+        planner_content=None,
+        planner_tool_calls=None,
+        planner_prompt_tokens=None,
+        planner_completion_tokens=None,
+        planner_total_tokens=None,
+        planner_duration_ms=None,
+        tools=None,
+        time_records=None,
+        agent_state: str = "",
+        planner_interrupted: bool = False,
+        end_reason: str = "",
+        end_detail: str = "",
+        eco_injection: str = "",
+        planner_system_prompt: str = "",
+        reasoning_by_idx=None,
+        replyer_reasoning: str = "",
+    ) -> None:
         """广播一轮 planner 结束后的最终聚合事件（MaiBot 原事件名与嵌套结构）。
 
         token 用量来自 AstrBot LLMResponse.usage（TokenUsage：input_other+
@@ -509,45 +602,50 @@ class Monitor:
         system_prompt / messages[].tool_calls 是 maisoul 扩展（推理过程页复刻
         部署版 ReasoningLogViewerPage 需要，MaiBot 从 dump 文件取）。
         """
-        self._broadcast("planner.finalized", {
-            "session_id": session_id,
-            "cycle_id": cycle_id,
-            "timestamp": time.time(),
-            "request": _serialize_request_block(
-                planner_request_messages,
-                planner_selected_history_count,
-                planner_tool_count,
-                planner_system_prompt or None,
-                reasoning_map=reasoning_by_idx,
-            ),
-            "planner": _serialize_planner_block(
-                planner_content,
-                planner_tool_calls,
-                planner_prompt_tokens,
-                planner_completion_tokens,
-                planner_total_tokens,
-                planner_duration_ms,
-                replyer_reasoning,
-            ),
-            "tools": _serialize_tool_results(list(tools or [])),
-            "interrupted": planner_interrupted,
-            "final_state": {
-                "time_records": dict(time_records or {}),
-                "agent_state": agent_state,
-                "end_reason": end_reason,
-                "end_detail": end_detail,
-                # maisoul 扩展：本轮 replyer 收集的生态注入全文（心弦好感/记忆/世界书）
-                "eco_injection": eco_injection or "",
+        self._broadcast(
+            "planner.finalized",
+            {
+                "session_id": session_id,
+                "cycle_id": cycle_id,
+                "timestamp": time.time(),
+                "request": _serialize_request_block(
+                    planner_request_messages,
+                    planner_selected_history_count,
+                    planner_tool_count,
+                    planner_system_prompt or None,
+                    reasoning_map=reasoning_by_idx,
+                ),
+                "planner": _serialize_planner_block(
+                    planner_content,
+                    planner_tool_calls,
+                    planner_prompt_tokens,
+                    planner_completion_tokens,
+                    planner_total_tokens,
+                    planner_duration_ms,
+                    replyer_reasoning,
+                ),
+                "tools": _serialize_tool_results(list(tools or [])),
+                "interrupted": planner_interrupted,
+                "final_state": {
+                    "time_records": dict(time_records or {}),
+                    "agent_state": agent_state,
+                    "end_reason": end_reason,
+                    "end_detail": end_detail,
+                    # maisoul 扩展：本轮 replyer 收集的生态注入全文（心弦好感/记忆/世界书）
+                    "eco_injection": eco_injection or "",
+                },
             },
-        })
+        )
 
 
-def _serialize_request_block(messages, selected_history_count, tool_count,
-                             system_prompt=None, reasoning_map=None):
+def _serialize_request_block(
+    messages, selected_history_count, tool_count, system_prompt=None, reasoning_map=None
+):
     if messages is None and selected_history_count is None and tool_count is None:
         return None
     out = {
-        "messages": [], "selected_history_count": int(selected_history_count or 0),
+        "messages": [],
+        "selected_history_count": int(selected_history_count or 0),
         "tool_count": int(tool_count or 0),
     }
     rmap = {int(k): v for k, v in dict(reasoning_map or {}).items()}
@@ -570,20 +668,34 @@ def _serialize_request_block(messages, selected_history_count, tool_count,
     return out
 
 
-def _serialize_planner_block(content, tool_calls, prompt_tokens,
-                             completion_tokens, total_tokens, duration_ms,
-                             replyer_reasoning=""):
-    if (content is None and tool_calls is None and duration_ms is None
-            and prompt_tokens is None and completion_tokens is None
-            and total_tokens is None):
+def _serialize_planner_block(
+    content,
+    tool_calls,
+    prompt_tokens,
+    completion_tokens,
+    total_tokens,
+    duration_ms,
+    replyer_reasoning="",
+):
+    if (
+        content is None
+        and tool_calls is None
+        and duration_ms is None
+        and prompt_tokens is None
+        and completion_tokens is None
+        and total_tokens is None
+    ):
         return None
     out = {
         "content": content,
         "tool_calls": [
-            {"id": str(tc.get("id", "")),
-             "name": str(tc.get("name", "unknown")),
-             "arguments": tc.get("arguments", {})}
-            for tc in list(tool_calls or []) if isinstance(tc, dict)
+            {
+                "id": str(tc.get("id", "")),
+                "name": str(tc.get("name", "unknown")),
+                "arguments": tc.get("arguments", {}),
+            }
+            for tc in list(tool_calls or [])
+            if isinstance(tc, dict)
         ],
         "prompt_tokens": int(prompt_tokens or 0),
         "completion_tokens": int(completion_tokens or 0),
@@ -591,7 +703,9 @@ def _serialize_planner_block(content, tool_calls, prompt_tokens,
         "duration_ms": float(duration_ms or 0.0),
     }
     if str(replyer_reasoning or "").strip():
-        out["reasoning"] = str(replyer_reasoning).strip()  # 推理过程页：reply 工具的回复器思考
+        out["reasoning"] = str(
+            replyer_reasoning
+        ).strip()  # 推理过程页：reply 工具的回复器思考
     return out
 
 

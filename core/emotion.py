@@ -32,10 +32,18 @@ EMOTION_DELTAS: dict[str, tuple[float, float]] = {
 
 # 12 锚点：(情绪词, v, a)——标签映射取最近欧氏距离
 EMOTION_ANCHORS: list[tuple[str, float, float]] = [
-    ("愤怒", -0.80, 0.90), ("厌恶", -0.60, 0.50), ("恐惧", -0.85, 0.70),
-    ("悲伤", -0.70, 0.10), ("委屈", -0.35, 0.30), ("平静", 0.00, 0.00),
-    ("好奇", 0.30, 0.45), ("开心", 0.65, 0.55), ("兴奋", 0.90, 0.85),
-    ("喜爱", 0.80, 0.35), ("期待", 0.45, 0.60), ("安心", 0.40, 0.10),
+    ("愤怒", -0.80, 0.90),
+    ("厌恶", -0.60, 0.50),
+    ("恐惧", -0.85, 0.70),
+    ("悲伤", -0.70, 0.10),
+    ("委屈", -0.35, 0.30),
+    ("平静", 0.00, 0.00),
+    ("好奇", 0.30, 0.45),
+    ("开心", 0.65, 0.55),
+    ("兴奋", 0.90, 0.85),
+    ("喜爱", 0.80, 0.35),
+    ("期待", 0.45, 0.60),
+    ("安心", 0.40, 0.10),
 ]
 
 _DECAY_PER_MINUTE = 0.10  # 每分钟 exp 衰减率（半衰期 ≈ 7 分钟）
@@ -49,8 +57,8 @@ class EmotionState:
 
     v: float = 0.0
     a: float = 0.0
-    streak_dir: int = 0   # 连续情绪方向（-1/0/+1）
-    streak_n: int = 0     # 连续次数（动量指数）
+    streak_dir: int = 0  # 连续情绪方向（-1/0/+1）
+    streak_n: int = 0  # 连续次数（动量指数）
     last_ts: float = 0.0
     history: list = field(default_factory=lambda: [])  # 最近情绪词（展示用，≤12）
 
@@ -81,7 +89,7 @@ class EmotionState:
         if first_emotion:
             momentum = 1.0
         elif same_direction:
-            momentum = _MOMENTUM_UP ** n
+            momentum = _MOMENTUM_UP**n
         else:
             momentum = _MOMENTUM_DOWN
         self.v = max(-1.0, min(1.0, self.v + dv * momentum))
@@ -107,4 +115,4 @@ class EmotionState:
 
     def typing_multiplier(self, now: float | None = None) -> float:
         """打字延迟乘数 1.5^arousal。"""
-        return 1.5 ** self.a
+        return 1.5**self.a

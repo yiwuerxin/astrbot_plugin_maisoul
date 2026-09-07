@@ -25,10 +25,15 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     # P-F 反注入清洗：引用前缀/合并转发占位不冒充本人发言；提及判定前
     # 剥掉指向其他 AI 的开头 @呼名（At 组件的 at_bot 强判定不受影响）
     text = sanitize.sanitize_text(raw_text)
-    mention_text = sanitize.strip_leading_ai_mention(text, str(P.config["bot_name"]),
-                                                     [str(a) for a in (P.config.get("aliases") or [])])
-    logger.debug(f"maisoul: 收到消息 [{event.get_platform_name()}] "
-                 f"{event.get_sender_name()}: {text[:40]}")
+    mention_text = sanitize.strip_leading_ai_mention(
+        text,
+        str(P.config["bot_name"]),
+        [str(a) for a in (P.config.get("aliases") or [])],
+    )
+    logger.debug(
+        f"maisoul: 收到消息 [{event.get_platform_name()}] "
+        f"{event.get_sender_name()}: {text[:40]}"
+    )
 
     # 逃生舱：指令 / 其他插件（Heartflow 等）已触发的恒放行。
     # v6.10.0 聊天全面接管：群聊 @/唤醒前缀不再放行原生路径，而是作为
@@ -45,9 +50,12 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
         # （CommandFilter）即视为指令，放行
         try:
             from astrbot.core.star.filter.command import CommandFilter as _CF
-            for _h in (event.get_extra("activated_handlers") or []):
-                if any(isinstance(_f, _CF)
-                       for _f in (getattr(_h, "event_filters", None) or [])):
+
+            for _h in event.get_extra("activated_handlers") or []:
+                if any(
+                    isinstance(_f, _CF)
+                    for _f in (getattr(_h, "event_filters", None) or [])
+                ):
                     escape = True
                     break
         except Exception:
@@ -59,16 +67,19 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
             escape = True
         else:
             explicit = True
-    logger.debug(f"maisoul: escape={escape} explicit={explicit} "
-                 f"sender={event.get_sender_id()} self={event.get_self_id()}")
+    logger.debug(
+        f"maisoul: escape={escape} explicit={explicit} "
+        f"sender={event.get_sender_id()} self={event.get_self_id()}"
+    )
     if escape:
         _record(P, event, text)
         return
 
     # 过滤词（对齐 [message_receive].ban_words/ban_msgs_regex：注册前整条丢弃，
     # 不进缓存不进门控；指令类消息（escape）不检查，同 MaiBot 只查非命令候选）
-    if trigger.hit_ban_filter(text, P.config.get("ban_words"),
-                              P.config.get("ban_msgs_regex")):
+    if trigger.hit_ban_filter(
+        text, P.config.get("ban_words"), P.config.get("ban_msgs_regex")
+    ):
         logger.debug(f"maisoul: 消息命中过滤词，已丢弃: {text[:30]}")
         return
 
@@ -85,10 +96,13 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     if gid not in P._monitor_sessions:
         P._monitor_sessions.add(gid)
         P.monitor.emit_session_start(
-            gid, _session_name(P, gid), is_group_chat=is_group,
+            gid,
+            _session_name(P, gid),
+            is_group_chat=is_group,
             group_id=gid if is_group else None,
             user_id=None if is_group else gid,
-            platform=str(event.get_platform_name() or ""))
+            platform=str(event.get_platform_name() or ""),
+        )
     _record(P, event, text, gid)
     logger.debug(f"maisoul[{gid}]: 记录完成 pending={st.pending_since_fire}")
 
@@ -99,12 +113,15 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
         # 回复引用机器人 = 提及（对齐 is_mentioned_bot_in_message 第 6 层：
         # 回复引用算 mention 不算 at；批次内任一命中即算——扫当前消息+未消费积压）
         mentioned = _is_reply_to_bot(P, event) or any(
-            m.get("reply_bot") for m in st.buffer
-            if st.last_fire_ts and float(m.get("ts") or 0) > st.last_fire_ts)
+            m.get("reply_bot")
+            for m in st.buffer
+            if st.last_fire_ts and float(m.get("ts") or 0) > st.last_fire_ts
+        )
     # 显式召唤（@ 或唤醒前缀）与 At 段同级——都算 at 档强制触发
     at_bot = _has_at_bot(P, event) or explicit
     fired, detail, nec = trigger.should_trigger(
-        st, P.config,
+        st,
+        P.config,
         at_bot=at_bot,
         mentioned=mentioned,
         text=text,
@@ -133,15 +150,22 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
 
     if P.config["mode"] == "planner":
         # 决策模式：进入 maisaka Planner（调度语义对齐 turn_scheduler/runtime）
-        forced = ((at_bot and P.config.get("inevitable_at_reply", True))
-                  or (mentioned and P.config.get("mentioned_bot_reply", False)))
+        forced = (at_bot and P.config.get("inevitable_at_reply", True)) or (
+            mentioned and P.config.get("mentioned_bot_reply", False)
+        )
         # WebUI 聊天页同步跑完整决策：段落经 event.send 流进当前请求气泡。
         # 后台任务方式下聊天 API 会在事件结束时关流，回复只能落 proactive 存库，
         # 页面上只剩一条秒回的空气泡（_has_send_oper 会让原生 LLM 阶段自动跳过）。
         webchat = str(event.get_platform_name() or "") == "webchat"
-        await _schedule_planner(P, 
-            event, st, gid, forced, is_group,
-            send_fn=_webchat_sender(P, event) if webchat else None)
+        await _schedule_planner(
+            P,
+            event,
+            st,
+            gid,
+            forced,
+            is_group,
+            send_fn=_webchat_sender(P, event) if webchat else None,
+        )
         event.stop_event()
         return
 
@@ -157,12 +181,14 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
         st.firing = False
     event.stop_event()
 
+
 # ------------------------------------------------------------------ #
 # 空窗补偿到点重查（对齐 runtime._defer_message_turn_check）              #
 # ------------------------------------------------------------------ #
 # ------------------------------------------------------------------ #
 # 任务级模型绑定（对齐 MaiBot model_task_config：多模型 + 选择策略；        #
 # 纯逻辑在 core/modelbind.py，此处只做 provider 解析与调用）               #
+
 
 def _maybe_defer_recheck(P, event: AstrMessageEvent, st, gid: str, is_group: bool):
     """frequency 门未触发：按 MaiBot delay 公式安排到点重查。
@@ -180,7 +206,8 @@ def _maybe_defer_recheck(P, event: AstrMessageEvent, st, gid: str, is_group: boo
         return
     threshold = trigger.message_trigger_threshold(
         "frequency",
-        trigger.effective_talk_value(P.config, platform, gid, is_group=is_group))
+        trigger.effective_talk_value(P.config, platform, gid, is_group=is_group),
+    )
     delay = trigger.frequency_recheck_delay(st, st.pending_since_fire, threshold)
     if delay is None:
         return
@@ -196,9 +223,17 @@ def _maybe_defer_recheck(P, event: AstrMessageEvent, st, gid: str, is_group: boo
         if pl.agent_state in ("running", "wait") or st.firing:
             return
         fired, detail, _ = trigger.should_trigger(
-            st, P.config, at_bot=False, mentioned=False, text="",
-            aliases=[], bot_name=str(P.config["bot_name"]),
-            platform=platform, chat_id=gid, is_group=is_group)
+            st,
+            P.config,
+            at_bot=False,
+            mentioned=False,
+            text="",
+            aliases=[],
+            bot_name=str(P.config["bot_name"]),
+            platform=platform,
+            chat_id=gid,
+            is_group=is_group,
+        )
         if not fired:
             logger.debug(f"maisoul[{gid}] 空窗到点重查未达标：{detail}")
             return
@@ -220,6 +255,7 @@ def _maybe_defer_recheck(P, event: AstrMessageEvent, st, gid: str, is_group: boo
 
     st.defer_task = P._registry.spawn(_recheck(), name=f"defer_recheck:{gid}")
     logger.debug(f"maisoul[{gid}] 空窗补偿重查已排期：{delay:.1f}s 后重评")
+
 
 # ------------------------------------------------------------------ #
 # 独立模式：生成与拟人发送（含管家桥）                                   #

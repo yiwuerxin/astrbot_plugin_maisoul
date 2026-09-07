@@ -19,7 +19,8 @@ async def on_llm_request_impl(P, event: AstrMessageEvent, req):
         return
     gid = session_key(event)
     eff_cfg, pname = await personas.resolve_active(
-        P.context, P.config, gid, event.unified_msg_origin)
+        P.context, P.config, gid, event.unified_msg_origin
+    )
     inject = (
         f"\n\n【maisoul 麦麦三件套（本群主动发言由意愿评分触发｜人格={pname}）】\n"
         f"{prompt.build_identity(eff_cfg)}\n"
@@ -50,6 +51,7 @@ async def on_llm_response_impl(P, event: AstrMessageEvent, resp):
             _emit_sent(P, gid, seg, "", "reply", event)
     except Exception:
         logger.debug("maisoul: 回声记录失败", exc_info=True)
+
 
 # ------------------------------------------------------------------ #
 # 管理指令                                                             #

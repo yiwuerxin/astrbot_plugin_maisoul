@@ -21,6 +21,7 @@ try:
     from astrbot.api.event import MessageChain  # noqa: F401
     from astrbot.api.message_components import Plain, Reply  # noqa: F401
     from astrbot.core.agent.message import ImageURLPart  # noqa: F401
+
     _HAS_REAL_ASTRBOT = True
 except ImportError:
     _HAS_REAL_ASTRBOT = False
@@ -75,8 +76,14 @@ except ImportError:
 
     class _StubFunctionTool:
         # 纯数据记录：list_astrbot_tools 逻辑测试用
-        def __init__(self, name="", description="", parameters=None,
-                     handler=None, handler_module_path=None):
+        def __init__(
+            self,
+            name="",
+            description="",
+            parameters=None,
+            handler=None,
+            handler_module_path=None,
+        ):
             self.name = name
             self.description = description
             self.parameters = parameters
@@ -115,18 +122,27 @@ except ImportError:
     _agent.mcp_client = _mcp
     _api.message_components = _comp
     _api.event = _evt
-    for _name, _mod in {"astrbot": _pkg, "astrbot.core": _core,
-                        "astrbot.core.agent": _agent,
-                        "astrbot.core.agent.message": _msg,
-                        "astrbot.core.agent.tool": _tool,
-                        "astrbot.core.agent.mcp_client": _mcp,
-                        "astrbot.core.star": _star,
-                        "astrbot.api": _api,
-                        "astrbot.api.message_components": _comp,
-                        "astrbot.api.event": _evt}.items():
+    for _name, _mod in {
+        "astrbot": _pkg,
+        "astrbot.core": _core,
+        "astrbot.core.agent": _agent,
+        "astrbot.core.agent.message": _msg,
+        "astrbot.core.agent.tool": _tool,
+        "astrbot.core.agent.mcp_client": _mcp,
+        "astrbot.core.star": _star,
+        "astrbot.api": _api,
+        "astrbot.api.message_components": _comp,
+        "astrbot.api.event": _evt,
+    }.items():
         sys.modules[_name] = _mod
 
-from astrbot_plugin_maisoul.core import postprocess, prompt, scoring, sender, trigger  # noqa: E402
+from astrbot_plugin_maisoul.core import (
+    postprocess,
+    prompt,
+    scoring,
+    sender,
+    trigger,
+)  # noqa: E402
 from astrbot_plugin_maisoul.core.constants import OUTPUT_INSTRUCTION  # noqa: E402
 from astrbot_plugin_maisoul.core.states import GroupState, StateManager  # noqa: E402
 
@@ -147,11 +163,20 @@ def make_state(msgs, *, pending=None, self_times=None, intervals=None):
     st = GroupState()
     now = time.time()
     for i, (name, text, at) in enumerate(msgs):
-        st.buffer.append({"name": name, "sid": name, "msg_id": f"m{i}", "text": text,
-                          "at_bot": at, "reply_bot": False, "ts": now - 60 + i})
+        st.buffer.append(
+            {
+                "name": name,
+                "sid": name,
+                "msg_id": f"m{i}",
+                "text": text,
+                "at_bot": at,
+                "reply_bot": False,
+                "ts": now - 60 + i,
+            }
+        )
     if pending is not None:
         st.pending_since_fire = pending
-    for t in (self_times or []):
+    for t in self_times or []:
         st.recent_self.append(t)
     for i in range(len(intervals or [])):
         st.ext_intervals.append(now - 60 + i * 2)
@@ -161,118 +186,299 @@ def make_state(msgs, *, pending=None, self_times=None, intervals=None):
 
 
 BASE_CFG = {
-    "reply_trigger_mode": "frequency", "talk_value": 1.0,
-    "inevitable_at_reply": True, "mentioned_bot_reply": False,
-    "enable_talk_value_rules": False, "talk_value_rules": [],
-    "bot_name": "麦麦", "aliases": ["小麦"],
+    "reply_trigger_mode": "frequency",
+    "talk_value": 1.0,
+    "inevitable_at_reply": True,
+    "mentioned_bot_reply": False,
+    "enable_talk_value_rules": False,
+    "talk_value_rules": [],
+    "bot_name": "麦麦",
+    "aliases": ["小麦"],
 }
 
 
 def test_trigger():
     print("[触发门控]")
-    check("阈值: frequency f=0.5→ceil(1/f)=2", trigger.message_trigger_threshold("frequency", 0.5) == 2)
-    check("阈值: necessity f=0.5→ceil(1/f²)=4", trigger.message_trigger_threshold("reply_necessity", 0.5) == 4)
+    check(
+        "阈值: frequency f=0.5→ceil(1/f)=2",
+        trigger.message_trigger_threshold("frequency", 0.5) == 2,
+    )
+    check(
+        "阈值: necessity f=0.5→ceil(1/f²)=4",
+        trigger.message_trigger_threshold("reply_necessity", 0.5) == 4,
+    )
     check("阈值: f=1→1", trigger.message_trigger_threshold("frequency", 1.0) == 1)
     check("阈值: f=0→0(静默)", trigger.message_trigger_threshold("frequency", 0.0) == 0)
 
     # 频率触发：攒够条数
     st = make_state([("u", "哈", False)] * 2, pending=2, intervals=[1, 2])
-    fired, detail, _ = trigger.should_trigger(st, BASE_CFG, at_bot=False, mentioned=False,
-                                              text="哈", aliases=["小麦"], bot_name="麦麦",
-                                              platform="qq", chat_id="g1")
+    fired, detail, _ = trigger.should_trigger(
+        st,
+        BASE_CFG,
+        at_bot=False,
+        mentioned=False,
+        text="哈",
+        aliases=["小麦"],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
     check("频率触发: f=1 攒 1 条即触发", fired, detail)
 
     st = make_state([("u", "哈", False)], pending=1, intervals=[1])
     st.last_ext_ts = time.time()  # 刚收到，无空窗
-    fired, detail, _ = trigger.should_trigger(st, dict(BASE_CFG, talk_value=0.5), at_bot=False,
-                                              mentioned=False, text="哈", aliases=[], bot_name="麦麦",
-                                              platform="qq", chat_id="g1")
+    fired, detail, _ = trigger.should_trigger(
+        st,
+        dict(BASE_CFG, talk_value=0.5),
+        at_bot=False,
+        mentioned=False,
+        text="哈",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
     check("频率触发: f=0.5 阈值2 条数不足不触发", not fired, detail)
 
     # 空窗补偿：1 条 + 长空窗 折算补齐
     st = make_state([("u", "哈", False)], pending=1, intervals=[1, 2, 3])
-    st.last_ext_ts = time.time() - 120  # 空窗 120s，平均间隔 2s → 折算 59 条，封顶 threshold-1
-    fired, detail, _ = trigger.should_trigger(st, dict(BASE_CFG, talk_value=0.5), at_bot=False,
-                                              mentioned=False, text="哈", aliases=[], bot_name="麦麦",
-                                              platform="qq", chat_id="g1")
+    st.last_ext_ts = (
+        time.time() - 120
+    )  # 空窗 120s，平均间隔 2s → 折算 59 条，封顶 threshold-1
+    fired, detail, _ = trigger.should_trigger(
+        st,
+        dict(BASE_CFG, talk_value=0.5),
+        at_bot=False,
+        mentioned=False,
+        text="哈",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
     check("频率触发: 空窗补偿补齐触发", fired, detail)
 
     st.pending_since_fire = 0
-    fired, detail, _ = trigger.should_trigger(st, dict(BASE_CFG, talk_value=0.5), at_bot=False,
-                                              mentioned=False, text="哈", aliases=[], bot_name="麦麦",
-                                              platform="qq", chat_id="g1")
+    fired, detail, _ = trigger.should_trigger(
+        st,
+        dict(BASE_CFG, talk_value=0.5),
+        at_bot=False,
+        mentioned=False,
+        text="哈",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
     check("频率触发: 纯沉默不触发", not fired, detail)
 
     # 静默接收
     st = make_state([("u", "哈", False)], pending=5, intervals=[1])
-    fired, detail, _ = trigger.should_trigger(st, dict(BASE_CFG, talk_value=0.0), at_bot=True,
-                                              mentioned=True, text="哈", aliases=[], bot_name="麦麦",
-                                              platform="qq", chat_id="g1")
+    fired, detail, _ = trigger.should_trigger(
+        st,
+        dict(BASE_CFG, talk_value=0.0),
+        at_bot=True,
+        mentioned=True,
+        text="哈",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
     check("静默接收: talk_value=0 连 @ 也不发", not fired, detail)
 
     # 强制触发
     st = make_state([("u", "哈", False)], pending=0, intervals=[1])
     st.last_ext_ts = time.time()
-    fired, detail, _ = trigger.should_trigger(st, BASE_CFG, at_bot=True, mentioned=False,
-                                              text="哈", aliases=[], bot_name="麦麦",
-                                              platform="qq", chat_id="g1")
+    fired, detail, _ = trigger.should_trigger(
+        st,
+        BASE_CFG,
+        at_bot=True,
+        mentioned=False,
+        text="哈",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
     check("强制触发: @ 必回复(默认开)", fired, detail)
-    fired, _, _ = trigger.should_trigger(st, BASE_CFG, at_bot=False, mentioned=True,
-                                         text="哈", aliases=[], bot_name="麦麦",
-                                         platform="qq", chat_id="g1")
+    fired, _, _ = trigger.should_trigger(
+        st,
+        BASE_CFG,
+        at_bot=False,
+        mentioned=True,
+        text="哈",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
     check("提及必回复默认关: 不强制", not fired, detail)
-    fired, _, _ = trigger.should_trigger(st, dict(BASE_CFG, mentioned_bot_reply=True),
-                                         at_bot=False, mentioned=True, text="哈", aliases=[],
-                                         bot_name="麦麦", platform="qq", chat_id="g1")
+    fired, _, _ = trigger.should_trigger(
+        st,
+        dict(BASE_CFG, mentioned_bot_reply=True),
+        at_bot=False,
+        mentioned=True,
+        text="哈",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
     check("提及必回复开: 强制触发", fired)
 
     # 必要性触发模式
-    st = make_state([("u", "麦麦，帮我看看这个", False)], pending=1, intervals=[1, 2, 3])
-    fired, detail, nec = trigger.should_trigger(st, dict(BASE_CFG, reply_trigger_mode="reply_necessity"),
-                                                at_bot=False, mentioned=True,
-                                                text="麦麦，帮我看看这个", aliases=["麦麦"],
-                                                bot_name="麦麦", platform="qq", chat_id="g1")
-    check("必要性触发: 提及+请求过 80 分", fired and nec is not None and nec.score >= 80, detail)
+    st = make_state(
+        [("u", "麦麦，帮我看看这个", False)], pending=1, intervals=[1, 2, 3]
+    )
+    fired, detail, nec = trigger.should_trigger(
+        st,
+        dict(BASE_CFG, reply_trigger_mode="reply_necessity"),
+        at_bot=False,
+        mentioned=True,
+        text="麦麦，帮我看看这个",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
+    check(
+        "必要性触发: 提及+请求过 80 分",
+        fired and nec is not None and nec.score >= 80,
+        detail,
+    )
 
     # 动态频率规则
-    rules = dict(BASE_CFG, enable_talk_value_rules=True, talk_value=0.2, talk_value_rules=[
-        {"platform": "", "item_id": "", "rule_type": "group", "time": "00:00-23:59", "value": 0.5},
-        {"platform": "qq", "item_id": "g1", "rule_type": "group", "time": "*", "value": 1.0},
-    ])
-    check("动态规则: 精确匹配优先于通配", trigger.effective_talk_value(rules, "qq", "g1") == 1.0)
-    check("动态规则: 未命中群回落时段规则", trigger.effective_talk_value(rules, "qq", "gX") == 0.5)
-    check("动态规则: 关闭时用基础值", trigger.effective_talk_value(BASE_CFG, "qq", "g1") == 1.0)
-    night = dict(rules, talk_value_rules=[
-        {"platform": "", "item_id": "", "rule_type": "group", "time": "00:00-08:59", "value": 0.1},
-        {"platform": "", "item_id": "", "rule_type": "group", "time": "09:00-23:59", "value": 0.9},
-    ])
+    rules = dict(
+        BASE_CFG,
+        enable_talk_value_rules=True,
+        talk_value=0.2,
+        talk_value_rules=[
+            {
+                "platform": "",
+                "item_id": "",
+                "rule_type": "group",
+                "time": "00:00-23:59",
+                "value": 0.5,
+            },
+            {
+                "platform": "qq",
+                "item_id": "g1",
+                "rule_type": "group",
+                "time": "*",
+                "value": 1.0,
+            },
+        ],
+    )
+    check(
+        "动态规则: 精确匹配优先于通配",
+        trigger.effective_talk_value(rules, "qq", "g1") == 1.0,
+    )
+    check(
+        "动态规则: 未命中群回落时段规则",
+        trigger.effective_talk_value(rules, "qq", "gX") == 0.5,
+    )
+    check(
+        "动态规则: 关闭时用基础值",
+        trigger.effective_talk_value(BASE_CFG, "qq", "g1") == 1.0,
+    )
+    night = dict(
+        rules,
+        talk_value_rules=[
+            {
+                "platform": "",
+                "item_id": "",
+                "rule_type": "group",
+                "time": "00:00-08:59",
+                "value": 0.1,
+            },
+            {
+                "platform": "",
+                "item_id": "",
+                "rule_type": "group",
+                "time": "09:00-23:59",
+                "value": 0.9,
+            },
+        ],
+    )
     import datetime
+
     noon = datetime.datetime(2026, 8, 29, 12, 0).timestamp()
-    check("动态规则: 时段命中取对应值", trigger.effective_talk_value(night, "qq", "g1", now=noon) == 0.9)
-    check("动态规则: private 规则在群聊不参与", trigger._rule_target_priority(
-        {"platform": "", "item_id": "", "rule_type": "private"}, "qq", "g1", True) is None)
-    check("私聊: 基础频率用 private_talk_value",
-          trigger.effective_talk_value(dict(BASE_CFG, private_talk_value=0.5), "qq", "u1", is_group=False) == 0.5)
-    check("私聊: private 规则参与匹配",
-          trigger._rule_target_priority(
-              {"platform": "qq", "item_id": "u1", "rule_type": "private"}, "qq", "u1", False) == 5)
-    prules = dict(BASE_CFG, is_group_cfg=False, private_talk_value=0.2, enable_talk_value_rules=True,
-                  talk_value_rules=[{"platform": "qq", "item_id": "u1", "rule_type": "private",
-                                     "time": "*", "value": 1.0}])
-    check("私聊: 动态规则覆盖私聊基础值",
-          trigger.effective_talk_value(prules, "qq", "u1", is_group=False) == 1.0)
+    check(
+        "动态规则: 时段命中取对应值",
+        trigger.effective_talk_value(night, "qq", "g1", now=noon) == 0.9,
+    )
+    check(
+        "动态规则: private 规则在群聊不参与",
+        trigger._rule_target_priority(
+            {"platform": "", "item_id": "", "rule_type": "private"}, "qq", "g1", True
+        )
+        is None,
+    )
+    check(
+        "私聊: 基础频率用 private_talk_value",
+        trigger.effective_talk_value(
+            dict(BASE_CFG, private_talk_value=0.5), "qq", "u1", is_group=False
+        )
+        == 0.5,
+    )
+    check(
+        "私聊: private 规则参与匹配",
+        trigger._rule_target_priority(
+            {"platform": "qq", "item_id": "u1", "rule_type": "private"},
+            "qq",
+            "u1",
+            False,
+        )
+        == 5,
+    )
+    prules = dict(
+        BASE_CFG,
+        is_group_cfg=False,
+        private_talk_value=0.2,
+        enable_talk_value_rules=True,
+        talk_value_rules=[
+            {
+                "platform": "qq",
+                "item_id": "u1",
+                "rule_type": "private",
+                "time": "*",
+                "value": 1.0,
+            }
+        ],
+    )
+    check(
+        "私聊: 动态规则覆盖私聊基础值",
+        trigger.effective_talk_value(prules, "qq", "u1", is_group=False) == 1.0,
+    )
 
 
 def test_scoring():
     print("[必要性评分]")
 
-    def ev(text, *, at_bot=False, aliases=("麦麦",), bot_name="麦麦", frequency=0.5, st=None):
+    def ev(
+        text,
+        *,
+        at_bot=False,
+        aliases=("麦麦",),
+        bot_name="麦麦",
+        frequency=0.5,
+        st=None,
+    ):
         st = st or make_state([("u", text, at_bot)], pending=1, intervals=[1, 2, 3])
-        return scoring.evaluate(st, at_bot=at_bot, text=text, aliases=list(aliases),
-                                bot_name=bot_name, frequency=frequency)
+        return scoring.evaluate(
+            st,
+            at_bot=at_bot,
+            text=text,
+            aliases=list(aliases),
+            bot_name=bot_name,
+            frequency=frequency,
+        )
 
     r = ev("@麦麦 帮我看看这个报错", at_bot=True)
-    check("被@直通且长回复", r.score >= 80 and r.style == "长回复", f"{r.score} {r.style}")
+    check(
+        "被@直通且长回复", r.score >= 80 and r.style == "长回复", f"{r.score} {r.style}"
+    )
 
     r = ev("麦麦，帮我看看这个", at_bot=False)
     check("提及=80档+请求触发", r.score >= 80, str(r.score))
@@ -283,23 +489,57 @@ def test_scoring():
     r = ev("DeepSeek，帮我写个脚本", at_bot=False)
     check("叫别的AI被抑制", r.score < 20, str(r.score))
 
-    st = make_state([(f"q{i}", "今天天气不错啊大家", False) for i in range(25)], pending=25,
-                    intervals=list(range(8)))
-    r = scoring.evaluate(st, at_bot=False, text="今天天气不错啊大家",
-                         aliases=["麦麦"], bot_name="麦麦", frequency=0.5)
-    check("积压25条满压插话(简短表达)", r.score == 75 and r.style == "简短表达", f"{r.score} {r.style}")
+    st = make_state(
+        [(f"q{i}", "今天天气不错啊大家", False) for i in range(25)],
+        pending=25,
+        intervals=list(range(8)),
+    )
+    r = scoring.evaluate(
+        st,
+        at_bot=False,
+        text="今天天气不错啊大家",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=0.5,
+    )
+    check(
+        "积压25条满压插话(简短表达)",
+        r.score == 75 and r.style == "简短表达",
+        f"{r.score} {r.style}",
+    )
 
     st = make_state([("u", "麦麦 你觉得呢", False)], pending=1, intervals=[1, 2, 3])
     for _ in range(8):
         st.recent_self.append(time.time() - 30)
     for i in range(16):
-        st.buffer.append({"name": "x", "sid": "y", "msg_id": "", "text": "m",
-                          "at_bot": False, "reply_bot": False, "ts": time.time() - 60})
-    noisy = scoring.evaluate(st, at_bot=False, text="麦麦 你觉得呢", aliases=["麦麦"],
-                             bot_name="麦麦", frequency=0.5).score
+        st.buffer.append(
+            {
+                "name": "x",
+                "sid": "y",
+                "msg_id": "",
+                "text": "m",
+                "at_bot": False,
+                "reply_bot": False,
+                "ts": time.time() - 60,
+            }
+        )
+    noisy = scoring.evaluate(
+        st,
+        at_bot=False,
+        text="麦麦 你觉得呢",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=0.5,
+    ).score
     st.recent_self.clear()
-    quiet = scoring.evaluate(st, at_bot=False, text="麦麦 你觉得呢", aliases=["麦麦"],
-                             bot_name="麦麦", frequency=0.5).score
+    quiet = scoring.evaluate(
+        st,
+        at_bot=False,
+        text="麦麦 你觉得呢",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=0.5,
+    ).score
     check("存在感惩罚生效", noisy < quiet, f"{noisy} < {quiet}")
 
     check("频率0.1倍率0.55", abs(scoring.freq_factor(0.1) - 0.55) < 1e-9)
@@ -309,13 +549,16 @@ def test_scoring():
 
 def test_text_rules():
     print("[文本规则]")
-    check("噪声清洗: 引用剥离", scoring.strip_noise("[CQ:reply,id=1] 你好呀") == "你好呀")
+    check(
+        "噪声清洗: 引用剥离", scoring.strip_noise("[CQ:reply,id=1] 你好呀") == "你好呀"
+    )
     check("噪声清洗: @剥离", scoring.strip_noise("@麦麦 怎么弄") == "怎么弄")
     check("噪声清洗: 图片占位为空", scoring.strip_noise("[图片：xx.jpg]") == "")
     check("问句: 吗结尾", scoring.is_question("这个能行吗"))
     check("问句: ？结尾", scoring.is_question("你要去哪里？"))
     check("非问句: 纯感叹短词", not scoring.is_question("！！好"))
     from astrbot_plugin_maisoul.core.constants import SHORT_REACTIONS
+
     check("短反应: 哈哈", "哈哈" in SHORT_REACTIONS)
 
 
@@ -324,64 +567,99 @@ def test_postprocess():
     ct = postprocess.calculate_typing_time
     check("打字: 单汉字3倍+0.3", abs(ct("好") - 1.2) < 1e-9)
     check("打字: 9汉字=2.7(无额外回车)", abs(ct("这句话有点长啊朋友") - 2.7) < 1e-9)
-    check("打字: typing_speed=2 翻倍", abs(ct("你好呀", typing_speed=2) - 0.9 * 2) < 1e-9)
+    check(
+        "打字: typing_speed=2 翻倍", abs(ct("你好呀", typing_speed=2) - 0.9 * 2) < 1e-9
+    )
     check("打字: typing_speed=0 不等待", ct("你好呀", typing_speed=0) == 0)
 
     off = {"enable_response_post_process": False}
     segs = postprocess.process_response_segments("你好（心想：好累）呀", off)
-    check("总开关关: 原文直出", len(segs) == 1 and segs[0].text == "你好（心想：好累）呀")
+    check(
+        "总开关关: 原文直出", len(segs) == 1 and segs[0].text == "你好（心想：好累）呀"
+    )
 
-    cfg = {"enable_response_post_process": True, "splitter_enable": False,
-           "typo_enable": False, "bot_name": "麦麦",
-           "splitter_max_length": 512, "splitter_max_sentence_num": 8, "splitter_max_split_num": 3}
+    cfg = {
+        "enable_response_post_process": True,
+        "splitter_enable": False,
+        "typo_enable": False,
+        "bot_name": "麦麦",
+        "splitter_max_length": 512,
+        "splitter_max_sentence_num": 8,
+        "splitter_max_split_num": 3,
+    }
     segs = postprocess.process_response_segments("你好（心声）呀", cfg)
     check("括号心声被清除", segs[0].text == "你好呀", segs[0].text)
     segs = postprocess.process_response_segments("（只有心声）", cfg)
     check("全为心声→呃呃", segs[0].text == "呃呃")
     segs = postprocess.process_response_segments("好" * 2000, cfg)
-    check("全中文超长→默认回复池", any(k in segs[0].text for k in ("不知道", "不晓得", "懒得说", "()")))
+    check(
+        "全中文超长→默认回复池",
+        any(k in segs[0].text for k in ("不知道", "不晓得", "懒得说", "()")),
+    )
 
     scfg = dict(cfg, splitter_enable=True)
     segs = postprocess.process_response_segments("一句话", scfg)
     check("分句: 短句原样", segs[0].text == "一句话")
     import random as _r
+
     _r.seed(7)
-    segs = postprocess.process_response_segments("今天天气不错。明天也很好。后天更好。", scfg)
+    segs = postprocess.process_response_segments(
+        "今天天气不错。明天也很好。后天更好。", scfg
+    )
     check("分句: 按句分割为多条", len(segs) >= 2, str([s.text for s in segs]))
 
-    mcfg = dict(scfg, splitter_max_sentence_num=1, splitter_max_split_num=3,
-                splitter_enable_overflow_return_all=True)
-    segs = postprocess.process_response_segments("今天天气不错。明天也很好。后天更好。", mcfg)
+    mcfg = dict(
+        scfg,
+        splitter_max_sentence_num=1,
+        splitter_max_split_num=3,
+        splitter_enable_overflow_return_all=True,
+    )
+    segs = postprocess.process_response_segments(
+        "今天天气不错。明天也很好。后天更好。", mcfg
+    )
     check("超限保留全文", len(segs) == 1)
 
     async def run():
         sent = []
+
         async def send(t):
             sent.append(t)
+
         return await sender.send_humanlike(send, "一\n二", dict(cfg, typing_speed=0))
+
     check("发送: 段顺序且 typing_speed=0 立即发", asyncio.run(run()) == ["一\n二"])
 
     # 首段零延迟（对齐 MaiBot typing=index>0）：事件序应为 send,sleep,send,...
     async def run_order():
         from unittest.mock import patch
+
         events = []
+
         async def send(t):
             events.append(("send", t))
+
         real_sleep = asyncio.sleep
+
         async def fake_sleep(d):
             events.append(("sleep", d))
             await real_sleep(0)
+
         with patch("astrbot_plugin_maisoul.core.sender.asyncio.sleep", fake_sleep):
             await sender.send_humanlike(send, "一\n二\n三", dict(cfg, typing_speed=1))
         return events
+
     events = asyncio.run(run_order())
     kinds = [e[0] for e in events]
     check("发送: 首段零延迟（首事件为 send）", kinds[0] == "send", str(events))
-    check("发送: 第 2 段起逐段打字延迟",
-          kinds.count("sleep") == kinds.count("send") - 1, str(events))
+    check(
+        "发送: 第 2 段起逐段打字延迟",
+        kinds.count("sleep") == kinds.count("send") - 1,
+        str(events),
+    )
 
     # 空窗补偿到点重查延迟（对齐 FrequencyThresholdTurnGate delay 分支）
     from collections import deque as _deque
+
     st2 = GroupState()
     now = time.time()
     st2.ext_intervals = _deque([now - 120, now - 60, now], maxlen=40)
@@ -390,33 +668,46 @@ def test_postprocess():
     d = trigger.frequency_recheck_delay(st2, 1, 2)
     check("空窗重查: delay=(阈值-积压)×平均间隔-空窗", abs(d - 60.0) < 0.01, str(d))
     st2.last_ext_ts = now - 60  # 空窗已等满 → 到点即查
-    check("空窗重查: 空窗已满则 delay=0",
-          abs(trigger.frequency_recheck_delay(st2, 1, 2)) < 1e-6)
-    check("空窗重查: pending=0 不排期（纯沉默不触发）",
-          trigger.frequency_recheck_delay(st2, 0, 2) is None)
+    check(
+        "空窗重查: 空窗已满则 delay=0",
+        abs(trigger.frequency_recheck_delay(st2, 1, 2)) < 1e-6,
+    )
+    check(
+        "空窗重查: pending=0 不排期（纯沉默不触发）",
+        trigger.frequency_recheck_delay(st2, 0, 2) is None,
+    )
     st3 = GroupState()  # 无间隔样本
     st3.pending_since_fire = 1
-    check("空窗重查: 平均间隔不可用不排期",
-          trigger.frequency_recheck_delay(st3, 1, 2) is None)
+    check(
+        "空窗重查: 平均间隔不可用不排期",
+        trigger.frequency_recheck_delay(st3, 1, 2) is None,
+    )
+
     class _FakeTask:
         cancelled = False
+
         def cancel(self):
             self.cancelled = True
+
     st4 = GroupState()
     fake = _FakeTask()
     st4.defer_task = fake
     st4.cancel_defer()
-    check("状态: cancel_defer 清空重查任务",
-          st4.defer_task is None and fake.cancelled)
+    check("状态: cancel_defer 清空重查任务", st4.defer_task is None and fake.cancelled)
 
 
 def test_typo():
     print("[错字引擎]")
     from astrbot_plugin_maisoul.core.typo import ChineseTypoGenerator
-    gen = ChineseTypoGenerator(error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0)
+
+    gen = ChineseTypoGenerator(
+        error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+    )
     out, fix = gen.create_typo_sentence("今天天气不错")
     check("全零概率: 原样且无纠正", out == "今天天气不错" and fix is None)
-    hot = ChineseTypoGenerator(error_rate=1.0, min_freq=0, tone_error_rate=0.0, word_replace_rate=0.0)
+    hot = ChineseTypoGenerator(
+        error_rate=1.0, min_freq=0, tone_error_rate=0.0, word_replace_rate=0.0
+    )
     outs = {hot.create_typo_sentence("的")[0] for _ in range(5)}
     check("满概率单字: 引擎可运行", isinstance(outs, set))
     outs = {hot.create_typo_sentence("今天天气真的很好啊")[0] for _ in range(20)}
@@ -425,31 +716,50 @@ def test_typo():
     # 拼音字典进程级缓存（v6.15.4）：与参数无关的全字符索引只建一次，
     # 生成器重建（调参）复用同一对象；.get 读取不往共享 defaultdict 塞空键
     from astrbot_plugin_maisoul.core import typo as typo_mod
+
     shared1 = typo_mod._shared_pinyin_dict()
-    gen2 = ChineseTypoGenerator(error_rate=0.5, min_freq=9,
-                                tone_error_rate=0.1, word_replace_rate=0.0)
+    gen2 = ChineseTypoGenerator(
+        error_rate=0.5, min_freq=9, tone_error_rate=0.1, word_replace_rate=0.0
+    )
     check("拼音缓存: 生成器重建复用同一字典", gen2.pinyin_dict is shared1)
     check("拼音缓存: 索引规模完整", len(shared1) > 300, str(len(shared1)))
     shared1.get("__不存在的音节__", None)
-    check("拼音缓存: .get 读取不污染缓存",
-          "__不存在的音节__" not in typo_mod._shared_pinyin_dict())
+    check(
+        "拼音缓存: .get 读取不污染缓存",
+        "__不存在的音节__" not in typo_mod._shared_pinyin_dict(),
+    )
 
 
 def test_prompt():
     print("[Prompt 组装]")
-    cfg = {"bot_name": "麦麦", "aliases": ["小麦"], "personality": "测试人格",
-           "reply_style": "简短口语", "behavior_style": "大二学生",
-           "group_chat_prompt": "群里要简短", "multiple_reply_style": [], "multiple_probability": 0,
-           "chat_prompts": [{"platform": "qq", "item_id": "12345", "rule_type": "group",
-                             "prompt": "这个群聊游戏"}]}
+    cfg = {
+        "bot_name": "麦麦",
+        "aliases": ["小麦"],
+        "personality": "测试人格",
+        "reply_style": "简短口语",
+        "behavior_style": "大二学生",
+        "group_chat_prompt": "群里要简短",
+        "multiple_reply_style": [],
+        "multiple_probability": 0,
+        "chat_prompts": [
+            {
+                "platform": "qq",
+                "item_id": "12345",
+                "rule_type": "group",
+                "prompt": "这个群聊游戏",
+            }
+        ],
+    }
     sp = prompt.build_system_prompt(cfg, chat_id="12345", platform="qq")
     check("identity 行", sp.startswith("你的名字是麦麦，也有人叫你小麦。\n测试人格"))
     check("reply_style 注入", "简短口语" in sp)
     check("通用注意事项", "通用注意事项：\n群里要简短" in sp)
     check("每群额外注意事项(精确匹配)", "当前聊天额外注意事项：\n这个群聊游戏" in sp)
     check("输出指令原文", OUTPUT_INSTRUCTION in sp)
-    check("behavior_style 不进 replyer 提示词（对齐 MaiBot 分工：只进 planner）",
-          "大二学生" not in sp and "行动准则" not in sp)
+    check(
+        "behavior_style 不进 replyer 提示词（对齐 MaiBot 分工：只进 planner）",
+        "大二学生" not in sp and "行动准则" not in sp,
+    )
     sp2 = prompt.build_system_prompt(cfg, chat_id="99999", platform="qq")
     check("其他群不命中额外注意事项", "这个群聊游戏" not in sp2)
     cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=100)
@@ -458,73 +768,150 @@ def test_prompt():
     from astrbot_plugin_maisoul.core import personas as _personas_mod
 
     check("预设对话: 默认不注入", prompt.build_preset_dialogues_block(cfg) == "")
-    cfg_pd = dict(cfg, preset_dialogues=[
-        {"user": "在吗", "reply": "咋了"},
-        {"user": "只有对方没回复", "reply": ""},
-        {"user": "", "reply": "孤儿回复"},
-        "不是字典的脏条目",
-    ])
+    cfg_pd = dict(
+        cfg,
+        preset_dialogues=[
+            {"user": "在吗", "reply": "咋了"},
+            {"user": "只有对方没回复", "reply": ""},
+            {"user": "", "reply": "孤儿回复"},
+            "不是字典的脏条目",
+        ],
+    )
     blk = prompt.build_preset_dialogues_block(cfg_pd)
-    check("预设对话: 有效条目渲染", "【预设对话】" in blk and "用户：在吗\n你：咋了" in blk, blk)
+    check(
+        "预设对话: 有效条目渲染",
+        "【预设对话】" in blk and "用户：在吗\n你：咋了" in blk,
+        blk,
+    )
     check("预设对话: 缺边/脏条目跳过", "孤儿回复" not in blk and "只有对方" not in blk)
-    check("预设对话: 进系统提示词", "【预设对话】" in prompt.build_system_prompt(cfg_pd))
-    ov_pd = _personas_mod.overlay(cfg_pd, {"name": "傲娇", "preset_dialogues": [{"user": "哈喽", "reply": "干嘛"}]})
-    check("预设对话: 人格覆盖生效",
-          prompt.build_preset_dialogues_block(ov_pd).count("用户：") == 1 and "哈喽" in prompt.build_preset_dialogues_block(ov_pd))
+    check(
+        "预设对话: 进系统提示词", "【预设对话】" in prompt.build_system_prompt(cfg_pd)
+    )
+    ov_pd = _personas_mod.overlay(
+        cfg_pd,
+        {"name": "傲娇", "preset_dialogues": [{"user": "哈喽", "reply": "干嘛"}]},
+    )
+    check(
+        "预设对话: 人格覆盖生效",
+        prompt.build_preset_dialogues_block(ov_pd).count("用户：") == 1
+        and "哈喽" in prompt.build_preset_dialogues_block(ov_pd),
+    )
     cfgp = dict(cfg, private_chat_prompts="私聊要温柔")
     spp = prompt.build_system_prompt(cfgp, chat_id="u1", platform="qq", is_group=False)
-    check("私聊: 注意事项用私聊提示词", "通用注意事项：\n私聊要温柔" in spp and "群里要简短" not in spp)
-    fmp = prompt.build_final_user_message(make_state([("u", "hi", False)], pending=1),
-                                          dict(cfgp, max_private_context_size=60), "原因", "",
-                                          is_group=False)
+    check(
+        "私聊: 注意事项用私聊提示词",
+        "通用注意事项：\n私聊要温柔" in spp and "群里要简短" not in spp,
+    )
+    fmp = prompt.build_final_user_message(
+        make_state([("u", "hi", False)], pending=1),
+        dict(cfgp, max_private_context_size=60),
+        "原因",
+        "",
+        is_group=False,
+    )
     check("私聊: 上下文用私聊条数", "当前时间：" in fmp)
 
     st = make_state([("u", "大家好", False)], pending=1)
-    fm = prompt.build_final_user_message(st, dict(cfg, max_context_size=40), "测试触发原因", "简短表达")
-    check("final: 当前时间+记录+思考+篇幅", all(s in fm for s in
-          ("当前时间：", "【最近群聊记录】", "当前思考：\n测试触发原因")))
+    fm = prompt.build_final_user_message(
+        st, dict(cfg, max_context_size=40), "测试触发原因", "简短表达"
+    )
+    check(
+        "final: 当前时间+记录+思考+篇幅",
+        all(
+            s in fm
+            for s in ("当前时间：", "【最近群聊记录】", "当前思考：\n测试触发原因")
+        ),
+    )
     check("final: MaiBot 结尾指令原文", fm.endswith(prompt.REPLY_INSTRUCTION))
     check("final: 无自造防复读块", "你最近说过" not in fm)
 
     # v6.9.8：reply_style 篇幅指令 = MaiBot 三档原文（且 reference_override 非空也注入）
-    fm_short = prompt.build_final_user_message(st, cfg, "原因", "简短表达",
-                                               reference_override="当前思考：\nX")
-    check("篇幅指令: 简短表达原文",
-          "请简短的回复，允许句子残缺，奇怪表达，倒装，省略，符合口语习惯，符合省力随意回复习惯" in fm_short)
+    fm_short = prompt.build_final_user_message(
+        st, cfg, "原因", "简短表达", reference_override="当前思考：\nX"
+    )
+    check(
+        "篇幅指令: 简短表达原文",
+        "请简短的回复，允许句子残缺，奇怪表达，倒装，省略，符合口语习惯，符合省力随意回复习惯"
+        in fm_short,
+    )
     fm_long = prompt.build_final_user_message(st, cfg, "原因", "长回复")
     check("篇幅指令: 长回复原文", "可以针对问题做出较为详细的评论和说明" in fm_long)
     fm_normal = prompt.build_final_user_message(st, cfg, "原因", "正常回复")
-    check("篇幅指令: 正常回复不注入", "篇幅" not in fm_normal and "残缺" not in fm_normal)
+    check(
+        "篇幅指令: 正常回复不注入", "篇幅" not in fm_normal and "残缺" not in fm_normal
+    )
 
     # v6.9.9：识图上下文（默认关；开时取最近 N 张，旧→新，去重）
     st_img = GroupState()
-    st_img.buffer.append({"name": "u", "sid": "1", "msg_id": "m1", "text": "图1",
-                          "ts": 1.0, "images": ["http://x/1.jpg"]})
-    st_img.buffer.append({"name": "u", "sid": "1", "msg_id": "m2", "text": "图2图3",
-                          "ts": 2.0, "images": ["http://x/2.jpg", "http://x/3.jpg"]})
-    st_img.buffer.append({"name": "u", "sid": "1", "msg_id": "m3", "text": "重复图1",
-                          "ts": 3.0, "images": ["http://x/1.jpg"]})
+    st_img.buffer.append(
+        {
+            "name": "u",
+            "sid": "1",
+            "msg_id": "m1",
+            "text": "图1",
+            "ts": 1.0,
+            "images": ["http://x/1.jpg"],
+        }
+    )
+    st_img.buffer.append(
+        {
+            "name": "u",
+            "sid": "1",
+            "msg_id": "m2",
+            "text": "图2图3",
+            "ts": 2.0,
+            "images": ["http://x/2.jpg", "http://x/3.jpg"],
+        }
+    )
+    st_img.buffer.append(
+        {
+            "name": "u",
+            "sid": "1",
+            "msg_id": "m3",
+            "text": "重复图1",
+            "ts": 3.0,
+            "images": ["http://x/1.jpg"],
+        }
+    )
     check("识图: 默认关不附加", prompt.image_context_parts(st_img, {}) == [])
     cfg_img = {"enable_image_context": True, "image_context_max_num": 3}
     parts = prompt.image_context_parts(st_img, cfg_img)
     urls = [p.image_url.url for p in parts]
     # 去重按最新出现计：图1 在 m3 重发 → 排最后（最旧出现被最新出现取代）
-    check("识图: 最近 3 张旧→新去重",
-          urls == ["http://x/2.jpg", "http://x/3.jpg", "http://x/1.jpg"], str(urls))
+    check(
+        "识图: 最近 3 张旧→新去重",
+        urls == ["http://x/2.jpg", "http://x/3.jpg", "http://x/1.jpg"],
+        str(urls),
+    )
     parts2 = prompt.image_context_parts(st_img, dict(cfg_img, image_context_max_num=1))
-    check("识图: 上限 1 取最新出现",
-          [p.image_url.url for p in parts2] == ["http://x/1.jpg"])
+    check(
+        "识图: 上限 1 取最新出现",
+        [p.image_url.url for p in parts2] == ["http://x/1.jpg"],
+    )
     check("识图: 部件类型为 image_url", all(p.type == "image_url" for p in parts))
 
     st_dup = make_state([("u", "在吗", False)], pending=1)
     st_dup.record_self_reply("m0", ["第一句"], "麦麦")
-    st_dup.buffer.append({"name": "u", "sid": "u", "msg_id": "m0", "text": "在吗",
-                          "at_bot": False, "reply_bot": False, "ts": time.time()})
-    fm_dup = prompt.build_final_user_message(st_dup, dict(cfg, max_context_size=40), "原因")
-    check("final: 同目标防重复= MaiBot 模板原文",
-          fm_dup.startswith("当前时间：")
-          and "你刚刚已经回复过这条消息，你刚刚的发言是：“第一句”" in fm_dup
-          and "注意请不要和之前你的发言重复" in fm_dup)
+    st_dup.buffer.append(
+        {
+            "name": "u",
+            "sid": "u",
+            "msg_id": "m0",
+            "text": "在吗",
+            "at_bot": False,
+            "reply_bot": False,
+            "ts": time.time(),
+        }
+    )
+    fm_dup = prompt.build_final_user_message(
+        st_dup, dict(cfg, max_context_size=40), "原因"
+    )
+    check(
+        "final: 同目标防重复= MaiBot 模板原文",
+        fm_dup.startswith("当前时间：")
+        and "你刚刚已经回复过这条消息，你刚刚的发言是：“第一句”" in fm_dup
+        and "注意请不要和之前你的发言重复" in fm_dup,
+    )
 
 
 def test_states():
@@ -536,10 +923,17 @@ def test_states():
     class _Ev:
         def __init__(self, g, s, u):
             self._g, self._s, self._u = g, s, u
-        def get_group_id(self): return self._g
-        def get_sender_id(self): return self._s
+
+        def get_group_id(self):
+            return self._g
+
+        def get_sender_id(self):
+            return self._s
+
         @property
-        def unified_msg_origin(self): return self._u
+        def unified_msg_origin(self):
+            return self._u
+
     check("M2 会话键: 群聊=群号", session_key(_Ev("103", "42", "umo:g")) == "103")
     check("M2 会话键: 私聊=发送者", session_key(_Ev("", "42", "umo:p:42")) == "42")
     check("M2 会话键: 双空回退 umo", session_key(_Ev("", "", "umo:p:x")) == "umo:p:x")
@@ -547,104 +941,176 @@ def test_states():
     # v6.9.13：任务级模型绑定（对齐 model_task_config 的多模型+策略）
     import random as _rnd
     from astrbot_plugin_maisoul.core import modelbind
-    cfgm = {"task_models": [{"task": "planner",
-        "models": [{"provider": "p1", "model": "m1"},
-                   {"provider": "p2", "model": "m2"},
-                   {"provider": "", "model": "m3"},   # 无效：缺 provider
-                   "junk"],                            # 无效：非 dict
-        "strategy": "sequential"}]}
+
+    cfgm = {
+        "task_models": [
+            {
+                "task": "planner",
+                "models": [
+                    {"provider": "p1", "model": "m1"},
+                    {"provider": "p2", "model": "m2"},
+                    {"provider": "", "model": "m3"},  # 无效：缺 provider
+                    "junk",
+                ],  # 无效：非 dict
+                "strategy": "sequential",
+            }
+        ]
+    }
     cands = modelbind.task_model_candidates(cfgm, "planner")
-    check("绑定: 无效候选过滤", len(cands) == 2
-          and cands[0] == {"provider": "p1", "model": "m1"})
-    check("绑定: 未配置任务为空", modelbind.task_model_candidates(cfgm, "replyer") == [])
-    check("绑定: 默认策略 sequential", modelbind.task_model_strategy(cfgm, "planner") == "sequential")
-    check("绑定: 非法策略回退 sequential",
-          modelbind.task_model_strategy({"task_models": [{"task": "planner",
-                                                           "strategy": "xxx"}]},
-                                        "planner") == "sequential")
-    norm = modelbind.normalize_task_models([{"task": "planner", "models": ["junk"],
-                                             "strategy": "random"}])
-    check("绑定: normalize 补齐五任务且清洗无效项",
-          len(norm) == 5 and norm[0]["models"] == [] and norm[0]["strategy"] == "random"
-          and norm[1]["task"] == "replyer", str(norm[:2]))
+    check(
+        "绑定: 无效候选过滤",
+        len(cands) == 2 and cands[0] == {"provider": "p1", "model": "m1"},
+    )
+    check(
+        "绑定: 未配置任务为空", modelbind.task_model_candidates(cfgm, "replyer") == []
+    )
+    check(
+        "绑定: 默认策略 sequential",
+        modelbind.task_model_strategy(cfgm, "planner") == "sequential",
+    )
+    check(
+        "绑定: 非法策略回退 sequential",
+        modelbind.task_model_strategy(
+            {"task_models": [{"task": "planner", "strategy": "xxx"}]}, "planner"
+        )
+        == "sequential",
+    )
+    norm = modelbind.normalize_task_models(
+        [{"task": "planner", "models": ["junk"], "strategy": "random"}]
+    )
+    check(
+        "绑定: normalize 补齐五任务且清洗无效项",
+        len(norm) == 5
+        and norm[0]["models"] == []
+        and norm[0]["strategy"] == "random"
+        and norm[1]["task"] == "replyer",
+        str(norm[:2]),
+    )
     chain = modelbind.build_model_chain(cands, "sequential", {}, "planner")
-    check("策略: sequential 链按列表顺序",
-          [c["model"] for c in chain] == ["m1", "m2"])
+    check("策略: sequential 链按列表顺序", [c["model"] for c in chain] == ["m1", "m2"])
     rr = {}
-    chains = [modelbind.build_model_chain(cands, "balance", rr, "planner")[0]["model"]
-              for _ in range(4)]
+    chains = [
+        modelbind.build_model_chain(cands, "balance", rr, "planner")[0]["model"]
+        for _ in range(4)
+    ]
     check("策略: balance 轮转", chains == ["m1", "m2", "m1", "m2"], str(chains))
     _rnd.seed(7)
     chain_r = modelbind.build_model_chain(cands, "random", {}, "planner")
-    check("策略: random 主候选在列表内且降级链含全部",
-          len(chain_r) == 2 and {c["model"] for c in chain_r} == {"m1", "m2"})
+    check(
+        "策略: random 主候选在列表内且降级链含全部",
+        len(chain_r) == 2 and {c["model"] for c in chain_r} == {"m1", "m2"},
+    )
     pick = modelbind.pick_model(cands, "sequential", {}, "planner")
     check("pick: 主候选", pick["model"] == "m1")
     check("pick: 空候选返回 None", modelbind.pick_model([], "random", {}, "x") is None)
 
     sm = StateManager()
     st = sm.get("g1")
-    st.record_external({"name": "u", "sid": "1", "msg_id": "m1", "text": "hi",
-                        "at_bot": False, "reply_bot": False, "ts": time.time()})
+    st.record_external(
+        {
+            "name": "u",
+            "sid": "1",
+            "msg_id": "m1",
+            "text": "hi",
+            "at_bot": False,
+            "reply_bot": False,
+            "ts": time.time(),
+        }
+    )
     check("记录后积压=1", st.pending_since_fire == 1)
     st.mark_fire("m1")
-    check("触发后积压清零+防重复", st.pending_since_fire == 0 and st.recently_replied("m1"))
+    check(
+        "触发后积压清零+防重复",
+        st.pending_since_fire == 0 and st.recently_replied("m1"),
+    )
     check("防重复: 其他消息不命中", not st.recently_replied("mX"))
     st.record_self_reply("m2", ["段落一", "段落二"], "麦麦")
-    check("自发回写: 缓冲存全文与防复读",
-          st.buffer[-1]["text"] == "段落一\n段落二" and "段落二" in st.last_replies)
+    check(
+        "自发回写: 缓冲存全文与防复读",
+        st.buffer[-1]["text"] == "段落一\n段落二" and "段落二" in st.last_replies,
+    )
     st.record_self_reply("m3", ["引用回复"], "麦麦", quote="m1")
     check("自发回写: quote 目标进记录", st.buffer[-1].get("quote") == "m1")
-    check("状态输出字段", set(sm.status_all()["g1"]) == {"buffer", "pending", "recent_self", "last_fire_ago", "persona"})
+    check(
+        "状态输出字段",
+        set(sm.status_all()["g1"])
+        == {"buffer", "pending", "recent_self", "last_fire_ago", "persona"},
+    )
 
     # 间隔样本统计四规则（对齐 runtime：30min 窗 / <5s 连发不采样 / 均值下限 30s / 回退 30s）
     from collections import deque as _deq
+
     now = time.time()
 
     def mk_intervals(ts_list, last_ts=None):
         s = GroupState()
         s.ext_intervals = _deq(ts_list, maxlen=360)
-        s.last_ext_ts = last_ts if last_ts is not None else (ts_list[-1] if ts_list else 0.0)
+        s.last_ext_ts = (
+            last_ts if last_ts is not None else (ts_list[-1] if ts_list else 0.0)
+        )
         return s
 
     s = mk_intervals([now - 120, now - 60, now])
-    check("间隔: 正常 60s 间隔 → 均值 60", abs(s.avg_external_interval() - 60.0) < 0.01,
-          str(s.avg_external_interval()))
+    check(
+        "间隔: 正常 60s 间隔 → 均值 60",
+        abs(s.avg_external_interval() - 60.0) < 0.01,
+        str(s.avg_external_interval()),
+    )
     s = mk_intervals([now - 8, now - 4, now])
-    check("间隔: <5s 连发不采样 → 回退 30s", abs(s.avg_external_interval() - 30.0) < 0.01,
-          str(s.avg_external_interval()))
+    check(
+        "间隔: <5s 连发不采样 → 回退 30s",
+        abs(s.avg_external_interval() - 30.0) < 0.01,
+        str(s.avg_external_interval()),
+    )
     s = mk_intervals([now - 80, now - 70, now - 60])
-    check("间隔: 10s 间隔 → 均值取下限 30s", abs(s.avg_external_interval() - 30.0) < 0.01,
-          str(s.avg_external_interval()))
+    check(
+        "间隔: 10s 间隔 → 均值取下限 30s",
+        abs(s.avg_external_interval() - 30.0) < 0.01,
+        str(s.avg_external_interval()),
+    )
     s = mk_intervals([now - 2400, now - 100, now - 40])
-    check("间隔: 30min 窗外样本剔除（只算窗内 60s 间隔）",
-          abs(s.avg_external_interval() - 60.0) < 0.01, str(s.avg_external_interval()))
+    check(
+        "间隔: 30min 窗外样本剔除（只算窗内 60s 间隔）",
+        abs(s.avg_external_interval() - 60.0) < 0.01,
+        str(s.avg_external_interval()),
+    )
     s = GroupState()
     check("间隔: 从未见过外部消息 → None", s.avg_external_interval() is None)
     s = mk_intervals([])
     s.last_ext_ts = now - 60
-    check("间隔: 见过消息但无样本 → 回退 30s",
-          abs(s.avg_external_interval() - 30.0) < 0.01)
+    check(
+        "间隔: 见过消息但无样本 → 回退 30s",
+        abs(s.avg_external_interval() - 30.0) < 0.01,
+    )
 
     # 引用回复链构造（v6.9.5：首段 Reply(目标消息id) + Plain 正文）
     from astrbot.api.message_components import Plain as _Plain, Reply as _Reply
     from astrbot.api.event import MessageChain as _MC
+
     mc = _MC([_Reply(id="m9")]).message("你好")
-    check("引用链: 首组件为 Reply 且带目标 id",
-          isinstance(mc.chain[0], _Reply) and str(mc.chain[0].id) == "m9")
-    check("引用链: 正文为第二组件",
-          isinstance(mc.chain[1], _Plain) and mc.chain[1].text == "你好")
-    check("引用链: toDict 为 OneBot reply 段",
-          mc.chain[0].toDict() == {"type": "reply", "data": {"id": "m9"}})
+    check(
+        "引用链: 首组件为 Reply 且带目标 id",
+        isinstance(mc.chain[0], _Reply) and str(mc.chain[0].id) == "m9",
+    )
+    check(
+        "引用链: 正文为第二组件",
+        isinstance(mc.chain[1], _Plain) and mc.chain[1].text == "你好",
+    )
+    check(
+        "引用链: toDict 为 OneBot reply 段",
+        mc.chain[0].toDict() == {"type": "reply", "data": {"id": "m9"}},
+    )
 
     # 防重复提醒字典随 replied_targets(deque 30)对齐裁剪（v6.15.4，防无界增长）
     st2 = GroupState()
     for i in range(40):
         st2.record_self_reply(f"t{i}", [f"回复{i}"], "麦麦")
     alive = {mid for mid, _ in st2.replied_targets if mid}
-    check("防重复字典: 随 deque 裁剪",
-          set(st2.reply_by_target) == alive and len(alive) <= 30,
-          f"dict={len(st2.reply_by_target)} deque={len(alive)}")
+    check(
+        "防重复字典: 随 deque 裁剪",
+        set(st2.reply_by_target) == alive and len(alive) <= 30,
+        f"dict={len(st2.reply_by_target)} deque={len(alive)}",
+    )
     check("防重复字典: 最近条目保留", "t39" in st2.reply_by_target)
 
 
@@ -669,15 +1135,23 @@ def test_bridge_toolset():
 
     class _Ctx:
         def get_llm_tool_manager(self):
-            return _FakeMgr(["send_meme", "search_meme", "steal_meme", "query_favor", "call_maid"])
+            return _FakeMgr(
+                ["send_meme", "search_meme", "steal_meme", "query_favor", "call_maid"]
+            )
 
     cfg = {"chat_tools": ["send_meme"], "maid_bridge": True}
     ts = bridge.build_chat_toolset(_Ctx(), cfg)
     names = sorted(t.name for t in ts.tools)
-    check("等价物(含前置依赖)+call_maid 暴露，其余隐藏",
-          names == ["call_maid", "search_meme", "send_meme"], str(names))
-    check("两步制依赖补全：send_meme 自动带上 search_meme",
-          "search_meme" in names, str(names))
+    check(
+        "等价物(含前置依赖)+call_maid 暴露，其余隐藏",
+        names == ["call_maid", "search_meme", "send_meme"],
+        str(names),
+    )
+    check(
+        "两步制依赖补全：send_meme 自动带上 search_meme",
+        "search_meme" in names,
+        str(names),
+    )
 
     cfg = {"chat_tools": [], "maid_bridge": False}
     check("全关时无工具集", bridge.build_chat_toolset(_Ctx(), cfg) is None)
@@ -685,7 +1159,11 @@ def test_bridge_toolset():
     cfg = {"chat_tools": ["send_meme", "query_favor"], "maid_bridge": True}
     ts = bridge.build_chat_toolset(_Ctx(), cfg)
     names = sorted(t.name for t in ts.tools)
-    check("显式加入的等价物生效", "query_favor" in names and "send_meme" in names, str(names))
+    check(
+        "显式加入的等价物生效",
+        "query_favor" in names and "send_meme" in names,
+        str(names),
+    )
 
 
 def test_deferred_pool_dependencies():
@@ -699,14 +1177,20 @@ def test_deferred_pool_dependencies():
     # planner deferred 池：send_meme/search_meme 由内置 send_emoji 覆盖，不入池（防一轮双发）
     cfg = {"chat_tools": ["send_meme"], "maid_bridge": True}
     names = [t["name"] for t in bridge.list_deferred_tools(_Ctx(), cfg)]
-    check("planner 池排除内置等价物（send_meme/search_meme）",
-          names == ["call_maid"], str(names))
+    check(
+        "planner 池排除内置等价物（send_meme/search_meme）",
+        names == ["call_maid"],
+        str(names),
+    )
 
     # 独立模式 chat_toolset：两步制对仍然完整暴露（依赖补全生效）
     ts = bridge.build_chat_toolset(_Ctx(), cfg)
     tnames = sorted(t.name for t in ts.tools)
-    check("独立模式仍暴露 search+send 对",
-          tnames == ["call_maid", "search_meme", "send_meme"], str(tnames))
+    check(
+        "独立模式仍暴露 search+send 对",
+        tnames == ["call_maid", "search_meme", "send_meme"],
+        str(tnames),
+    )
 
     cfg = {"chat_tools": ["call_maid"], "maid_bridge": False}
     names = [t["name"] for t in bridge.list_deferred_tools(_Ctx(), cfg)]
@@ -736,45 +1220,76 @@ def test_deferred_pool_gating():
             return self._tools.get(name)
 
     # 1) active=False（WebUI 停用）→ 不入池
-    ctx = _t.SimpleNamespace(get_llm_tool_manager=lambda: _Mgr(
-        [_Tool("call_maid"), _Tool("web_search_tavily", active=False)]))
-    names = [t["name"] for t in bridge.list_deferred_tools(
-        ctx, {"chat_tools": ["web_search_tavily"], "maid_bridge": True})]
+    ctx = _t.SimpleNamespace(
+        get_llm_tool_manager=lambda: _Mgr(
+            [_Tool("call_maid"), _Tool("web_search_tavily", active=False)]
+        )
+    )
+    names = [
+        t["name"]
+        for t in bridge.list_deferred_tools(
+            ctx, {"chat_tools": ["web_search_tavily"], "maid_bridge": True}
+        )
+    ]
     check("WebUI 停用的工具不入池", names == ["call_maid"], str(names))
 
     # 2) builtin 配置条件未达标 → 不入池（桩掉 registry 规则表）
     rule = _t.SimpleNamespace(
-        evaluate=lambda cfg: [{"matched": cfg.get("provider_settings", {}).get(
-            "websearch_provider") == "tavily"}])
+        evaluate=lambda cfg: [
+            {
+                "matched": cfg.get("provider_settings", {}).get("websearch_provider")
+                == "tavily"
+            }
+        ]
+    )
     reg = _t.ModuleType("astrbot.core.tools.registry")
-    reg.get_builtin_tool_config_rule = lambda n: rule if n == "web_search_tavily" else None
-    fake = {"astrbot": _t.ModuleType("astrbot"),
-            "astrbot.core": _t.ModuleType("astrbot.core"),
-            "astrbot.core.tools": _t.ModuleType("astrbot.core.tools"),
-            "astrbot.core.tools.registry": reg}
+    reg.get_builtin_tool_config_rule = lambda n: (
+        rule if n == "web_search_tavily" else None
+    )
+    fake = {
+        "astrbot": _t.ModuleType("astrbot"),
+        "astrbot.core": _t.ModuleType("astrbot.core"),
+        "astrbot.core.tools": _t.ModuleType("astrbot.core.tools"),
+        "astrbot.core.tools.registry": reg,
+    }
     saved = {k: sys.modules.get(k) for k in fake}
     try:
         sys.modules.update(fake)
         # 当前部署 provider=bocha（规则要求 tavily）→ 过滤
         ctx2 = _t.SimpleNamespace(
             get_llm_tool_manager=lambda: _Mgr([_Tool("web_search_tavily")]),
-            get_config=lambda: {"provider_settings": {"websearch_provider": "bocha"}})
-        names = [t["name"] for t in bridge.list_deferred_tools(
-            ctx2, {"chat_tools": ["web_search_tavily"], "maid_bridge": False})]
+            get_config=lambda: {"provider_settings": {"websearch_provider": "bocha"}},
+        )
+        names = [
+            t["name"]
+            for t in bridge.list_deferred_tools(
+                ctx2, {"chat_tools": ["web_search_tavily"], "maid_bridge": False}
+            )
+        ]
         check("builtin 条件未达标不入池", names == [], str(names))
         # provider 匹配 → 保留
         ctx3 = _t.SimpleNamespace(
             get_llm_tool_manager=lambda: _Mgr([_Tool("web_search_tavily")]),
-            get_config=lambda: {"provider_settings": {"websearch_provider": "tavily"}})
-        names = [t["name"] for t in bridge.list_deferred_tools(
-            ctx3, {"chat_tools": ["web_search_tavily"], "maid_bridge": False})]
+            get_config=lambda: {"provider_settings": {"websearch_provider": "tavily"}},
+        )
+        names = [
+            t["name"]
+            for t in bridge.list_deferred_tools(
+                ctx3, {"chat_tools": ["web_search_tavily"], "maid_bridge": False}
+            )
+        ]
         check("builtin 条件达标保留", names == ["web_search_tavily"], str(names))
         # 无规则（插件工具）→ 视为启用
         ctx4 = _t.SimpleNamespace(
             get_llm_tool_manager=lambda: _Mgr([_Tool("query_favor")]),
-            get_config=lambda: {"provider_settings": {}})
-        names = [t["name"] for t in bridge.list_deferred_tools(
-            ctx4, {"chat_tools": ["query_favor"], "maid_bridge": False})]
+            get_config=lambda: {"provider_settings": {}},
+        )
+        names = [
+            t["name"]
+            for t in bridge.list_deferred_tools(
+                ctx4, {"chat_tools": ["query_favor"], "maid_bridge": False}
+            )
+        ]
         check("无规则的插件工具不受影响", names == ["query_favor"], str(names))
     finally:
         for k, v in saved.items():
@@ -796,8 +1311,19 @@ def test_tool_skill_registry():
     async def _noop():
         return ""
 
-    t1 = FunctionTool(name="call_maid", description="管家", parameters={"type": "object", "properties": {}}, handler=_noop, handler_module_path="x.y")
-    t2 = FunctionTool(name="send_meme", description="表情包", parameters={"type": "object", "properties": {}}, handler=_noop)
+    t1 = FunctionTool(
+        name="call_maid",
+        description="管家",
+        parameters={"type": "object", "properties": {}},
+        handler=_noop,
+        handler_module_path="x.y",
+    )
+    t2 = FunctionTool(
+        name="send_meme",
+        description="表情包",
+        parameters={"type": "object", "properties": {}},
+        handler=_noop,
+    )
 
     class _Mgr:
         func_list = [t1, t2]
@@ -814,21 +1340,38 @@ def test_tool_skill_registry():
 
     tools = bridge.list_astrbot_tools(_Ctx())
     by_name = {t["name"]: t for t in tools}
-    check("工具: func_list 全量列出", set(by_name) == {"call_maid", "send_meme"}, str(sorted(by_name)))
-    check("工具: 序列化字段对齐官方 get_tool_list",
-          all(set(t) == {"name", "description", "active", "origin", "origin_name"} for t in tools))
+    check(
+        "工具: func_list 全量列出",
+        set(by_name) == {"call_maid", "send_meme"},
+        str(sorted(by_name)),
+    )
+    check(
+        "工具: 序列化字段对齐官方 get_tool_list",
+        all(
+            set(t) == {"name", "description", "active", "origin", "origin_name"}
+            for t in tools
+        ),
+    )
 
     star_map["x.y"] = SimpleNamespace(name="maid_agent")
     try:
         tools = bridge.list_astrbot_tools(_Ctx())
         by_name = {t["name"]: t for t in tools}
-        check("工具: handler_module_path 命中 star_map → plugin 来源",
-              by_name["call_maid"]["origin"] == "plugin" and by_name["call_maid"]["origin_name"] == "maid_agent",
-              str(by_name.get("call_maid")))
+        check(
+            "工具: handler_module_path 命中 star_map → plugin 来源",
+            by_name["call_maid"]["origin"] == "plugin"
+            and by_name["call_maid"]["origin_name"] == "maid_agent",
+            str(by_name.get("call_maid")),
+        )
     finally:
         star_map.pop("x.y", None)
 
-    bt = FunctionTool(name="send_meme", description="核心", parameters={"type": "object", "properties": {}}, handler=_noop)  # 与插件工具同名的 builtin
+    bt = FunctionTool(
+        name="send_meme",
+        description="核心",
+        parameters={"type": "object", "properties": {}},
+        handler=_noop,
+    )  # 与插件工具同名的 builtin
 
     class _MgrBuiltin(_Mgr):
         def iter_builtin_tools(self):
@@ -843,7 +1386,11 @@ def test_tool_skill_registry():
 
     tools = bridge.list_astrbot_tools(_CtxBuiltin())
     dup = [t for t in tools if t["name"] == "send_meme"]
-    check("工具: builtin 同名去重（对齐官方逻辑）", len(dup) == 1 and dup[0]["origin"] == "builtin", str(dup))
+    check(
+        "工具: builtin 同名去重（对齐官方逻辑）",
+        len(dup) == 1 and dup[0]["origin"] == "builtin",
+        str(dup),
+    )
 
     # 技能：真实 SkillManager round-trip（在 AstrBot 技能根目录临时建一个技能再清理）
     # ——框架集成测试，仅真实环境运行（CI 离线跳过）
@@ -855,17 +1402,26 @@ def test_tool_skill_registry():
         sdir.mkdir(parents=True, exist_ok=True)
         (sdir / "SKILL.md").write_text(
             "---\nname: maisoul_test_skill\ndescription: 测试技能\n---\n# 测试\n",
-            encoding="utf-8")
+            encoding="utf-8",
+        )
         try:
             skills = {s["name"]: s for s in bridge.list_astrbot_skills()}
-            check("技能: 读取 SKILL.md frontmatter 描述",
-                  skills.get("maisoul_test_skill", {}).get("description") == "测试技能")
+            check(
+                "技能: 读取 SKILL.md frontmatter 描述",
+                skills.get("maisoul_test_skill", {}).get("description") == "测试技能",
+            )
             blk = bridge.build_skills_block({"chat_skills": ["maisoul_test_skill"]})
-            check("技能块: 原生 build_skills_prompt 注入",
-                  blk.startswith("\n## Skills") and "maisoul_test_skill" in blk and "SKILL.md" in blk)
-            check("技能块: 未选/选了不存在 → 空",
-                  bridge.build_skills_block({}) == ""
-                  and bridge.build_skills_block({"chat_skills": ["不存在的技能"]}) == "")
+            check(
+                "技能块: 原生 build_skills_prompt 注入",
+                blk.startswith("\n## Skills")
+                and "maisoul_test_skill" in blk
+                and "SKILL.md" in blk,
+            )
+            check(
+                "技能块: 未选/选了不存在 → 空",
+                bridge.build_skills_block({}) == ""
+                and bridge.build_skills_block({"chat_skills": ["不存在的技能"]}) == "",
+            )
         finally:
             SkillManager().delete_skill("maisoul_test_skill")
 
@@ -886,20 +1442,29 @@ def test_tool_exec_official_path():
         return f"ok:{x}:{event.unified_msg_origin}"
 
     async def _gen_handler(event, ys=None):
-        for y in (ys or []):
+        for y in ys or []:
             yield y
 
-    tool = FunctionTool(name="demo_tool", description="演示",
-                        parameters={"type": "object", "properties": {}},
-                        handler=_handler)
+    tool = FunctionTool(
+        name="demo_tool",
+        description="演示",
+        parameters={"type": "object", "properties": {}},
+        handler=_handler,
+    )
     ev = bridge.SyntheticEvent("webchat!u!1")
     out = _aio.run(bridge.call_llm_tool(None, ev, tool, {"x": "1"}))
-    check("call_llm_tool: 装饰器 handler 路径（原生 agent 同路）",
-          out == "ok:1:webchat!u!1", out)
+    check(
+        "call_llm_tool: 装饰器 handler 路径（原生 agent 同路）",
+        out == "ok:1:webchat!u!1",
+        out,
+    )
 
-    gen_tool = FunctionTool(name="demo_gen", description="生成器演示",
-                            parameters={"type": "object", "properties": {}},
-                            handler=_gen_handler)
+    gen_tool = FunctionTool(
+        name="demo_gen",
+        description="生成器演示",
+        parameters={"type": "object", "properties": {}},
+        handler=_gen_handler,
+    )
     out = _aio.run(bridge.call_llm_tool(None, ev, gen_tool, {"ys": ["a", "b"]}))
     check("call_llm_tool: 异步生成器 handler 多段结果", out == "a\nb", out)
     check("SyntheticEvent: get_extra 默认空", ev.get_extra("k") is None)
@@ -927,17 +1492,20 @@ def test_bridge_builtin_context():
         def execute(tool=None, run_context=None, **kwargs):
             async def _gen():
                 yield _t.SimpleNamespace(content=[_t.SimpleNamespace(text="ok")])
+
             return _gen()
 
     rc = _t.ModuleType("astrbot.core.agent.run_context")
     rc.ContextWrapper = _StubWrapper
     ex = _t.ModuleType("astrbot.core.astr_agent_tool_exec")
     ex.FunctionToolExecutor = _StubExecutor
-    fake = {"astrbot": _t.ModuleType("astrbot"),
-            "astrbot.core": _t.ModuleType("astrbot.core"),
-            "astrbot.core.agent": _t.ModuleType("astrbot.core.agent"),
-            "astrbot.core.agent.run_context": rc,
-            "astrbot.core.astr_agent_tool_exec": ex}
+    fake = {
+        "astrbot": _t.ModuleType("astrbot"),
+        "astrbot.core": _t.ModuleType("astrbot.core"),
+        "astrbot.core.agent": _t.ModuleType("astrbot.core.agent"),
+        "astrbot.core.agent.run_context": rc,
+        "astrbot.core.astr_agent_tool_exec": ex,
+    }
     saved = {k: sys.modules.get(k) for k in fake}
     try:
         sys.modules.update(fake)
@@ -946,10 +1514,16 @@ def test_bridge_builtin_context():
         ctx = _t.SimpleNamespace(get_config=lambda umo=None: cfg)
         out = asyncio.run(bridge.call_llm_tool(ctx, ev, object(), {}))
         inner = captured.get("inner")
-        check("call_llm_tool: 内层携带 astrbot Context（builtin get_config 路径）",
-              getattr(inner, "context", None) is ctx, type(inner).__name__)
-        check("call_llm_tool: 内层 event 仍为原事件",
-              getattr(inner, "event", None) is ev, type(inner).__name__)
+        check(
+            "call_llm_tool: 内层携带 astrbot Context（builtin get_config 路径）",
+            getattr(inner, "context", None) is ctx,
+            type(inner).__name__,
+        )
+        check(
+            "call_llm_tool: 内层 event 仍为原事件",
+            getattr(inner, "event", None) is ev,
+            type(inner).__name__,
+        )
         got = inner.context.get_config(umo=inner.event.unified_msg_origin)
         check("call_llm_tool: builtin 取 provider_settings 路径可用", got is cfg, got)
         check("call_llm_tool: 结果文本透传", out == "ok", out)
@@ -971,82 +1545,154 @@ def test_monitor():
     tmp = pathlib.Path(tempfile.mkdtemp()) / "m.db"
     store = M.MonitorStore(path=tmp)
     mon = M.Monitor(store)
-    check("常量: 保留策略对齐 MaiBot event_store",
-          (M.MAX_MONITOR_EVENT_RECORDS, M.MAX_MONITOR_EVENT_AGE_HOURS,
-           M.DEFAULT_REPLAY_LIMIT, M.CLEANUP_CHECK_INTERVAL_RECORDS)
-          == (10000, 72, 1000, 200))
-    check("常量: 非持久化事件集合",
-          M.NON_PERSISTED_EVENTS == {"stage.status", "stage.removed", "stage.snapshot"})
+    check(
+        "常量: 保留策略对齐 MaiBot event_store",
+        (
+            M.MAX_MONITOR_EVENT_RECORDS,
+            M.MAX_MONITOR_EVENT_AGE_HOURS,
+            M.DEFAULT_REPLAY_LIMIT,
+            M.CLEANUP_CHECK_INTERVAL_RECORDS,
+        )
+        == (10000, 72, 1000, 200),
+    )
+    check(
+        "常量: 非持久化事件集合",
+        M.NON_PERSISTED_EVENTS == {"stage.status", "stage.removed", "stage.snapshot"},
+    )
 
-    mon.emit_session_start("g1", "群 g1", is_group_chat=True, group_id="g1",
-                           user_id=None, platform="qq")
-    mon.emit_message_ingested("g1", "小明", "早上好", "m1", 111.0,
-                              platform="qq", user_id="u1", group_id="g1")
-    mon.emit_stage_status(session_id="g1", session_name="群 g1", stage=M.STAGE_PLANNER,
-                          detail="组织上下文并请求模型", round_text="第 1 轮",
-                          agent_state="running")
-    mon.emit_message_sent("g1", "麦麦", "早呀", "m1", 112.0, "reply",
-                          platform="qq", group_id="g1")
+    mon.emit_session_start(
+        "g1", "群 g1", is_group_chat=True, group_id="g1", user_id=None, platform="qq"
+    )
+    mon.emit_message_ingested(
+        "g1", "小明", "早上好", "m1", 111.0, platform="qq", user_id="u1", group_id="g1"
+    )
+    mon.emit_stage_status(
+        session_id="g1",
+        session_name="群 g1",
+        stage=M.STAGE_PLANNER,
+        detail="组织上下文并请求模型",
+        round_text="第 1 轮",
+        agent_state="running",
+    )
+    mon.emit_message_sent(
+        "g1", "麦麦", "早呀", "m1", 112.0, "reply", platform="qq", group_id="g1"
+    )
     mon.emit_planner_finalized(
-        session_id="g1", cycle_id=1,
+        session_id="g1",
+        cycle_id=1,
         planner_request_messages=[{"role": "user", "content": "历史"}],
-        planner_selected_history_count=3, planner_tool_count=4,
-        planner_content="思考过程", planner_tool_calls=[
-            {"id": "1-0-0", "name": "reply", "arguments": {"msg_id": "m1"}}],
-        planner_prompt_tokens=1200, planner_completion_tokens=350,
+        planner_selected_history_count=3,
+        planner_tool_count=4,
+        planner_content="思考过程",
+        planner_tool_calls=[
+            {"id": "1-0-0", "name": "reply", "arguments": {"msg_id": "m1"}}
+        ],
+        planner_prompt_tokens=1200,
+        planner_completion_tokens=350,
         planner_total_tokens=1550,
         planner_duration_ms=1234.5,
-        tools=[{"tool_call_id": "1-0-0", "tool_name": "reply", "tool_args": {},
-                "tool_call_source": "planner", "tool_call_source_label": "",
-                "success": True, "duration_ms": 500.0, "summary": "已发送 2 段"}],
-        agent_state="idle", end_reason="reply", end_detail="已发送 2 段",
-        eco_injection="【好感度档案】测试注入块")
+        tools=[
+            {
+                "tool_call_id": "1-0-0",
+                "tool_name": "reply",
+                "tool_args": {},
+                "tool_call_source": "planner",
+                "tool_call_source_label": "",
+                "success": True,
+                "duration_ms": 500.0,
+                "summary": "已发送 2 段",
+            }
+        ],
+        agent_state="idle",
+        end_reason="reply",
+        end_detail="已发送 2 段",
+        eco_injection="【好感度档案】测试注入块",
+    )
 
     events = store.replay(limit=50)
     fin = next(e for e in events if e["event"] == "planner.finalized")
-    check("finalized: final_state.eco_injection 带入生态注入全文",
-          (fin["data"].get("final_state") or {}).get("eco_injection") == "【好感度档案】测试注入块",
-          str((fin["data"].get("final_state") or {}).get("eco_injection"))[:60])
+    check(
+        "finalized: final_state.eco_injection 带入生态注入全文",
+        (fin["data"].get("final_state") or {}).get("eco_injection")
+        == "【好感度档案】测试注入块",
+        str((fin["data"].get("final_state") or {}).get("eco_injection"))[:60],
+    )
     kinds = [e["event"] for e in events]
-    check("事件名: 全部对齐 MaiBot（stage.* 不落账本）",
-          kinds == ["session.start", "message.ingested", "message.sent", "planner.finalized"],
-          str(kinds))
+    check(
+        "事件名: 全部对齐 MaiBot（stage.* 不落账本）",
+        kinds
+        == ["session.start", "message.ingested", "message.sent", "planner.finalized"],
+        str(kinds),
+    )
     ing = events[1]["data"]
-    check("ingested: 字段对齐 emit_message_ingested",
-          ing["speaker_name"] == "小明" and ing["platform"] == "qq"
-          and ing["reply_to"] is None and ing["media"] == [] and "event_id" in ing)
+    check(
+        "ingested: 字段对齐 emit_message_ingested",
+        ing["speaker_name"] == "小明"
+        and ing["platform"] == "qq"
+        and ing["reply_to"] is None
+        and ing["media"] == []
+        and "event_id" in ing,
+    )
     fin = events[3]["data"]
-    check("finalized: 嵌套结构对齐（request/planner/tools/final_state）",
-          fin["request"]["selected_history_count"] == 3
-          and fin["planner"]["tool_calls"][0]["name"] == "reply"
-          and fin["tools"][0]["success"] is True
-          and fin["final_state"]["end_reason"] == "reply"
-          and fin["interrupted"] is False, str(fin.keys()))
-    check("finalized: token 字段对齐 MaiBot（planner.prompt/completion/total_tokens）",
-          fin["planner"]["prompt_tokens"] == 1200
-          and fin["planner"]["completion_tokens"] == 350
-          and fin["planner"]["total_tokens"] == 1550, str(fin["planner"].keys()))
-    check("finalized: native_tool_calls 无信号不编造",
-          "native_tool_calls" not in fin["planner"])
+    check(
+        "finalized: 嵌套结构对齐（request/planner/tools/final_state）",
+        fin["request"]["selected_history_count"] == 3
+        and fin["planner"]["tool_calls"][0]["name"] == "reply"
+        and fin["tools"][0]["success"] is True
+        and fin["final_state"]["end_reason"] == "reply"
+        and fin["interrupted"] is False,
+        str(fin.keys()),
+    )
+    check(
+        "finalized: token 字段对齐 MaiBot（planner.prompt/completion/total_tokens）",
+        fin["planner"]["prompt_tokens"] == 1200
+        and fin["planner"]["completion_tokens"] == 350
+        and fin["planner"]["total_tokens"] == 1550,
+        str(fin["planner"].keys()),
+    )
+    check(
+        "finalized: native_tool_calls 无信号不编造",
+        "native_tool_calls" not in fin["planner"],
+    )
 
     since = events[1]["data"]["event_id"]
     tail = store.replay(since_event_id=since, limit=10)
-    check("replay: since_event_id 增量重放有序",
-          [e["data"]["event_id"] for e in tail] == [since + 1, since + 2], str(tail[:1]))
+    check(
+        "replay: since_event_id 增量重放有序",
+        [e["data"]["event_id"] for e in tail] == [since + 1, since + 2],
+        str(tail[:1]),
+    )
 
-    mon.emit_message_ingested("g1", "小明", "带图", "m2", 113.0,
-                              media=[{"kind": "image", "hash": "h1", "data_url": "data:image/png;base64,AAAA"}])
+    mon.emit_message_ingested(
+        "g1",
+        "小明",
+        "带图",
+        "m2",
+        113.0,
+        media=[
+            {"kind": "image", "hash": "h1", "data_url": "data:image/png;base64,AAAA"}
+        ],
+    )
     raw = json.dumps(store.replay(limit=1)[0]["data"], ensure_ascii=False)
-    check("sanitize: data_url 剔除不入账本（对齐 MaiBot）", "data_url" not in raw and "AAAA" not in raw)
+    check(
+        "sanitize: data_url 剔除不入账本（对齐 MaiBot）",
+        "data_url" not in raw and "AAAA" not in raw,
+    )
 
     # SQL 账本（写法照抄 MaiBot event_store.py）：持久化重开、超限裁剪
     big_path = pathlib.Path(tempfile.mkdtemp()) / "b.db"
     big = M.MonitorStore(path=big_path)
     with big._session_factory() as sess:
         for i in range(50):
-            sess.add(M.MaisakaMonitorEventRecord(
-                event_type="message.ingested", session_id="g", timestamp=1.0,
-                schema_version=1, payload_json="{}"))
+            sess.add(
+                M.MaisakaMonitorEventRecord(
+                    event_type="message.ingested",
+                    session_id="g",
+                    timestamp=1.0,
+                    schema_version=1,
+                    payload_json="{}",
+                )
+            )
         sess.commit()
     origin_cap = M.MAX_MONITOR_EVENT_RECORDS
     M.MAX_MONITOR_EVENT_RECORDS = 10  # 临时调低上限验证裁剪逻辑
@@ -1055,34 +1701,66 @@ def test_monitor():
     finally:
         M.MAX_MONITOR_EVENT_RECORDS = origin_cap
     left = big.replay(limit=100)
-    check("cleanup: SQL 超限裁剪最旧（对齐两条 DELETE 语句）",
-          removed == 40 and len(left) == 10
-          and left[0]["data"]["event_id"] > 40,
-          f"removed={removed}")
+    check(
+        "cleanup: SQL 超限裁剪最旧（对齐两条 DELETE 语句）",
+        removed == 40 and len(left) == 10 and left[0]["data"]["event_id"] > 40,
+        f"removed={removed}",
+    )
     reopened = M.MonitorStore(path=big_path)
     check("SQL: 重开库数据仍在（持久化）", len(reopened.replay(limit=100)) == 10)
-    check("SQL: 表名/列对齐 maisaka_monitor_events",
-          M.MaisakaMonitorEventRecord.__tablename__ == "maisaka_monitor_events"
-          and {c for c in M.MaisakaMonitorEventRecord.__fields__
-               if c in {"event_id", "event_type", "session_id", "timestamp",
-                        "schema_version", "payload_json", "created_at"}}
-          == {"event_id", "event_type", "session_id", "timestamp",
-              "schema_version", "payload_json", "created_at"})
+    check(
+        "SQL: 表名/列对齐 maisaka_monitor_events",
+        M.MaisakaMonitorEventRecord.__tablename__ == "maisaka_monitor_events"
+        and {
+            c
+            for c in M.MaisakaMonitorEventRecord.__fields__
+            if c
+            in {
+                "event_id",
+                "event_type",
+                "session_id",
+                "timestamp",
+                "schema_version",
+                "payload_json",
+                "created_at",
+            }
+        }
+        == {
+            "event_id",
+            "event_type",
+            "session_id",
+            "timestamp",
+            "schema_version",
+            "payload_json",
+            "created_at",
+        },
+    )
 
     # 事件集对齐 MaiBot events.py：timing_gate.result / planner.response /
     # replier.response 不进麦麦观察时间线——推理思考由 planner.finalized 的
     # request.messages[].reasoning / planner.reasoning 承载（推理过程页专属）
-    check("事件集: 三个时间线遗留类型均不发射",
-          not any(hasattr(mon, m) for m in
-                  ("emit_timing_gate", "emit_planner_response", "emit_replier_response")))
+    check(
+        "事件集: 三个时间线遗留类型均不发射",
+        not any(
+            hasattr(mon, m)
+            for m in (
+                "emit_timing_gate",
+                "emit_planner_response",
+                "emit_replier_response",
+            )
+        ),
+    )
 
     # 推送：订阅队列收到广播（SSE 端点的数据源）
     q = mon.bus.subscribe()
     mon.emit_message_ingested("g1", "小明", "推我", "m3", 114.0)
     import asyncio as _a
+
     item = _a.run(q.get())
-    check("bus: 订阅者收到实时事件", item["event"] == "message.ingested"
-          and item["data"]["content"] == "推我")
+    check(
+        "bus: 订阅者收到实时事件",
+        item["event"] == "message.ingested" and item["data"]["content"] == "推我",
+    )
     mon.bus.unsubscribe(q)
 
 
@@ -1103,51 +1781,83 @@ def test_expression_review():
     store.data["global"]["expressions"][0].pop("id", None)
     changed = store.ensure_expression_ids()
     ids = [x["id"] for x in store.all_expressions()]
-    check("审核: 旧条目补 id 且落盘", changed and all(isinstance(i, int) for i in ids)
-          and len(set(ids)) == len(ids), str(ids))
-    check("审核: 拉平附 key", {x["key"] for x in store.all_expressions()} == {"global", "g_123"})
+    check(
+        "审核: 旧条目补 id 且落盘",
+        changed and all(isinstance(i, int) for i in ids) and len(set(ids)) == len(ids),
+        str(ids),
+    )
+    check(
+        "审核: 拉平附 key",
+        {x["key"] for x in store.all_expressions()} == {"global", "g_123"},
+    )
 
     pend = [x for x in store.all_expressions() if not x["checked"]]
     check("审核: 待审统计", len(pend) == 2 and all(not x["checked"] for x in pend))
     # 通过 → checked=true（expression_checked_only 门控生效面）
     ok = store.review_expression(pend[0]["id"], "approve")
-    check("审核: 通过", ok and not [x for x in store.all_expressions()
-          if x["id"] == pend[0]["id"] and not x["checked"]])
+    check(
+        "审核: 通过",
+        ok
+        and not [
+            x
+            for x in store.all_expressions()
+            if x["id"] == pend[0]["id"] and not x["checked"]
+        ],
+    )
     # 取消人工通过 → checked=false
     store.review_expression(pend[0]["id"], "unapprove")
-    check("审核: 取消人工通过",
-          [x for x in store.all_expressions() if x["id"] == pend[0]["id"]][0]["checked"] is False)
+    check(
+        "审核: 取消人工通过",
+        [x for x in store.all_expressions() if x["id"] == pend[0]["id"]][0]["checked"]
+        is False,
+    )
     # 拒绝 = 直接删除（部署版语义）
     n_before = len(store.all_expressions())
     store.review_expression(pend[0]["id"], "reject")
-    check("审核: 拒绝删除", len(store.all_expressions()) == n_before - 1
-          and store.expressions("global") == [])
+    check(
+        "审核: 拒绝删除",
+        len(store.all_expressions()) == n_before - 1
+        and store.expressions("global") == [],
+    )
     # 未知动作/未知 id：拒绝且不改库
     snap = _json.dumps(store.data, sort_keys=True, ensure_ascii=False)
     check("审核: 未知动作拒绝", not store.review_expression(999999, "approve"))
-    check("审核: 未知 id 未命中", not store.review_expression(999999, "reject")
-          and _json.dumps(store.data, sort_keys=True, ensure_ascii=False) == snap)
+    check(
+        "审核: 未知 id 未命中",
+        not store.review_expression(999999, "reject")
+        and _json.dumps(store.data, sort_keys=True, ensure_ascii=False) == snap,
+    )
 
     # 弹窗增改：新建（重复并入既有条目）、按 id 修改、空白拒绝
     item = store.upsert_expression("被夸", "谦虚卖萌", True, key="g_123")
     check("弹窗: 新建并入既有（去重）", item and item.get("count") == 2, str(item))
     item2 = store.upsert_expression("全新情境", "全新风格", False, key="g_123")
-    check("弹窗: 全新建（返回库内引用含 id）",
-          item2 and item2.get("count") == 1 and isinstance(item2.get("id"), int),
-          str(item2))
+    check(
+        "弹窗: 全新建（返回库内引用含 id）",
+        item2 and item2.get("count") == 1 and isinstance(item2.get("id"), int),
+        str(item2),
+    )
     store.ensure_expression_ids()
     target = [x for x in store.all_expressions() if x["situation"] == "全新情境"][0]
-    item3 = store.upsert_expression("改后情境", "改后风格", True, key="g_123",
-                                    expr_id=target["id"])
-    check("弹窗: 按 id 修改", item3 and item3["situation"] == "改后情境"
-          and item3["checked"] is True)
+    item3 = store.upsert_expression(
+        "改后情境", "改后风格", True, key="g_123", expr_id=target["id"]
+    )
+    check(
+        "弹窗: 按 id 修改",
+        item3 and item3["situation"] == "改后情境" and item3["checked"] is True,
+    )
     check("弹窗: 空白拒绝", store.upsert_expression("  ", "x", True) is None)
-    check("弹窗: 未知 id 修改返回 None",
-          store.upsert_expression("a", "b", True, expr_id=999999) is None)
+    check(
+        "弹窗: 未知 id 修改返回 None",
+        store.upsert_expression("a", "b", True, expr_id=999999) is None,
+    )
     # 落盘结构过 apivalid（WebUI 整包写回同校验）
     from astrbot_plugin_maisoul.core.apivalid import validate_learning_payload
-    check("审核: 落盘结构过校验",
-          validate_learning_payload(_json.loads(tmp.read_text(encoding="utf-8"))) is None)
+
+    check(
+        "审核: 落盘结构过校验",
+        validate_learning_payload(_json.loads(tmp.read_text(encoding="utf-8"))) is None,
+    )
 
 
 def test_learning():
@@ -1160,112 +1870,234 @@ def test_learning():
     tmp = pathlib.Path(tempfile.mkdtemp()) / "t.json"
     store = learning.LearningStore(path=tmp)
     check("表达: 新增", store.add_expression("global", "惊叹", "使用 我嘞个", True))
-    check("表达: 重复计数不重复入库",
-          not store.add_expression("global", "惊叹", "使用 我嘞个", True)
-          and store.expressions("global")[0]["count"] == 2)
-    check("表达块: 库<10 不注入", learning.expression_habits_block(store, "global", False) == "")
+    check(
+        "表达: 重复计数不重复入库",
+        not store.add_expression("global", "惊叹", "使用 我嘞个", True)
+        and store.expressions("global")[0]["count"] == 2,
+    )
+    check(
+        "表达块: 库<10 不注入",
+        learning.expression_habits_block(store, "global", False) == "",
+    )
     for i in range(12):
         store.add_expression("global", f"情境{i}", f"风格{i}", i % 2 == 0)
     random.seed(3)
     blk = learning.expression_habits_block(store, "global", False)
-    check("表达块: 满库注入格式", blk.startswith("【表达习惯参考，请视情况自然的使用】")
-          and "时，可以用" in blk and "来表达。" in blk, blk[:60])
+    check(
+        "表达块: 满库注入格式",
+        blk.startswith("【表达习惯参考，请视情况自然的使用】")
+        and "时，可以用" in blk
+        and "来表达。" in blk,
+        blk[:60],
+    )
     check("表达块: 条数≤5", blk.count("\n") <= 5)
 
     tmp2 = pathlib.Path(tempfile.mkdtemp()) / "u.json"
     store2 = learning.LearningStore(path=tmp2)
     for i in range(12):
         store2.add_expression("global", f"情境{i}", f"风格{i}", False)
-    check("表达块: 精选过滤后为空", learning.expression_habits_block(store2, "global", True) == "")
+    check(
+        "表达块: 精选过滤后为空",
+        learning.expression_habits_block(store2, "global", True) == "",
+    )
 
     store.add_jargon("global", "yyds", "永远的神")
     blk = learning.jargon_reference_block(store, "global", ["这波太yyds了", "哈哈"])
-    check("黑话块: 命中注入", blk.startswith("以下黑话来自当前上下文") and "1. yyds：永远的神" in blk, blk)
-    check("黑话块: 未命中为空", learning.jargon_reference_block(store, "global", ["普通消息"]) == "")
+    check(
+        "黑话块: 命中注入",
+        blk.startswith("以下黑话来自当前上下文") and "1. yyds：永远的神" in blk,
+        blk,
+    )
+    check(
+        "黑话块: 未命中为空",
+        learning.jargon_reference_block(store, "global", ["普通消息"]) == "",
+    )
 
     # 黑话去重钩子（planner 轮间，对齐 jargon_context_matcher 历史去重）
     got: list[str] = []
-    blk2 = learning.jargon_reference_block(store, "global", ["这波太yyds了"],
-                                           matched_out=got)
+    blk2 = learning.jargon_reference_block(
+        store, "global", ["这波太yyds了"], matched_out=got
+    )
     check("黑话钩子: matched_out 回填命中词条", got == ["yyds"] and "yyds" in blk2)
-    check("黑话钩子: exclude 跳过已注入词条",
-          learning.jargon_reference_block(store, "global", ["这波太yyds了"],
-                                          exclude={"yyds"}) == "")
+    check(
+        "黑话钩子: exclude 跳过已注入词条",
+        learning.jargon_reference_block(
+            store, "global", ["这波太yyds了"], exclude={"yyds"}
+        )
+        == "",
+    )
 
     # v6.9.8：黑话排序近似（count 降序 + 首现位置优先）
     tmp3 = pathlib.Path(tempfile.mkdtemp()) / "j.json"
     store3 = learning.LearningStore(path=tmp3)
-    store3.add_jargon("g", "低频词", "含义")           # count=1，首现位置 0
+    store3.add_jargon("g", "低频词", "含义")  # count=1，首现位置 0
     store3.add_jargon("g", "高频词", "含义")
-    store3.add_jargon("g", "高频词", "含义")           # count=2
+    store3.add_jargon("g", "高频词", "含义")  # count=2
     store3.add_jargon("g", "同高频", "含义")
-    store3.add_jargon("g", "同高频", "含义")           # count=2，首现位置更晚
+    store3.add_jargon("g", "同高频", "含义")  # count=2，首现位置更晚
     blk3 = learning.jargon_reference_block(store3, "g", ["高频词 同高频 低频词"])
     order = [line.split(". ", 1)[1].split("：")[0] for line in blk3.splitlines()[1:]]
-    check("黑话排序: count 降序 + 首现优先",
-          order == ["高频词", "同高频", "低频词"], str(order))
+    check(
+        "黑话排序: count 降序 + 首现优先",
+        order == ["高频词", "同高频", "低频词"],
+        str(order),
+    )
 
     # 防复读与提示词清理（v6.9.6）
     from astrbot_plugin_maisoul.core import planner as _pl
     from difflib import SequenceMatcher as _SM
-    check("防复读: 相同文本相似度>0.9", _SM(None, "分析A", "分析A").ratio() > 0.9)
-    check("防复读: 不同文本相似度<0.9",
-          _SM(None, "群友在聊新出的游戏", "今天天气不错适合睡觉").ratio() < 0.9)
-    check("防复读: 反思文本常量存在",
-          _pl.PLANNER_REFLECT_ON_REPEAT.startswith("我应该根据我上面思考的内容进行反思"))
-    sys_prompt = _pl.build_planner_system(
-        {"bot_name": "麦麦", "behavior_style": "测试", "personality": ""}, "")
-    check("提示词: tool_search 指引已恢复（v6.9.7 工具已实装）", "tool_search" in sys_prompt)
-    check("提示词: view_forward_message 仍不提及（无此工具）",
-          "view_forward_message" not in sys_prompt)
-    check("提示词: deferred tools 提示已恢复", "deferred tools" in sys_prompt)
-    check("提示词: reply/wait 指引保留",
-          "调用reply" in sys_prompt and "wait()" in sys_prompt)
-    check("PlannerState: last_analysis 字段存在", hasattr(_pl.PlannerState(), "last_analysis"))
 
-    cfg = {"keyword_rules": [{"keywords": ["早上好"], "reaction": "热情打招呼"}],
-           "regex_rules": [{"regex": [r"(?P<food>吃\w+)"], "reaction": "聊聊 [food]"}]}
+    check("防复读: 相同文本相似度>0.9", _SM(None, "分析A", "分析A").ratio() > 0.9)
+    check(
+        "防复读: 不同文本相似度<0.9",
+        _SM(None, "群友在聊新出的游戏", "今天天气不错适合睡觉").ratio() < 0.9,
+    )
+    check(
+        "防复读: 反思文本常量存在",
+        _pl.PLANNER_REFLECT_ON_REPEAT.startswith("我应该根据我上面思考的内容进行反思"),
+    )
+    sys_prompt = _pl.build_planner_system(
+        {"bot_name": "麦麦", "behavior_style": "测试", "personality": ""}, ""
+    )
+    check(
+        "提示词: tool_search 指引已恢复（v6.9.7 工具已实装）",
+        "tool_search" in sys_prompt,
+    )
+    check(
+        "提示词: view_forward_message 仍不提及（无此工具）",
+        "view_forward_message" not in sys_prompt,
+    )
+    check("提示词: deferred tools 提示已恢复", "deferred tools" in sys_prompt)
+    check(
+        "提示词: reply/wait 指引保留",
+        "调用reply" in sys_prompt and "wait()" in sys_prompt,
+    )
+    check(
+        "PlannerState: last_analysis 字段存在",
+        hasattr(_pl.PlannerState(), "last_analysis"),
+    )
+
+    cfg = {
+        "keyword_rules": [{"keywords": ["早上好"], "reaction": "热情打招呼"}],
+        "regex_rules": [{"regex": [r"(?P<food>吃\w+)"], "reaction": "聊聊 [food]"}],
+    }
     blk = learning.keyword_reaction_block(cfg, "大家早上好呀")
-    check("关键词反应: 命中格式", blk.startswith("【关键词反应】") and "- 热情打招呼" in blk)
+    check(
+        "关键词反应: 命中格式",
+        blk.startswith("【关键词反应】") and "- 热情打招呼" in blk,
+    )
     blk = learning.keyword_reaction_block(cfg, "今天吃火锅吗")
     check("正则反应: 命名捕获组替换", "聊聊 吃火锅" in blk, blk)
-    check("关键词反应: 未命中为空", learning.keyword_reaction_block(cfg, "普通消息") == "")
+    check(
+        "关键词反应: 未命中为空", learning.keyword_reaction_block(cfg, "普通消息") == ""
+    )
 
-    cfgf = {"expression_learning_list": [
-        {"platform": "", "item_id": "", "type": "group", "use": True, "learn": True},
-        {"platform": "qq", "item_id": "g1", "type": "group", "use": False, "learn": False}]}
-    check("学习配置: 精确命中关闭",
-          learning.learning_flags(cfgf, "expression_learning_list", "qq", "g1") == (False, False))
-    check("学习配置: 其他群回落默认",
-          learning.learning_flags(cfgf, "expression_learning_list", "qq", "g2") == (True, True))
-    cfgp = {"expression_learning_list": [
-        {"platform": "", "item_id": "", "type": "group", "use": True, "learn": True},
-        {"platform": "qq", "item_id": "u1", "type": "private", "use": False, "learn": True}]}
-    check("学习配置: 私聊规则按类型命中",
-          learning.learning_flags(cfgp, "expression_learning_list", "qq", "u1", False) == (False, True))
-    check("学习配置: 私聊回落 group 默认规则",
-          learning.learning_flags(cfgp, "expression_learning_list", "qq", "u2", False) == (True, True))
-    cfgg = {"expression_groups": [{"targets": [
-        {"platform": "qq", "item_id": "g1"}, {"platform": "qq", "item_id": "g2"}]}]}
+    cfgf = {
+        "expression_learning_list": [
+            {
+                "platform": "",
+                "item_id": "",
+                "type": "group",
+                "use": True,
+                "learn": True,
+            },
+            {
+                "platform": "qq",
+                "item_id": "g1",
+                "type": "group",
+                "use": False,
+                "learn": False,
+            },
+        ]
+    }
+    check(
+        "学习配置: 精确命中关闭",
+        learning.learning_flags(cfgf, "expression_learning_list", "qq", "g1")
+        == (False, False),
+    )
+    check(
+        "学习配置: 其他群回落默认",
+        learning.learning_flags(cfgf, "expression_learning_list", "qq", "g2")
+        == (True, True),
+    )
+    cfgp = {
+        "expression_learning_list": [
+            {
+                "platform": "",
+                "item_id": "",
+                "type": "group",
+                "use": True,
+                "learn": True,
+            },
+            {
+                "platform": "qq",
+                "item_id": "u1",
+                "type": "private",
+                "use": False,
+                "learn": True,
+            },
+        ]
+    }
+    check(
+        "学习配置: 私聊规则按类型命中",
+        learning.learning_flags(cfgp, "expression_learning_list", "qq", "u1", False)
+        == (False, True),
+    )
+    check(
+        "学习配置: 私聊回落 group 默认规则",
+        learning.learning_flags(cfgp, "expression_learning_list", "qq", "u2", False)
+        == (True, True),
+    )
+    cfgg = {
+        "expression_groups": [
+            {
+                "targets": [
+                    {"platform": "qq", "item_id": "g1"},
+                    {"platform": "qq", "item_id": "g2"},
+                ]
+            }
+        ]
+    }
     k1 = learning.share_key(cfgg, "expression_groups", "qq", "g1")
     k2 = learning.share_key(cfgg, "expression_groups", "qq", "g2")
     check("共享组: 组内同键且非 global", k1 == k2 and k1 != "global")
-    check("共享组: 组外 global", learning.share_key(cfgg, "expression_groups", "qq", "g9") == "global")
+    check(
+        "共享组: 组外 global",
+        learning.share_key(cfgg, "expression_groups", "qq", "g9") == "global",
+    )
 
-    check("JSON 修复: 前后杂讯", learning._repair_json_array('好的：\n[{"a":1}] 完成') == [{"a": 1}])
+    check(
+        "JSON 修复: 前后杂讯",
+        learning._repair_json_array('好的：\n[{"a":1}] 完成') == [{"a": 1}],
+    )
     check("JSON 修复: 无数组", learning._repair_json_array("没有内容") == [])
 
     # M1 回归：自检 suitable 判定必须按结构提取——旧实现是
     # '"suitable": true' in raw.replace(" ","")（针含空格、干草堆已去空格，
     # 恒 False）+ 紧凑字符串兜底，模型常规输出 {"suitable": true} 时
     # checked=False，默认 expression_checked_only=true 下学到的表达全部不可用
-    check("M1 suitable: 常规带空格 JSON 判真",
-          learning._suitable_from_review('{"suitable": true, "reason": "自然口语"}') is True)
-    check("M1 suitable: 紧凑 JSON 判真", learning._suitable_from_review('{"suitable":true}') is True)
-    check("M1 suitable: false 判假", learning._suitable_from_review('{"suitable": false}') is False)
-    check("M1 suitable: 前后杂讯容忍",
-          learning._suitable_from_review('评估结果：\n{"suitable": true}\n以上。') is True)
-    check("M1 suitable: 无法解析保守为假", learning._suitable_from_review('这条表达没问题') is False)
+    check(
+        "M1 suitable: 常规带空格 JSON 判真",
+        learning._suitable_from_review('{"suitable": true, "reason": "自然口语"}')
+        is True,
+    )
+    check(
+        "M1 suitable: 紧凑 JSON 判真",
+        learning._suitable_from_review('{"suitable":true}') is True,
+    )
+    check(
+        "M1 suitable: false 判假",
+        learning._suitable_from_review('{"suitable": false}') is False,
+    )
+    check(
+        "M1 suitable: 前后杂讯容忍",
+        learning._suitable_from_review('评估结果：\n{"suitable": true}\n以上。')
+        is True,
+    )
+    check(
+        "M1 suitable: 无法解析保守为假",
+        learning._suitable_from_review("这条表达没问题") is False,
+    )
     # 端到端口径：checked=True 的条目在 expression_checked_only=True 时可用
     # （注入需过滤后池 ≥10 条，故放 12 条过检 + 6 条未过检）
     tmpm = pathlib.Path(tempfile.mkdtemp()) / "m.json"
@@ -1276,68 +2108,114 @@ def test_learning():
         storem.add_expression("global", f"废品{i}", f"风格x{i}", False)
     random.seed(7)
     blkm = learning.expression_habits_block(storem, "global", True)
-    check("M1 端到端: 自检通过的表达可用", "可用品" in blkm and "废品" not in blkm, blkm[:60])
+    check(
+        "M1 端到端: 自检通过的表达可用",
+        "可用品" in blkm and "废品" not in blkm,
+        blkm[:60],
+    )
 
-    buf = [{"name": "麦麦", "sid": "b", "msg_id": f"s{i}", "text": f"自言{i}",
-            "at_bot": False, "reply_bot": False, "ts": i} for i in range(5)]
-    buf.append({"name": "u", "sid": "u", "msg_id": "m", "text": "用户",
-                "at_bot": False, "reply_bot": False, "ts": 9})
+    buf = [
+        {
+            "name": "麦麦",
+            "sid": "b",
+            "msg_id": f"s{i}",
+            "text": f"自言{i}",
+            "at_bot": False,
+            "reply_bot": False,
+            "ts": i,
+        }
+        for i in range(5)
+    ]
+    buf.append(
+        {
+            "name": "u",
+            "sid": "u",
+            "msg_id": "m",
+            "text": "用户",
+            "at_bot": False,
+            "reply_bot": False,
+            "ts": 9,
+        }
+    )
     opt = prompt._optimize_transcript(buf, "麦麦", 3)
-    check("优化上下文: 自发言保留最近3条",
-          sum(1 for m in opt if m["name"] == "麦麦") == 3 and opt[-1]["text"] == "用户")
+    check(
+        "优化上下文: 自发言保留最近3条",
+        sum(1 for m in opt if m["name"] == "麦麦") == 3 and opt[-1]["text"] == "用户",
+    )
 
     st = make_state([("u", "大家好", False)], pending=1)
     fm = prompt.build_final_user_message(
-        st, {"max_context_size": 40, "bot_name": "麦麦"}, "原因", "",
-        expression_habits="【表达习惯参考，请视情况自然的使用】\n- 当\"X\"时，可以用\"Y\"来表达。",
+        st,
+        {"max_context_size": 40, "bot_name": "麦麦"},
+        "原因",
+        "",
+        expression_habits='【表达习惯参考，请视情况自然的使用】\n- 当"X"时，可以用"Y"来表达。',
         jargon_reference="以下黑话来自当前上下文……\n1. yyds：永远的神",
-        keyword_reaction="【关键词反应】\n最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n- 热情打招呼\n")
+        keyword_reaction="【关键词反应】\n最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n- 热情打招呼\n",
+    )
     idx_rec = fm.find("【最近群聊记录】")
     idx_expr = fm.find("【表达习惯参考")
     idx_jar = fm.find("以下黑话来自")
     idx_ref = fm.find("【回复信息参考】")
     idx_kwr = fm.find("【关键词反应】")
     idx_end = fm.find(prompt.REPLY_INSTRUCTION)
-    check("final: 块顺序对齐 MaiBot",
-          0 < idx_rec < idx_expr < idx_jar < idx_ref < idx_kwr < idx_end, fm)
+    check(
+        "final: 块顺序对齐 MaiBot",
+        0 < idx_rec < idx_expr < idx_jar < idx_ref < idx_kwr < idx_end,
+        fm,
+    )
 
     # 学习库损坏防护（v6.15.4）：坏 JSON / 非 dict 结构 → 备份 .corrupt 后空库启动
     bad = pathlib.Path(tempfile.mkdtemp()) / "bad.json"
     bad.write_text('{"global": {"expressions": [', encoding="utf-8")  # 半截 JSON
     store_bad = learning.LearningStore(path=bad)
     check("损坏防护: 半截 JSON → 空库启动", store_bad.data == {})
-    check("损坏防护: 原文件备份为 .corrupt",
-          (bad.parent / "bad.json.corrupt").exists() and not bad.exists())
+    check(
+        "损坏防护: 原文件备份为 .corrupt",
+        (bad.parent / "bad.json.corrupt").exists() and not bad.exists(),
+    )
     bad2 = pathlib.Path(tempfile.mkdtemp()) / "bad2.json"
     bad2.write_text('["不是对象"]', encoding="utf-8")
-    check("损坏防护: 非 dict 结构 → 空库启动",
-          learning.LearningStore(path=bad2).data == {})
-    check("损坏防护: 结构非法同样备份",
-          (bad2.parent / "bad2.json.corrupt").exists())
+    check(
+        "损坏防护: 非 dict 结构 → 空库启动",
+        learning.LearningStore(path=bad2).data == {},
+    )
+    check("损坏防护: 结构非法同样备份", (bad2.parent / "bad2.json.corrupt").exists())
     # 嵌套错型（合法 JSON + 顶层 dict 但分库非对象）同样备份+空库
     # （Sourcery 审查：_bucket() 会返回 list，.get 抛 AttributeError）
     bad3 = pathlib.Path(tempfile.mkdtemp()) / "bad3.json"
     bad3.write_text('{"global": []}', encoding="utf-8")
-    check("损坏防护: 分库非对象 → 空库启动",
-          learning.LearningStore(path=bad3).data == {})
-    check("损坏防护: 嵌套错型同样备份",
-          (bad3.parent / "bad3.json.corrupt").exists())
+    check(
+        "损坏防护: 分库非对象 → 空库启动", learning.LearningStore(path=bad3).data == {}
+    )
+    check("损坏防护: 嵌套错型同样备份", (bad3.parent / "bad3.json.corrupt").exists())
 
     # 原子写：保存后无 .tmp 残留、落盘内容可回读
     store_bad.add_expression("global", "情境", "风格", True)
     check("原子写: 无 .tmp 残留", not (bad.parent / "bad.json.tmp").exists())
-    check("原子写: 落盘可回读",
-          len(learning.LearningStore(path=bad).expressions("global")) == 1)
+    check(
+        "原子写: 落盘可回读",
+        len(learning.LearningStore(path=bad).expressions("global")) == 1,
+    )
 
     # WebUI 写接口校验（core/apivalid.py，v6.15.4）
     from astrbot_plugin_maisoul.core import apivalid
-    schema = {"talk_value": {"type": "float"}, "enable": {"type": "bool"},
-              "aliases": {"type": "list"}, "bot_name": {"type": "string"}}
+
+    schema = {
+        "talk_value": {"type": "float"},
+        "enable": {"type": "bool"},
+        "aliases": {"type": "list"},
+        "bot_name": {"type": "string"},
+    }
     cur = {"talk_value": 1.0, "enable": True, "aliases": [], "bot_name": "麦麦"}
     ok, err = apivalid.validate_config_payload(
-        schema, {"talk_value": 0.5, "new_key": 1}, cur)
-    check("config校验: 合法值通过且新键被白名单挡住",
-          ok == {"talk_value": 0.5} and err is None, f"{ok} {err}")
+        schema, {"talk_value": 0.5, "new_key": 1}, cur
+    )
+    check(
+        "config校验: 合法值通过且新键被白名单挡住",
+        ok == {"talk_value": 0.5} and err is None,
+        f"{ok} {err}",
+    )
     _, err = apivalid.validate_config_payload(schema, {"talk_value": "abc"}, cur)
     check("config校验: 类型不符拒绝", err is not None and "talk_value" in err, str(err))
     _, err = apivalid.validate_config_payload(schema, {"enable": 1}, cur)
@@ -1346,18 +2224,30 @@ def test_learning():
     check("config校验: list 不收字符串", err is not None)
     _, err = apivalid.validate_config_payload(None, {"talk_value": "abc"}, cur)
     check("config校验: 无 schema 元数据时保持宽松", err is None)
-    check("学习库校验: 合法结构通过", apivalid.validate_learning_payload(
-        {"global": {"expressions": [{"situation": "s"}], "jargons": []}}) is None)
-    check("学习库校验: 顶层非 dict 拒绝",
-          apivalid.validate_learning_payload([1]) is not None)
-    check("学习库校验: 分库非对象拒绝",
-          apivalid.validate_learning_payload({"global": ["x"]}) is not None)
-    check("学习库校验: 字段错型拒绝",
-          apivalid.validate_learning_payload(
-              {"global": {"expressions": "x"}}) is not None)
+    check(
+        "学习库校验: 合法结构通过",
+        apivalid.validate_learning_payload(
+            {"global": {"expressions": [{"situation": "s"}], "jargons": []}}
+        )
+        is None,
+    )
+    check(
+        "学习库校验: 顶层非 dict 拒绝",
+        apivalid.validate_learning_payload([1]) is not None,
+    )
+    check(
+        "学习库校验: 分库非对象拒绝",
+        apivalid.validate_learning_payload({"global": ["x"]}) is not None,
+    )
+    check(
+        "学习库校验: 字段错型拒绝",
+        apivalid.validate_learning_payload({"global": {"expressions": "x"}})
+        is not None,
+    )
     big = {"global": {"expressions": [{"situation": "x" * 100}] * 100000}}
-    check("学习库校验: 体积超限拒绝",
-          apivalid.validate_learning_payload(big) is not None)
+    check(
+        "学习库校验: 体积超限拒绝", apivalid.validate_learning_payload(big) is not None
+    )
 
 
 def test_phase3_mechanisms():
@@ -1367,26 +2257,41 @@ def test_phase3_mechanisms():
     from astrbot_plugin_maisoul.core.demote import demote_quote
 
     # P-F 清洗
-    check("P-F 清洗: 引用前缀剥离",
-          sanitize.sanitize_text("[CQ:reply,id=123] 你好啊") == "你好啊")
-    check("P-F 清洗: 合并转发占位",
-          sanitize.sanitize_text("看这个[合并转发消息]哈哈") == "看这个[转发消息]哈哈")
+    check(
+        "P-F 清洗: 引用前缀剥离",
+        sanitize.sanitize_text("[CQ:reply,id=123] 你好啊") == "你好啊",
+    )
+    check(
+        "P-F 清洗: 合并转发占位",
+        sanitize.sanitize_text("看这个[合并转发消息]哈哈") == "看这个[转发消息]哈哈",
+    )
     check("P-F 清洗: 干净文本不动", sanitize.sanitize_text("普通消息") == "普通消息")
-    check("P-F 点名: 其他AI前缀识别",
-          sanitize.leading_ai_mention("@别的AI 帮我查一下", "麦麦", ["小麦"]) == "别的AI")
-    check("P-F 点名: 自己的名不算",
-          sanitize.leading_ai_mention("@麦麦 你好", "麦麦", ["小麦"]) == "")
-    check("P-F 点名: 剥离前缀保留剩余正文",
-          sanitize.strip_leading_ai_mention("@别的AI 帮我查天气", "麦麦", []) == "帮我查天气")
-    check("P-F 点名: 指向自己的前缀不剥",
-          sanitize.strip_leading_ai_mention("@麦麦 你好", "麦麦", []) == "@麦麦 你好")
+    check(
+        "P-F 点名: 其他AI前缀识别",
+        sanitize.leading_ai_mention("@别的AI 帮我查一下", "麦麦", ["小麦"]) == "别的AI",
+    )
+    check(
+        "P-F 点名: 自己的名不算",
+        sanitize.leading_ai_mention("@麦麦 你好", "麦麦", ["小麦"]) == "",
+    )
+    check(
+        "P-F 点名: 剥离前缀保留剩余正文",
+        sanitize.strip_leading_ai_mention("@别的AI 帮我查天气", "麦麦", [])
+        == "帮我查天气",
+    )
+    check(
+        "P-F 点名: 指向自己的前缀不剥",
+        sanitize.strip_leading_ai_mention("@麦麦 你好", "麦麦", []) == "@麦麦 你好",
+    )
 
     # P-E 频率窗口反馈
     class _St:
         def __init__(self, win10, win5):
             self._w10, self._w5 = win10, win5
+
         def recent_self_count(self, seconds):
             return self._w10 if seconds >= 600 else self._w5
+
     cfg_on = {"freq_feedback_enable": True, "freq_feedback_expected": 6}
     f0, _ = freqfeedback.frequency_feedback_factor(_St(0, 0), cfg_on)
     check("P-E: 安静窗口 ×5.0", f0 == 5.0)
@@ -1394,31 +2299,52 @@ def test_phase3_mechanisms():
     check("P-E: 达标 ×1.0", abs(f1 - 1.0) < 1e-9)
     f2, _ = freqfeedback.frequency_feedback_factor(_St(12, 0), cfg_on)
     check("P-E: 超两倍 ×0.2", abs(f2 - 0.2) < 1e-9)
-    f3, _ = freqfeedback.frequency_feedback_factor(_St(3, 3), cfg_on)  # 近5min已3条=超速
+    f3, _ = freqfeedback.frequency_feedback_factor(
+        _St(3, 3), cfg_on
+    )  # 近5min已3条=超速
     check("P-E: 近窗超速只降不升", f3 == 1.0)
-    f4, _ = freqfeedback.frequency_feedback_factor(_St(0, 0), {"freq_feedback_enable": False})
+    f4, _ = freqfeedback.frequency_feedback_factor(
+        _St(0, 0), {"freq_feedback_enable": False}
+    )
     check("P-E: 开关关闭恒 1.0", f4 == 1.0)
 
     # P-A 中期记忆
     from astrbot_plugin_maisoul.core.memstore import (
-        SessionMemory, jaccard, parse_summary, word_set,
+        SessionMemory,
+        jaccard,
+        parse_summary,
+        word_set,
     )
+
     mm = SessionMemory()
     mm.add("阿狸帮忙搬了服务器", ["阿狸", "服务器"], 100.0)
     mm.add("和小麦约了周末联机", ["周末", "联机"], 200.0)
-    check("P-A: 线索召回命中", mm.recall(["阿狸的服务器还好吗"], threshold=0.05) == ["阿狸帮忙搬了服务器"])
+    check(
+        "P-A: 线索召回命中",
+        mm.recall(["阿狸的服务器还好吗"], threshold=0.05) == ["阿狸帮忙搬了服务器"],
+    )
     check("P-A: 无关不召回", mm.recall(["今天天气不错"], threshold=0.3) == [])
-    check("P-A: 召回条数上限", len(mm.recall(["周末 联机 阿狸 服务器"], threshold=0.0)) <= 3)
+    check(
+        "P-A: 召回条数上限",
+        len(mm.recall(["周末 联机 阿狸 服务器"], threshold=0.0)) <= 3,
+    )
     check("P-A: 渲染含内部参考声明", "不要逐字引用" in SessionMemory.render(["总结"]))
-    check("P-A: 摘要解析容忍杂讯",
-          parse_summary('好的：{"summary": "约定周末联机", "cues": ["周末"]}') == ("约定周末联机", ["周末"]))
+    check(
+        "P-A: 摘要解析容忍杂讯",
+        parse_summary('好的：{"summary": "约定周末联机", "cues": ["周末"]}')
+        == ("约定周末联机", ["周末"]),
+    )
     check("P-A: 解析失败返回 None", parse_summary("我拒绝输出 JSON") is None)
-    check("P-A: 词集二元组", "阿狸" in word_set("阿狸真棒") and len(word_set("ok ok")) >= 1)
+    check(
+        "P-A: 词集二元组",
+        "阿狸" in word_set("阿狸真棒") and len(word_set("ok ok")) >= 1,
+    )
     check("P-A: jaccard 边界", jaccard(set(), {"a"}) == 0.0)
 
     # P-B 情绪 VA
     import time as _tm
     from astrbot_plugin_maisoul.core.emotion import EmotionState, EMOTION_DELTAS
+
     em = EmotionState()
     em.apply("开心", 1000.0)
     check("P-B: 开心提升 valence", em.v > 0.3 and em.a > 0.2)
@@ -1426,18 +2352,23 @@ def test_phase3_mechanisms():
     vs = [emq.apply("好奇", 1000.0 + 0.5 * i)[0] for i in range(4)]
     check("P-B: 连续同向动量放大", vs[0] < vs[1] < vs[2] < vs[3])  # ×1.01^n 递增
     # 动量方向性（Sourcery 修复回归）：首个情绪不缩放；同向第二发放大；异向收敛
-    e_first = EmotionState(); v_first = e_first.apply("好奇", 2000.0)[0]
+    e_first = EmotionState()
+    v_first = e_first.apply("好奇", 2000.0)[0]
     check("P-B: 首个情绪不缩放", abs(v_first - 0.2) < 1e-9)
-    e_same = EmotionState(); va = e_same.apply("好奇", 2001.0)[0]
+    e_same = EmotionState()
+    va = e_same.apply("好奇", 2001.0)[0]
     vb = e_same.apply("好奇", 2001.5)[0]
-    check("P-B: 同向第二发放大（×1.01^n）", abs(vb - va) > v_first)  # 0.204 > 0.2，不触钳位
-    e_rev = EmotionState(); e_rev.apply("喜爱", 2002.0)
+    check(
+        "P-B: 同向第二发放大（×1.01^n）", abs(vb - va) > v_first
+    )  # 0.204 > 0.2，不触钳位
+    e_rev = EmotionState()
+    e_rev.apply("喜爱", 2002.0)
     before = e_rev.v
     after = e_rev.apply("愤怒", 2002.5)[0]
     check("P-B: 异向收敛（×0.99）", abs(after - before) < 0.6)  # 0.594 < 裸增量 0.6
     em4 = EmotionState()
     em4.apply("兴奋", 3000.0)
-    check("P-B: 打字乘数 1.5^arousal", abs(em4.typing_multiplier() - 1.5 ** em4.a) < 1e-9)
+    check("P-B: 打字乘数 1.5^arousal", abs(em4.typing_multiplier() - 1.5**em4.a) < 1e-9)
     em4._decay(3000.0 + 3600)  # 60 分钟：exp(-0.1×60)≈0.0025
     check("P-B: 每分钟向基线衰减", abs(em4.v) < 0.05 and abs(em4.a) < 0.05)
     em5 = EmotionState()
@@ -1445,18 +2376,29 @@ def test_phase3_mechanisms():
     check("P-B: 锚点标签映射", em5.label(4000.0) in {"愤怒", "恐惧"})
     check("P-B: 情绪行注入格式", "情绪状态" in em5.prompt_line(4000.0))
     from astrbot_plugin_maisoul.core.states import GroupState as _GS
+
     check("P-B: 会话状态自带情绪", hasattr(_GS(), "emotion"))
 
     # P-D 发送队列降级
-    buf = ([{"sid": "self", "msg_id": "", "text": "旧自发"}]
-           + [{"sid": f"u{i}", "msg_id": f"m{i}", "text": "x" * 30} for i in range(4)])
-    check("P-D: 超条数降级到最新",
-          demote_quote(buf, {"send_queue_demotion": True}, 1) == ("m3", "m3"))
-    check("P-D: 未超不降",
-          demote_quote(buf[:3], {"send_queue_demotion": True}, 1) is None)
-    check("P-D: 超字数降级",
-          demote_quote([{"sid": "u1", "msg_id": "m1", "text": "x" * 250}],
-                       {"send_queue_demotion": True}, 0) == ("m1", "m1"))
+    buf = [{"sid": "self", "msg_id": "", "text": "旧自发"}] + [
+        {"sid": f"u{i}", "msg_id": f"m{i}", "text": "x" * 30} for i in range(4)
+    ]
+    check(
+        "P-D: 超条数降级到最新",
+        demote_quote(buf, {"send_queue_demotion": True}, 1) == ("m3", "m3"),
+    )
+    check(
+        "P-D: 未超不降", demote_quote(buf[:3], {"send_queue_demotion": True}, 1) is None
+    )
+    check(
+        "P-D: 超字数降级",
+        demote_quote(
+            [{"sid": "u1", "msg_id": "m1", "text": "x" * 250}],
+            {"send_queue_demotion": True},
+            0,
+        )
+        == ("m1", "m1"),
+    )
     check("P-D: 开关关不降", demote_quote(buf, {}, 1) is None)
 
 
@@ -1494,6 +2436,7 @@ def test_taskregistry():
 
     # MonitorStore/Monitor.close：释放连接池且幂等
     import pathlib, tempfile
+
     p = pathlib.Path(tempfile.mkdtemp()) / "m6.db"
     store = MonitorStore(p)
     mon = Monitor(store)
@@ -1503,44 +2446,68 @@ def test_taskregistry():
 
     # 客户反馈回归：推理思考进 planner.finalized 载荷（推理过程页数据源）
     from astrbot_plugin_maisoul.core.monitor import (
-        MaisakaMonitorEventRecord as _R3, Monitor as _M2, MonitorStore as _MS2,
+        MaisakaMonitorEventRecord as _R3,
+        Monitor as _M2,
+        MonitorStore as _MS2,
     )
+
     s3 = _MS2(pathlib.Path(tempfile.mkdtemp()) / "resp.db")
     m3 = _M2(s3)
     m3.emit_planner_finalized(
-        session_id="g1", cycle_id=1,
+        session_id="g1",
+        cycle_id=1,
         planner_request_messages=[
             {"role": "user", "content": "你好"},
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "reply"}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "1", "function": {"name": "reply"}}],
+            },
         ],
-        planner_content="去回复", reasoning_by_idx={1: "先想想语气…"},
-        replyer_reasoning="回复器思考：要热情一点")
+        planner_content="去回复",
+        reasoning_by_idx={1: "先想想语气…"},
+        replyer_reasoning="回复器思考：要热情一点",
+    )
     m3.close()
     import json as _json
+
     with s3._session_factory() as sess:
         rec = sess.query(_R3).one()
         data = _json.loads(rec.payload_json)
     msgs = data["request"]["messages"]
-    check("推理过程: assistant 轮附 reasoning（仅监控副本）",
-          msgs[1].get("reasoning") == "先想想语气…" and "reasoning" not in msgs[0],
-          str(msgs[1])[:80])
-    check("推理过程: 回复器思考在 planner 块",
-          data["planner"].get("reasoning") == "回复器思考：要热情一点")
+    check(
+        "推理过程: assistant 轮附 reasoning（仅监控副本）",
+        msgs[1].get("reasoning") == "先想想语气…" and "reasoning" not in msgs[0],
+        str(msgs[1])[:80],
+    )
+    check(
+        "推理过程: 回复器思考在 planner 块",
+        data["planner"].get("reasoning") == "回复器思考：要热情一点",
+    )
 
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
     import asyncio as _aio2
     from astrbot_plugin_maisoul.core.monitor import (
-        MaisakaMonitorEventRecord as _Rec, Monitor as _M, MonitorStore as _MS,
+        MaisakaMonitorEventRecord as _Rec,
+        Monitor as _M,
+        MonitorStore as _MS,
     )
 
     async def _writer_scenario():
         s2 = _MS(pathlib.Path(tempfile.mkdtemp()) / "m10.db")
         m2 = _M(s2)
         m2.start_writer()
-        m2.emit_session_start("g1", "群 g1", is_group_chat=True,
-                              group_id="g1", user_id=None, platform="qq")
-        m2.emit_message_sent("g1", "麦麦", "hello", "", time.time(), "reply",
-                             platform="qq")
+        m2.emit_session_start(
+            "g1",
+            "群 g1",
+            is_group_chat=True,
+            group_id="g1",
+            user_id=None,
+            platform="qq",
+        )
+        m2.emit_message_sent(
+            "g1", "麦麦", "hello", "", time.time(), "reply", platform="qq"
+        )
         await _aio2.sleep(0.05)  # 给 writer 一拍
         await m2.stop_writer()
         return s2
@@ -1552,6 +2519,7 @@ def test_taskregistry():
 
     # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
     from astrbot_plugin_maisoul.core.states import StateManager as _SM
+
     sm = _SM()
     sm._MAX_SESSIONS = 8  # 测试压缩上限
     for i in range(20):
@@ -1560,7 +2528,8 @@ def test_taskregistry():
     check("M12 states: 最近访问者存活", "g19" in sm._groups)
     sm2 = _SM()
     sm2._MAX_SESSIONS = 2
-    a = sm2.get("a"); a.planner_state().agent_state = "running"
+    a = sm2.get("a")
+    a.planner_state().agent_state = "running"
     for i in range(6):
         sm2.get(f"x{i}")
     check("M12 states: 活跃会话不被淘汰", "a" in sm2._groups)
@@ -1587,17 +2556,22 @@ def test_emoji_pick():
     cands = P.parse_meme_candidates(raw)
     check("解析: 候选数", len(cands) == 3, str(cands))
     check("解析: 编号", [c["num"] for c in cands] == [1, 2, 3])
-    check("解析: 细节行并入所属候选",
-          "角色：猫猫" in cands[0]["text"] and "一只猫张大嘴笑" in cands[0]["text"]
-          and "翻白眼" in cands[1]["text"], str(cands[:1]))
+    check(
+        "解析: 细节行并入所属候选",
+        "角色：猫猫" in cands[0]["text"]
+        and "一只猫张大嘴笑" in cands[0]["text"]
+        and "翻白眼" in cands[1]["text"],
+        str(cands[:1]),
+    )
     check("解析: limit 截断", len(P.parse_meme_candidates(raw, limit=2)) == 2)
-    check("解析: 无候选返回空", P.parse_meme_candidates("未找到与'x'匹配的表情包。") == [])
+    check(
+        "解析: 无候选返回空", P.parse_meme_candidates("未找到与'x'匹配的表情包。") == []
+    )
 
     nums = [c["num"] for c in cands]
     check("挑号: 纯数字", P.pick_meme_index("3", nums) == 3)
     check("挑号: 带话述", P.pick_meme_index("我认为选 2 最贴切", nums) == 2)
-    check("挑号: 越界数字跳过取下一个合法值",
-          P.pick_meme_index("12 3", nums) == 3)
+    check("挑号: 越界数字跳过取下一个合法值", P.pick_meme_index("12 3", nums) == 3)
     check("挑号: 全部非法返回 None", P.pick_meme_index("不知道", nums) is None)
     check("挑号: 空回复 None", P.pick_meme_index("", nums) is None)
 
@@ -1614,9 +2588,9 @@ def test_planner():
     g1 = plg.begin_cycle()
     plg.set_idle_if_current(g1)
     check("M3 代际: 当前代退出置 idle", plg.agent_state == "idle")
-    g2 = plg.begin_cycle()          # 新循环开启（打断场景）
+    g2 = plg.begin_cycle()  # 新循环开启（打断场景）
     plg.agent_state = "running"
-    plg.set_idle_if_current(g1)     # 被取消的旧循环稍后醒来退出
+    plg.set_idle_if_current(g1)  # 被取消的旧循环稍后醒来退出
     check("M3 代际: 旧代退出不得清状态", plg.agent_state == "running")
     plg.set_idle_if_current(g2)
     check("M3 代际: 新代自身退出仍生效", plg.agent_state == "idle")
@@ -1625,91 +2599,154 @@ def test_planner():
     # focus_mode=false 不暴露——工具集与请求结构均不得出现
     st = GroupState()
     for i in range(6):
-        st.record_external({"name": f"u{i}", "sid": str(i), "msg_id": f"m{i}",
-                            "text": f"消息{i}", "at_bot": False, "reply_bot": False,
-                            "ts": 100.0 + i})
+        st.record_external(
+            {
+                "name": f"u{i}",
+                "sid": str(i),
+                "msg_id": f"m{i}",
+                "text": f"消息{i}",
+                "at_bot": False,
+                "reply_bot": False,
+                "ts": 100.0 + i,
+            }
+        )
+
     class _HostStub:
-        async def planner_execute_reply(self, deps, reason, args): return ""
-        def planner_schedule_wait_resume(self, st, cfg, gid, seconds): pass
-        async def planner_send_emoji(self, deps): return ""
+        async def planner_execute_reply(self, deps, reason, args):
+            return ""
+
+        def planner_schedule_wait_resume(self, st, cfg, gid, seconds):
+            pass
+
+        async def planner_send_emoji(self, deps):
+            return ""
+
     deps = P.PlannerDeps(_HostStub(), st, {}, None, "qq", "g1", True)
     pl = st.planner_state()
     if _HAS_REAL_ASTRBOT:  # ToolSet 构造依赖框架（CI 离线跳过）
         tool_names = sorted(t.name for t in P.build_planner_toolset(deps).tools)
-        check("工具集: fetch_history 不再暴露（focus 专属）",
-              "fetch_history" not in tool_names
-              and tool_names == ["reply", "send_emoji", "tool_search", "wait"],
-              str(tool_names))
-    check("PlannerState: context_msg_ids 已随 fetch 移除",
-          not hasattr(pl, "context_msg_ids"))
+        check(
+            "工具集: fetch_history 不再暴露（focus 专属）",
+            "fetch_history" not in tool_names
+            and tool_names == ["reply", "send_emoji", "tool_search", "wait"],
+            str(tool_names),
+        )
+    check(
+        "PlannerState: context_msg_ids 已随 fetch 移除",
+        not hasattr(pl, "context_msg_ids"),
+    )
 
     sysp = P.build_planner_system(
         {"bot_name": "麦麦", "behavior_style": "大二学生"},
-        "在该聊天中的注意事项：\n通用注意事项：\n群里要简短\n")
-    check("planner 系统提示词原文",
-          sysp.startswith("你的任务是分析聊天和聊天中的互动情况")
-          and "麦麦的行为风格：大二学生" in sysp
-          and "在该聊天中的注意事项" in sysp
-          and "注意，你无法不调用reply工具直接回复，必须通过reply工具来发送回复。" in sysp)
-    check("reply 工具枚举=MaiBot",
-          P.REPLY_TOOL_SPEC["properties"]["reply_style"]["enum"] == ["简短表达", "正常回复", "长回复"]
-          and P.REPLY_TOOL_SPEC["required"] == ["msg_id"])
+        "在该聊天中的注意事项：\n通用注意事项：\n群里要简短\n",
+    )
+    check(
+        "planner 系统提示词原文",
+        sysp.startswith("你的任务是分析聊天和聊天中的互动情况")
+        and "麦麦的行为风格：大二学生" in sysp
+        and "在该聊天中的注意事项" in sysp
+        and "注意，你无法不调用reply工具直接回复，必须通过reply工具来发送回复。"
+        in sysp,
+    )
+    check(
+        "reply 工具枚举=MaiBot",
+        P.REPLY_TOOL_SPEC["properties"]["reply_style"]["enum"]
+        == ["简短表达", "正常回复", "长回复"]
+        and P.REPLY_TOOL_SPEC["required"] == ["msg_id"],
+    )
     check("wait 工具声明=MaiBot", P.WAIT_TOOL_SPEC["required"] == ["seconds"])
     check("MAX_INTERNAL_ROUNDS=10", P.MAX_INTERNAL_ROUNDS == 10)
 
     # v6.9.7：tool_search + deferred 池（打分表/提醒模板/发现流）
     pool = [
-        {"name": "call_maid", "description": "让管家代理执行任务：查资料 搜索 计算", "tool": object()},
-        {"name": "search_meme", "description": "按当前语气搜索表情包", "tool": object()},
+        {
+            "name": "call_maid",
+            "description": "让管家代理执行任务：查资料 搜索 计算",
+            "tool": object(),
+        },
+        {
+            "name": "search_meme",
+            "description": "按当前语气搜索表情包",
+            "tool": object(),
+        },
         {"name": "send_meme", "description": "发送选中的表情包", "tool": object()},
     ]
     hits = P.search_deferred_tools(pool, "call_maid", 5)
     check("tool_search: 精确命中", [h["name"] for h in hits][:1] == ["call_maid"])
     hits = P.search_deferred_tools(pool, "meme", 5)
-    check("tool_search: 子串命中多工具且按名排序",
-          [h["name"] for h in hits] == ["search_meme", "send_meme"], str([h["name"] for h in hits]))
+    check(
+        "tool_search: 子串命中多工具且按名排序",
+        [h["name"] for h in hits] == ["search_meme", "send_meme"],
+        str([h["name"] for h in hits]),
+    )
     hits = P.search_deferred_tools(pool, "管家 查资料", 5)
     check("tool_search: 描述分词命中", [h["name"] for h in hits] == ["call_maid"])
-    check("tool_search: 无命中返回空", P.search_deferred_tools(pool, "不存在的东西", 5) == [])
+    check(
+        "tool_search: 无命中返回空",
+        P.search_deferred_tools(pool, "不存在的东西", 5) == [],
+    )
     hits = P.search_deferred_tools(pool, "m", 1)
     check("tool_search: limit 截断", len(hits) == 1)
 
     reminder = P.build_deferred_reminder(pool, set())
-    check("reminder: 模板原文与编号",
-          reminder.startswith("<system-reminder>")
-          and "以下工具当前未直接暴露给你" in reminder
-          and "1. call_maid: 让管家代理执行任务：查资料 搜索 计算" in reminder
-          and "tool_search 只负责发现工具，不直接执行。" in reminder
-          and reminder.endswith("</system-reminder>"), reminder[:120])
+    check(
+        "reminder: 模板原文与编号",
+        reminder.startswith("<system-reminder>")
+        and "以下工具当前未直接暴露给你" in reminder
+        and "1. call_maid: 让管家代理执行任务：查资料 搜索 计算" in reminder
+        and "tool_search 只负责发现工具，不直接执行。" in reminder
+        and reminder.endswith("</system-reminder>"),
+        reminder[:120],
+    )
     reminder2 = P.build_deferred_reminder(pool, {"call_maid"})
-    check("reminder: 已发现的不列出", "call_maid" not in reminder2
-          and "search_meme" in reminder2)
-    check("reminder: 全部发现后为空", P.build_deferred_reminder(
-        pool, {"call_maid", "search_meme", "send_meme"}) == "")
+    check(
+        "reminder: 已发现的不列出",
+        "call_maid" not in reminder2 and "search_meme" in reminder2,
+    )
+    check(
+        "reminder: 全部发现后为空",
+        P.build_deferred_reminder(pool, {"call_maid", "search_meme", "send_meme"})
+        == "",
+    )
 
     deps2 = P.PlannerDeps(_HostStub(), st, {}, None, "qq", "g1", True)
     deps2.deferred_pool = pool
     r = deps2.on_tool_search({"query": "meme", "limit": 5})
-    check("tool_search 流: 命中文本含新发现标记并记入状态",
-          "已找到 2 个 deferred tools" in r and "search_meme（本次新发现）" in r
-          and "send_meme（本次新发现）" in r
-          and st.planner_state().discovered_tools >= {"search_meme", "send_meme"}, r)
+    check(
+        "tool_search 流: 命中文本含新发现标记并记入状态",
+        "已找到 2 个 deferred tools" in r
+        and "search_meme（本次新发现）" in r
+        and "send_meme（本次新发现）" in r
+        and st.planner_state().discovered_tools >= {"search_meme", "send_meme"},
+        r,
+    )
     r2 = deps2.on_tool_search({"query": "meme", "limit": 5})
-    check("tool_search 流: 二次调用标此前已发现",
-          "search_meme（此前已发现）" in r2, r2)
+    check("tool_search 流: 二次调用标此前已发现", "search_meme（此前已发现）" in r2, r2)
     r3 = deps2.on_tool_search({"query": "zzz", "limit": 5})
-    check("tool_search 流: 无命中文案原文",
-          r3 == P.TOOL_SEARCH_NO_HIT and "未找到匹配的 deferred tools" in r3)
-    check("PlannerState: discovered_tools 字段存在",
-          hasattr(P.PlannerState(), "discovered_tools"))
+    check(
+        "tool_search 流: 无命中文案原文",
+        r3 == P.TOOL_SEARCH_NO_HIT and "未找到匹配的 deferred tools" in r3,
+    )
+    check(
+        "PlannerState: discovered_tools 字段存在",
+        hasattr(P.PlannerState(), "discovered_tools"),
+    )
 
     # v6.9.8：wait 完成回执两版原文
     r_new = P.build_wait_completed_message(10.0, 8.0, True)
-    check("wait回执: 有新消息版原文",
-          r_new == "等待已结束，实际等待 10.0 秒，原计划等待 8.0 秒，期间收到了新的用户输入。请结合这些新消息继续下一轮思考。", r_new)
+    check(
+        "wait回执: 有新消息版原文",
+        r_new
+        == "等待已结束，实际等待 10.0 秒，原计划等待 8.0 秒，期间收到了新的用户输入。请结合这些新消息继续下一轮思考。",
+        r_new,
+    )
     r_timeout = P.build_wait_completed_message(12.5, None, False)
-    check("wait回执: 超时版原文且省略原计划段",
-          r_timeout == "等待已超时，实际等待 12.5 秒，期间没有收到新的用户输入。请基于现有上下文继续下一轮思考。", r_timeout)
+    check(
+        "wait回执: 超时版原文且省略原计划段",
+        r_timeout
+        == "等待已超时，实际等待 12.5 秒，期间没有收到新的用户输入。请基于现有上下文继续下一轮思考。",
+        r_timeout,
+    )
 
     # v6.9.8：本轮上下文折叠
     ctx = [{"role": "user", "content": f"历史{i}"} for i in range(3)]
@@ -1720,9 +2757,12 @@ def test_planner():
     P.fold_old_turns(ctx, start)
     turn_part = ctx[start:]
     check("折叠: 超过 3 组触发折叠", len(turn_part) <= 7, str(len(turn_part)))
-    check("折叠: 前缀原文与摘要行",
-          turn_part[0]["content"].startswith("[已折叠的历史工具调用]\n- user: ")
-          and "- assistant: 第0轮分析" in turn_part[0]["content"], turn_part[0]["content"][:100])
+    check(
+        "折叠: 前缀原文与摘要行",
+        turn_part[0]["content"].startswith("[已折叠的历史工具调用]\n- user: ")
+        and "- assistant: 第0轮分析" in turn_part[0]["content"],
+        turn_part[0]["content"][:100],
+    )
     check("折叠: 最近 3 组完整保留", turn_part[-1]["content"] == "第5轮分析")
     ctx2 = [{"role": "user", "content": "只有一组"}]
     P.fold_old_turns(ctx2, 0)
@@ -1733,89 +2773,159 @@ def test_planner():
     # 消息全部进 user 轮 <message> 前缀，planner_messages.build_planner_prefix 原文）
     _day1 = 1788000000.0  # 固定基准时间戳（同一天内）
     import datetime as _dtm
+
     _t1 = _dtm.datetime.fromtimestamp(_day1).strftime("%H:%M:%S")
     _t2 = _dtm.datetime.fromtimestamp(_day1 + 10).strftime("%H:%M:%S")
     chat_hist = [
         {"name": "张三", "sid": "u1", "msg_id": "m1", "text": "早", "ts": _day1},
         {"name": "麦麦", "sid": "self", "msg_id": "", "text": "早啊", "ts": _day1 + 10},
     ]
-    ana_log = [{"ts": _day1 + 20,
-                "text": "当前状态：对方刚打招呼。\n分析：友好回应即可。"}]
-    chat_new = [{"name": "张三", "sid": "u1", "msg_id": "m2", "text": "在吗", "ts": _day1 + 30}]
+    ana_log = [
+        {"ts": _day1 + 20, "text": "当前状态：对方刚打招呼。\n分析：友好回应即可。"}
+    ]
+    chat_new = [
+        {"name": "张三", "sid": "u1", "msg_id": "m2", "text": "在吗", "ts": _day1 + 30}
+    ]
     ctxs, inc = P.build_history_contexts(chat_hist + chat_new, ana_log, 10)
-    check("回灌: 交错顺序 user(消息)→user(自发)→assistant(分析)→user",
-          [c["role"] for c in ctxs] == ["user", "user", "assistant", "user"],
-          str([c["role"] for c in ctxs]))
-    check("回灌: 消息前缀 = build_planner_prefix 原文格式",
-          ctxs[0]["content"] == f'<message msg_id="m1" time="{_t1}" user="张三" group_card="张三">\n早',
-          ctxs[0]["content"])
-    check("回灌: 自发消息 user 轮 + is_self_message、无 group_card",
-          ctxs[1]["content"] == f'<message msg_id="" time="{_t2}" user="麦麦" is_self_message="true">\n早啊',
-          ctxs[1]["content"])
-    check("回灌: 分析文本原样进 assistant 轮",
-          ctxs[2]["content"] == "当前状态：对方刚打招呼。\n分析：友好回应即可。")
-    check("回灌: included_chat 为进入窗口的聊天消息",
-          [m.get("msg_id") for m in inc] == ["m1", "", "m2"])
+    check(
+        "回灌: 交错顺序 user(消息)→user(自发)→assistant(分析)→user",
+        [c["role"] for c in ctxs] == ["user", "user", "assistant", "user"],
+        str([c["role"] for c in ctxs]),
+    )
+    check(
+        "回灌: 消息前缀 = build_planner_prefix 原文格式",
+        ctxs[0]["content"]
+        == f'<message msg_id="m1" time="{_t1}" user="张三" group_card="张三">\n早',
+        ctxs[0]["content"],
+    )
+    check(
+        "回灌: 自发消息 user 轮 + is_self_message、无 group_card",
+        ctxs[1]["content"]
+        == f'<message msg_id="" time="{_t2}" user="麦麦" is_self_message="true">\n早啊',
+        ctxs[1]["content"],
+    )
+    check(
+        "回灌: 分析文本原样进 assistant 轮",
+        ctxs[2]["content"] == "当前状态：对方刚打招呼。\n分析：友好回应即可。",
+    )
+    check(
+        "回灌: included_chat 为进入窗口的聊天消息",
+        [m.get("msg_id") for m in inc] == ["m1", "", "m2"],
+    )
     ctxs_w, inc_w = P.build_history_contexts(chat_hist + chat_new, ana_log, 2)
-    check("回灌: 窗口在合并流上截取（聊天+分析一起数）",
-          [c["role"] for c in ctxs_w] == ["assistant", "user"]
-          and ctxs_w[0]["content"].startswith("当前状态")
-          and [m.get("msg_id") for m in inc_w] == ["m2"],
-          str([c["role"] for c in ctxs_w]))
+    check(
+        "回灌: 窗口在合并流上截取（聊天+分析一起数）",
+        [c["role"] for c in ctxs_w] == ["assistant", "user"]
+        and ctxs_w[0]["content"].startswith("当前状态")
+        and [m.get("msg_id") for m in inc_w] == ["m2"],
+        str([c["role"] for c in ctxs_w]),
+    )
     _day2 = _day1 + 86400  # 次日
     ctxs_d, _ = P.build_history_contexts(
-        chat_hist, [{"ts": _day2, "text": "新一天的分析"}], 10)
-    check("回灌: 跨日插时间行（分析跨日同样触发）",
-          any(c["role"] == "user" and c["content"].startswith("时间：")
-              for c in ctxs_d) and ctxs_d[-1]["content"] == "新一天的分析",
-          str(ctxs_d))
+        chat_hist, [{"ts": _day2, "text": "新一天的分析"}], 10
+    )
+    check(
+        "回灌: 跨日插时间行（分析跨日同样触发）",
+        any(c["role"] == "user" and c["content"].startswith("时间：") for c in ctxs_d)
+        and ctxs_d[-1]["content"] == "新一天的分析",
+        str(ctxs_d),
+    )
     ctxs_e, inc_e = P.build_history_contexts(
-        chat_hist, [{"ts": _day1, "text": ""}, {"ts": _day1, "text": "  "}], 10)
-    check("回灌: 空文本分析过滤、同 ts 聊天在前",
-          [c["role"] for c in ctxs_e] == ["user", "user"]
-          and [m.get("msg_id") for m in inc_e] == ["m1", ""])
+        chat_hist, [{"ts": _day1, "text": ""}, {"ts": _day1, "text": "  "}], 10
+    )
+    check(
+        "回灌: 空文本分析过滤、同 ts 聊天在前",
+        [c["role"] for c in ctxs_e] == ["user", "user"]
+        and [m.get("msg_id") for m in inc_e] == ["m1", ""],
+    )
     ctxs_none, inc_none = P.build_history_contexts(chat_hist, [], 10)
-    check("回灌: 无分析时退化为纯聊天历史",
-          [c["role"] for c in ctxs_none] == ["user", "user"]
-          and [m.get("msg_id") for m in inc_none] == ["m1", ""])
+    check(
+        "回灌: 无分析时退化为纯聊天历史",
+        [c["role"] for c in ctxs_none] == ["user", "user"]
+        and [m.get("msg_id") for m in inc_none] == ["m1", ""],
+    )
     # 私聊无 group_card；quote 属性与转义（对齐 build_planner_prefix）
     ctxs_p, _ = P.build_history_contexts(
-        [{"name": "张三", "sid": "u1", "msg_id": "m9", "text": "hi",
-          "ts": _day1, "quote": "m8"}], [], 10, is_group=False)
-    check("回灌: 私聊无 group_card、quote 属性渲染",
-          ctxs_p[0]["content"] == f'<message msg_id="m9" quote="m8" time="{_t1}" user="张三">\nhi',
-          ctxs_p[0]["content"])
+        [
+            {
+                "name": "张三",
+                "sid": "u1",
+                "msg_id": "m9",
+                "text": "hi",
+                "ts": _day1,
+                "quote": "m8",
+            }
+        ],
+        [],
+        10,
+        is_group=False,
+    )
+    check(
+        "回灌: 私聊无 group_card、quote 属性渲染",
+        ctxs_p[0]["content"]
+        == f'<message msg_id="m9" quote="m8" time="{_t1}" user="张三">\nhi',
+        ctxs_p[0]["content"],
+    )
     esc = P.render_planner_message(
-        {"name": '张"三&', "sid": "u1", "msg_id": "<m>", "text": "内容",
-         "ts": _day1, "quote": "a,b"}, True)
-    check("回灌: 属性值 XML 转义与 quote 去重拼接",
-          esc.startswith('<message msg_id="&lt;m&gt;" quote="a,b" time="')
-          and 'user="张&quot;三&amp;"' in esc and 'group_card="张&quot;三&amp;"' in esc, esc)
+        {
+            "name": '张"三&',
+            "sid": "u1",
+            "msg_id": "<m>",
+            "text": "内容",
+            "ts": _day1,
+            "quote": "a,b",
+        },
+        True,
+    )
+    check(
+        "回灌: 属性值 XML 转义与 quote 去重拼接",
+        esc.startswith('<message msg_id="&lt;m&gt;" quote="a,b" time="')
+        and 'user="张&quot;三&amp;"' in esc
+        and 'group_card="张&quot;三&amp;"' in esc,
+        esc,
+    )
     ps_log = P.PlannerState()
-    check("PlannerState: analysis_log 默认有界",
-          hasattr(ps_log, "analysis_log") and ps_log.analysis_log.maxlen == 200)
+    check(
+        "PlannerState: analysis_log 默认有界",
+        hasattr(ps_log, "analysis_log") and ps_log.analysis_log.maxlen == 200,
+    )
 
     # v6.9.8：过滤词（对齐 check_ban_words/check_ban_regex）
     check("过滤: 子串命中", trigger.hit_ban_filter("这个广告真烦", ["广告"], []))
     check("过滤: 正则命中", trigger.hit_ban_filter("领红包加微信123", [], [r"微信\d+"]))
     check("过滤: 无效正则跳过不炸", not trigger.hit_ban_filter("正常消息", [], ["("]))
-    check("过滤: 未命中放行", not trigger.hit_ban_filter("正常消息", ["广告"], [r"微信\d+"]))
+    check(
+        "过滤: 未命中放行",
+        not trigger.hit_ban_filter("正常消息", ["广告"], [r"微信\d+"]),
+    )
 
     cfg = {"max_consecutive_wait_count": 3}
     ps = P.PlannerState()
     ok, current, maximum = ps.try_enter_wait(cfg, 30)
-    check("wait: 进入等待", ok and current == 1 and ps.agent_state == "wait" and ps.in_wait())
+    check(
+        "wait: 进入等待",
+        ok and current == 1 and ps.agent_state == "wait" and ps.in_wait(),
+    )
     ps.try_enter_wait(cfg, 30)
     ps.try_enter_wait(cfg, 30)
     ok, current, maximum = ps.try_enter_wait(cfg, 30)
-    check("wait: 连续上限拒绝", not ok and current == 3 and maximum == 3
-          and "休息" in P.WAIT_LIMIT_RESULT.format(maximum=maximum))
+    check(
+        "wait: 连续上限拒绝",
+        not ok
+        and current == 3
+        and maximum == 3
+        and "休息" in P.WAIT_LIMIT_RESULT.format(maximum=maximum),
+    )
     check("wait: 主动触发恢复", ps.resume_from_wait() and ps.agent_state == "idle")
     ps2 = P.PlannerState()
     check("wait: 非等待状态恢复无效", ps2.resume_from_wait() is False)
 
-    bcfg = {"no_action_backoff_base_seconds": 15, "no_action_backoff_cap_seconds": 300,
-            "no_action_backoff_start_count": 2, "no_action_backoff_bypass_pending_count": 6}
+    bcfg = {
+        "no_action_backoff_base_seconds": 15,
+        "no_action_backoff_cap_seconds": 300,
+        "no_action_backoff_start_count": 2,
+        "no_action_backoff_bypass_pending_count": 6,
+    }
     ps3 = P.PlannerState()
     ps3.record_idle_cycle(bcfg)
     check("退避: 起点前不延迟", not ps3.should_delay(bcfg, 1))
@@ -1825,26 +2935,50 @@ def test_planner():
     ps3.reset_backoff()
     check("退避: 非空闲重置", not ps3.should_delay(bcfg, 1))
 
-    check("末尾提醒原文", P.PLANNER_FINAL_USER_REMINDER.format(bot_name="麦麦")
-          == "你需要输出对麦麦发言的分析，视情况输出文本内容的分析，思考是否进行工具调用")
+    check(
+        "末尾提醒原文",
+        P.PLANNER_FINAL_USER_REMINDER.format(bot_name="麦麦")
+        == "你需要输出对麦麦发言的分析，视情况输出文本内容的分析，思考是否进行工具调用",
+    )
 
     # v6.13.5：注意事项拆分（通用进系统提示词，chat_prompts 命中进尾部消息）
     from astrbot_plugin_maisoul.core import prompt as _pp
-    acfg = {"group_chat_prompt": "群里要简短",
-            "chat_prompts": [{"platform": "qq", "item_id": "g1",
-                              "rule_type": "group", "prompt": "这个群爱聊游戏"}]}
-    sys_blk = _pp.build_attention_block(acfg, "g1", "qq", True, include_chat_prompt=False)
-    check("注意事项: planner 系统提示词只含通用项",
-          sys_blk == "在该聊天中的注意事项：\n通用注意事项：\n群里要简短\n", sys_blk)
+
+    acfg = {
+        "group_chat_prompt": "群里要简短",
+        "chat_prompts": [
+            {
+                "platform": "qq",
+                "item_id": "g1",
+                "rule_type": "group",
+                "prompt": "这个群爱聊游戏",
+            }
+        ],
+    }
+    sys_blk = _pp.build_attention_block(
+        acfg, "g1", "qq", True, include_chat_prompt=False
+    )
+    check(
+        "注意事项: planner 系统提示词只含通用项",
+        sys_blk == "在该聊天中的注意事项：\n通用注意事项：\n群里要简短\n",
+        sys_blk,
+    )
     tail = _pp.chat_attention_tail(acfg, "g1", "qq", True)
-    check("注意事项: chat_prompts 命中 → 尾部消息原文格式",
-          tail == "当前聊天额外注意事项：\n这个群爱聊游戏", tail)
-    check("注意事项: 未命中尾部为空",
-          _pp.chat_attention_tail(acfg, "gX", "qq", True) == "")
+    check(
+        "注意事项: chat_prompts 命中 → 尾部消息原文格式",
+        tail == "当前聊天额外注意事项：\n这个群爱聊游戏",
+        tail,
+    )
+    check(
+        "注意事项: 未命中尾部为空",
+        _pp.chat_attention_tail(acfg, "gX", "qq", True) == "",
+    )
     merged_blk = _pp.build_attention_block(acfg, "g1", "qq", True)
-    check("注意事项: replyer 默认合并形态不变",
-          "通用注意事项：\n群里要简短" in merged_blk
-          and "当前聊天额外注意事项：\n这个群爱聊游戏" in merged_blk)
+    check(
+        "注意事项: replyer 默认合并形态不变",
+        "通用注意事项：\n群里要简短" in merged_blk
+        and "当前聊天额外注意事项：\n这个群爱聊游戏" in merged_blk,
+    )
 
     # 表达 LLM 选择（expression_select 路径）
     import pathlib
@@ -1855,43 +2989,66 @@ def test_planner():
         async def text_chat(self, prompt, session_id=None, **kw):
             class R:
                 completion_text = '{"selected_situations": [1]}'
+
             return R()
 
     store = learning.LearningStore(path=pathlib.Path(tempfile.mkdtemp()) / "p.json")
     for i in range(12):
         store.add_expression("global", f"情境{i}", f"风格{i}", True)
-    blk = asyncio.run(learning.select_expression_habits_block(
-        _Prov(), store, "global", False, "- 12:00:00 u: hi", "麦麦"))
-    check("表达 LLM 选择: 选中注入", blk.startswith("【表达习惯参考") and blk.count("\n") == 1, blk)
+    blk = asyncio.run(
+        learning.select_expression_habits_block(
+            _Prov(), store, "global", False, "- 12:00:00 u: hi", "麦麦"
+        )
+    )
+    check(
+        "表达 LLM 选择: 选中注入",
+        blk.startswith("【表达习惯参考") and blk.count("\n") == 1,
+        blk,
+    )
 
     class _BadProv:
         async def text_chat(self, prompt, session_id=None, **kw):
             raise RuntimeError("boom")
 
-    blk2 = asyncio.run(learning.select_expression_habits_block(
-        _BadProv(), store, "global", False, "- 12:00:00 u: hi", "麦麦"))
-    check("表达选择失败回落直注入", blk2.startswith("【表达习惯参考") and blk2.count("\n") >= 1)
+    blk2 = asyncio.run(
+        learning.select_expression_habits_block(
+            _BadProv(), store, "global", False, "- 12:00:00 u: hi", "麦麦"
+        )
+    )
+    check(
+        "表达选择失败回落直注入",
+        blk2.startswith("【表达习惯参考") and blk2.count("\n") >= 1,
+    )
 
-    check("chat_info 行格式", "- " in learning.build_chat_info(
-        [{"name": "u", "text": "hi", "ts": time.time()}]))
+    check(
+        "chat_info 行格式",
+        "- "
+        in learning.build_chat_info([{"name": "u", "text": "hi", "ts": time.time()}]),
+    )
 
     # v6.14.0：vector_intent 表达召回（对齐 _build_expression_candidate_pool 契约）
-    check("query 文本: reply_reference 优先（原文格式）",
-          learning.build_expression_query_text("推理A", "参考B")
-          == "回复信息参考：\n参考B"
-          and learning.build_expression_query_text("推理A")
-          == "Planner 推理：\n推理A"
-          and learning.build_expression_query_text() == "")
-    check("embedding 文本: 情景/风格两行原文",
-          learning.expression_embedding_text(" 安慰人 ", " 温柔拍拍 ")
-          == "情景：安慰人\n风格：温柔拍拍")
-    check("余弦: 同向=1 正交=0 维度不符=-1",
-          abs(learning._cosine([1, 0], [2, 0]) - 1.0) < 1e-9
-          and abs(learning._cosine([1, 0], [0, 1])) < 1e-9
-          and learning._cosine([1, 0], [1]) == -1.0)
+    check(
+        "query 文本: reply_reference 优先（原文格式）",
+        learning.build_expression_query_text("推理A", "参考B")
+        == "回复信息参考：\n参考B"
+        and learning.build_expression_query_text("推理A") == "Planner 推理：\n推理A"
+        and learning.build_expression_query_text() == "",
+    )
+    check(
+        "embedding 文本: 情景/风格两行原文",
+        learning.expression_embedding_text(" 安慰人 ", " 温柔拍拍 ")
+        == "情景：安慰人\n风格：温柔拍拍",
+    )
+    check(
+        "余弦: 同向=1 正交=0 维度不符=-1",
+        abs(learning._cosine([1, 0], [2, 0]) - 1.0) < 1e-9
+        and abs(learning._cosine([1, 0], [0, 1])) < 1e-9
+        and learning._cosine([1, 0], [1]) == -1.0,
+    )
 
     class _Emb:
         """假嵌入：'安慰' 类文本 → [1,0]，'编程' 类 → [0,1]，其余 → [1,1]。"""
+
         def __init__(self):
             self.calls = []
             self.provider_config = {"id": "fake-emb"}
@@ -1915,33 +3072,84 @@ def test_planner():
         vstore.add_expression("global", f"日常闲聊{i}", f"日常风格{i}", True)
     emb = _Emb()
     # query 与"安慰"同向 → 召回池应以安慰条目打头；LLM 选择选中第 1 条
-    blk3 = asyncio.run(learning.select_expression_habits_block(
-        _Prov(), vstore, "global", False, "- 12:00 u: 心情好差", "麦麦",
-        mode="vector_intent", embedding=emb, embedding_model="fake-emb",
-        query_text="回复信息参考：\n安慰一下对方",
-        pool_size=5))
-    check("vector 召回: 相似条目进精选并注入",
-          blk3.startswith("【表达习惯参考") and "安慰情绪低落的人" in blk3, blk3)
-    check("vector 召回: 候选向量缓存在学习库（二次调用不重嵌）",
-          isinstance(vstore.data["global"]["expressions"][0].get("emb"), list)
-          and vstore.data["global"]["expressions"][0].get("emb_model") == "fake-emb")
+    blk3 = asyncio.run(
+        learning.select_expression_habits_block(
+            _Prov(),
+            vstore,
+            "global",
+            False,
+            "- 12:00 u: 心情好差",
+            "麦麦",
+            mode="vector_intent",
+            embedding=emb,
+            embedding_model="fake-emb",
+            query_text="回复信息参考：\n安慰一下对方",
+            pool_size=5,
+        )
+    )
+    check(
+        "vector 召回: 相似条目进精选并注入",
+        blk3.startswith("【表达习惯参考") and "安慰情绪低落的人" in blk3,
+        blk3,
+    )
+    check(
+        "vector 召回: 候选向量缓存在学习库（二次调用不重嵌）",
+        isinstance(vstore.data["global"]["expressions"][0].get("emb"), list)
+        and vstore.data["global"]["expressions"][0].get("emb_model") == "fake-emb",
+    )
     calls_before = len(emb.calls)
-    asyncio.run(learning.select_expression_habits_block(
-        _Prov(), vstore, "global", False, "- 12:00 u: hi", "麦麦",
-        mode="vector_intent", embedding=emb, embedding_model="fake-emb",
-        query_text="回复信息参考：\n安慰", pool_size=5))
-    check("vector 召回: 缓存命中（仅重嵌 query）",
-          len(emb.calls) == calls_before + 1, f"{calls_before} -> {len(emb.calls)}")
+    asyncio.run(
+        learning.select_expression_habits_block(
+            _Prov(),
+            vstore,
+            "global",
+            False,
+            "- 12:00 u: hi",
+            "麦麦",
+            mode="vector_intent",
+            embedding=emb,
+            embedding_model="fake-emb",
+            query_text="回复信息参考：\n安慰",
+            pool_size=5,
+        )
+    )
+    check(
+        "vector 召回: 缓存命中（仅重嵌 query）",
+        len(emb.calls) == calls_before + 1,
+        f"{calls_before} -> {len(emb.calls)}",
+    )
 
     # 回落三态：未配嵌入 / query 空 / 召回异常（维度不一致上抛后吞掉）
-    blk4 = asyncio.run(learning.select_expression_habits_block(
-        _Prov(), vstore, "global", False, "- 12:00 u: hi", "麦麦",
-        mode="vector_intent", embedding=None, query_text="x", pool_size=5))
+    blk4 = asyncio.run(
+        learning.select_expression_habits_block(
+            _Prov(),
+            vstore,
+            "global",
+            False,
+            "- 12:00 u: hi",
+            "麦麦",
+            mode="vector_intent",
+            embedding=None,
+            query_text="x",
+            pool_size=5,
+        )
+    )
     check("vector 回落: 未配嵌入模型走随手抽样", blk4.startswith("【表达习惯参考"))
-    blk5 = asyncio.run(learning.select_expression_habits_block(
-        _Prov(), vstore, "global", False, "- 12:00 u: hi", "麦麦",
-        mode="vector_intent", embedding=emb, embedding_model="fake-emb",
-        query_text="", pool_size=5))
+    blk5 = asyncio.run(
+        learning.select_expression_habits_block(
+            _Prov(),
+            vstore,
+            "global",
+            False,
+            "- 12:00 u: hi",
+            "麦麦",
+            mode="vector_intent",
+            embedding=emb,
+            embedding_model="fake-emb",
+            query_text="",
+            pool_size=5,
+        )
+    )
     check("vector 回落: query 为空走随手抽样", blk5.startswith("【表达习惯参考"))
 
     class _DimEmb:
@@ -1949,37 +3157,74 @@ def test_planner():
             return [[0.5, 0.5, 0.5] for _ in texts]  # 与缓存候选维度不符
 
     vstore.data["global"]["expressions"][0]["emb"] = [1.0, 0.0]
-    blk6 = asyncio.run(learning.select_expression_habits_block(
-        _Prov(), vstore, "global", False, "- 12:00 u: hi", "麦麦",
-        mode="vector_intent", embedding=_DimEmb(), embedding_model="fake-emb",
-        query_text="回复信息参考：\n测试", pool_size=5))
-    check("vector 回落: 维度异常吞掉后走随手抽样",
-          blk6.startswith("【表达习惯参考"))
+    blk6 = asyncio.run(
+        learning.select_expression_habits_block(
+            _Prov(),
+            vstore,
+            "global",
+            False,
+            "- 12:00 u: hi",
+            "麦麦",
+            mode="vector_intent",
+            embedding=_DimEmb(),
+            embedding_model="fake-emb",
+            query_text="回复信息参考：\n测试",
+            pool_size=5,
+        )
+    )
+    check("vector 回落: 维度异常吞掉后走随手抽样", blk6.startswith("【表达习惯参考"))
 
 
 def test_personas():
     print("[多人格]")
     from astrbot_plugin_maisoul.core import personas
 
-    cfg = {"personas": [
-        {"name": "傲娇", "bot_name": "小麦黑", "personality": "傲娇人格", "reply_style": "语气冲"},
-        {"name": "温柔", "personality": "温柔人格"},
-    ], "default_persona": "温柔", "group_persona": [{"chat": "12345", "name": "傲娇"}],
-       "follow_persona_switch": True, "bot_name": "麦麦", "personality": "主人格"}
+    cfg = {
+        "personas": [
+            {
+                "name": "傲娇",
+                "bot_name": "小麦黑",
+                "personality": "傲娇人格",
+                "reply_style": "语气冲",
+            },
+            {"name": "温柔", "personality": "温柔人格"},
+        ],
+        "default_persona": "温柔",
+        "group_persona": [{"chat": "12345", "name": "傲娇"}],
+        "follow_persona_switch": True,
+        "bot_name": "麦麦",
+        "personality": "主人格",
+    }
 
-    check("查找命中", (personas.find_persona(cfg, "傲娇") or {}).get("bot_name") == "小麦黑")
+    check(
+        "查找命中",
+        (personas.find_persona(cfg, "傲娇") or {}).get("bot_name") == "小麦黑",
+    )
     check("查找未命中", personas.find_persona(cfg, "不存在") is None)
     check("名单列举", personas.list_persona_names(cfg) == ["傲娇", "温柔"])
     ov = personas.overlay(cfg, personas.find_persona(cfg, "傲娇"))
-    check("覆盖: 人格字段生效", ov["personality"] == "傲娇人格" and ov["bot_name"] == "小麦黑")
-    check("覆盖: 未设字段保留主配置", ov.get("behavior_style") is None and ov.get("group_chat_prompt") is None)
-    check("群号匹配: 后缀", personas.chat_id_match("98712345", "12345") and personas.chat_id_match("x", "*"))
+    check(
+        "覆盖: 人格字段生效",
+        ov["personality"] == "傲娇人格" and ov["bot_name"] == "小麦黑",
+    )
+    check(
+        "覆盖: 未设字段保留主配置",
+        ov.get("behavior_style") is None and ov.get("group_chat_prompt") is None,
+    )
+    check(
+        "群号匹配: 后缀",
+        personas.chat_id_match("98712345", "12345")
+        and personas.chat_id_match("x", "*"),
+    )
     check("群号匹配: 不匹配", not personas.chat_id_match("999", "123"))
 
     class _NoConv:
-        async def get_curr_conversation_id(self, umo): return None
+        async def get_curr_conversation_id(self, umo):
+            return None
+
     class _Ctx:
         conversation_manager = _NoConv()
+
     _, name = asyncio.run(personas.resolve_active(_Ctx(), cfg, "98712345", "u"))
     check("解析: 群绑定优先于默认", name == "傲娇")
     _, name = asyncio.run(personas.resolve_active(_Ctx(), cfg, "999", "u"))
@@ -1987,11 +3232,17 @@ def test_personas():
 
     class _Conv:
         persona_id = "傲娇"
+
     class _ConvMgr:
-        async def get_curr_conversation_id(self, umo): return "c1"
-        async def get_conversation(self, umo, cid): return _Conv()
+        async def get_curr_conversation_id(self, umo):
+            return "c1"
+
+        async def get_conversation(self, umo, cid):
+            return _Conv()
+
     class _CtxLive:
         conversation_manager = _ConvMgr()
+
     _, name = asyncio.run(personas.resolve_active(_CtxLive(), cfg, "999", "u"))
     check("解析: persona_switch 会话人格最高优先", name == "傲娇")
     cfg_off = dict(cfg, follow_persona_switch=False)
@@ -2003,12 +3254,24 @@ def test_personas():
 
     # 主配置人格：人格名即机器人昵称（如"麦麦"），/persona 麦麦 可切换
     mp = personas.find_persona(cfg, "麦麦")
-    check("主配置人格: 名字即机器人昵称", (mp or {}).get("name") == "麦麦" and mp.get("personality") == "主人格")
-    check("主配置人格: '主配置' 关键字也命中", (personas.find_persona(cfg, "主配置") or {}).get("name") == "麦麦")
+    check(
+        "主配置人格: 名字即机器人昵称",
+        (mp or {}).get("name") == "麦麦" and mp.get("personality") == "主人格",
+    )
+    check(
+        "主配置人格: '主配置' 关键字也命中",
+        (personas.find_persona(cfg, "主配置") or {}).get("name") == "麦麦",
+    )
     cfg_dup = dict(cfg, personas=[{"name": "麦麦", "personality": "库内麦麦"}])
-    check("库内同名人格优先于主配置", (personas.find_persona(cfg_dup, "麦麦") or {}).get("personality") == "库内麦麦")
+    check(
+        "库内同名人格优先于主配置",
+        (personas.find_persona(cfg_dup, "麦麦") or {}).get("personality") == "库内麦麦",
+    )
     ov_main = personas.overlay(cfg, mp)
-    check("主配置人格 overlay = 主配置本值", ov_main["personality"] == "主人格" and ov_main.get("active_persona") == "麦麦")
+    check(
+        "主配置人格 overlay = 主配置本值",
+        ov_main["personality"] == "主人格" and ov_main.get("active_persona") == "麦麦",
+    )
 
     # 别名单一列表（对应 MaiBot alias_names）：人格 aliases 覆盖主配置
     cfg_alias = dict(cfg, aliases=["小麦"], default_persona="", group_persona=[])

@@ -40,11 +40,13 @@ from . import apivalid
 _DATA_FILE = Path(__file__).resolve().parent.parent / "data_learning.json"
 
 MAX_JARGON_REFERENCE_MATCHES = 10  # MAX_JARGON_REFERENCE_MATCHES 原值
-MAX_SELECTED_EXPRESSIONS = 5       # 表达直注入条数上限（抽样池同 MaiBot 5+5）
-EXPRESSION_MIN_POOL = 10           # legacy：库不足 10 条不启用
+MAX_SELECTED_EXPRESSIONS = 5  # 表达直注入条数上限（抽样池同 MaiBot 5+5）
+EXPRESSION_MIN_POOL = 10  # legacy：库不足 10 条不启用
 ASSISTANT_OPTIMIZATION_KEEP_COUNT = 3  # 优化上下文：自己发言保留条数
 
-_JARGON_HEADER = "以下黑话来自当前上下文中其他用户消息的机械匹配，仅作理解聊天语境的参考："
+_JARGON_HEADER = (
+    "以下黑话来自当前上下文中其他用户消息的机械匹配，仅作理解聊天语境的参考："
+)
 
 # ---------------- MaiBot prompts/zh-CN 原文 ---------------- #
 LEARN_STYLE_PROMPT = """{chat_str}
@@ -157,6 +159,7 @@ def _suitable_from_review(review_raw: str) -> bool:
     m = _SUITABLE_RE.search(review_raw or "")
     return bool(m) and m.group(1).lower() == "true"
 
+
 # ---------------- expression_select.prompt 原文 ----------------
 EXPRESSION_SELECT_PROMPT = """{chat_observe_info}
 
@@ -188,6 +191,7 @@ _EXPRESSION_SELECTION_SEMAPHORE = {"max_count": 0, "semaphore": None}
 def get_selection_semaphore(cfg):
     """表达学习最大并发（max_expression_learner）信号量。"""
     import asyncio
+
     max_count = max(1, int(cfg.get("max_expression_learner", 3)))
     cached = _EXPRESSION_SELECTION_SEMAPHORE
     if cached["semaphore"] is None or cached["max_count"] != max_count:
@@ -215,7 +219,9 @@ def expression_embedding_text(situation: str, style: str) -> str:
     return f"情景：{str(situation).strip()}\n风格：{str(style).strip()}"
 
 
-def build_expression_query_text(reply_reason: str = "", reply_reference: str = "") -> str:
+def build_expression_query_text(
+    reply_reason: str = "", reply_reference: str = ""
+) -> str:
     """表达检索的匹配依据文本（对齐 maisaka_expression_selector._build_
     expression_query_text：优先「回复信息参考」（reply 工具参数），否则
     「Planner 推理」；意图块来自 reply 工具的 intent 参数，maisoul 的
@@ -242,12 +248,18 @@ def _cosine(a: list[float], b: list[float]) -> float:
         nb += y * y
     if na <= 0 or nb <= 0:
         return -1.0
-    return dot / (na ** 0.5 * nb ** 0.5)
+    return dot / (na**0.5 * nb**0.5)
 
 
-async def _vector_recall_pool(store: "LearningStore", key: str, pool: list[dict],
-                              embedding, embedding_model: str, query_text: str,
-                              pool_size: int) -> list[dict]:
+async def _vector_recall_pool(
+    store: "LearningStore",
+    key: str,
+    pool: list[dict],
+    embedding,
+    embedding_model: str,
+    query_text: str,
+    pool_size: int,
+) -> list[dict]:
     """vector_intent 候选池：候选/查询嵌入 → 余弦排序取前 pool_size。
 
     候选向量缓存在学习库条目上（emb/emb_model/emb_fp），指纹（情景+风格）
@@ -257,10 +269,16 @@ async def _vector_recall_pool(store: "LearningStore", key: str, pool: list[dict]
     texts, targets = [], []
     for e in pool:
         fp = f"{str(e.get('situation')).strip()}\n{str(e.get('style')).strip()}"
-        if (isinstance(e.get("emb"), list) and e.get("emb")
-                and e.get("emb_model") == embedding_model and e.get("emb_fp") == fp):
+        if (
+            isinstance(e.get("emb"), list)
+            and e.get("emb")
+            and e.get("emb_model") == embedding_model
+            and e.get("emb_fp") == fp
+        ):
             continue
-        texts.append(expression_embedding_text(e.get("situation", ""), e.get("style", "")))
+        texts.append(
+            expression_embedding_text(e.get("situation", ""), e.get("style", ""))
+        )
         targets.append((e, fp))
     if texts:
         vectors = await embedding.get_embeddings(texts)
@@ -280,22 +298,33 @@ async def _vector_recall_pool(store: "LearningStore", key: str, pool: list[dict]
     for e in pool:
         vec = e.get("emb") or []
         if len(vec) != dim:
-            raise ValueError(f"表达向量维度不一致: 候选 {len(vec)} / query {dim}"
-                             "（嵌入模型变更后索引未重建）")
-        scored.append((_cosine([float(x) for x in vec], [float(x) for x in query_vec]), e))
+            raise ValueError(
+                f"表达向量维度不一致: 候选 {len(vec)} / query {dim}"
+                "（嵌入模型变更后索引未重建）"
+            )
+        scored.append(
+            (_cosine([float(x) for x in vec], [float(x) for x in query_vec]), e)
+        )
     scored.sort(key=lambda t: t[0], reverse=True)
     limit = max(1, min(50, int(pool_size)))
     return [e for _, e in scored[:limit]]
 
 
-async def select_expression_habits_block(provider, store: "LearningStore", key: str,
-                                         checked_only: bool, chat_observe_info: str,
-                                         bot_name: str, reply_reason: str = "",
-                                         model: str | None = None,
-                                         mode: str = "legacy",
-                                         embedding=None, embedding_model: str = "",
-                                         query_text: str = "",
-                                         pool_size: int = 50) -> str:
+async def select_expression_habits_block(
+    provider,
+    store: "LearningStore",
+    key: str,
+    checked_only: bool,
+    chat_observe_info: str,
+    bot_name: str,
+    reply_reason: str = "",
+    model: str | None = None,
+    mode: str = "legacy",
+    embedding=None,
+    embedding_model: str = "",
+    query_text: str = "",
+    pool_size: int = 50,
+) -> str:
     """表达习惯注入块：候选池（legacy 抽样 / vector_intent 语义召回）→
     LLM 按语境选择 → 注入块。
 
@@ -309,16 +338,26 @@ async def select_expression_habits_block(provider, store: "LearningStore", key: 
     candidates = None
     if mode == "vector_intent":
         if embedding is None:
-            logger.info("maisoul: 表达方式向量召回需要配置嵌入模型（模型管理 embedding 任务），已回退随手候选")
+            logger.info(
+                "maisoul: 表达方式向量召回需要配置嵌入模型（模型管理 embedding 任务），已回退随手候选"
+            )
         elif not str(query_text or "").strip():
             logger.info("maisoul: 表达方式向量召回 query 为空，已回退随手候选")
         else:
             try:
                 candidates = await _vector_recall_pool(
-                    store, key, pool, embedding, embedding_model,
-                    str(query_text).strip(), pool_size)
+                    store,
+                    key,
+                    pool,
+                    embedding,
+                    embedding_model,
+                    str(query_text).strip(),
+                    pool_size,
+                )
             except Exception:
-                logger.warning("maisoul: 表达方式向量召回失败，回退随手候选", exc_info=True)
+                logger.warning(
+                    "maisoul: 表达方式向量召回失败，回退随手候选", exc_info=True
+                )
                 candidates = None
             if not candidates:
                 logger.info("maisoul: 表达方式向量召回为空，回退随手候选")
@@ -332,7 +371,8 @@ async def select_expression_habits_block(provider, store: "LearningStore", key: 
     if provider is not None:
         try:
             situations = "\n".join(
-                f"{i}. {e['situation']}" for i, e in enumerate(candidates, start=1))
+                f"{i}. {e['situation']}" for i, e in enumerate(candidates, start=1)
+            )
             prompt_text = EXPRESSION_SELECT_PROMPT.format(
                 chat_observe_info=chat_observe_info,
                 bot_name=bot_name,
@@ -342,19 +382,26 @@ async def select_expression_habits_block(provider, store: "LearningStore", key: 
                 max_num=MAX_SELECTED_EXPRESSIONS_LLM,
                 target_message_extra_block="",
             )
-            resp = await provider.text_chat(prompt=prompt_text, session_id="maisoul_expr_select",
-                                            model=model)
+            resp = await provider.text_chat(
+                prompt=prompt_text, session_id="maisoul_expr_select", model=model
+            )
             raw = str(getattr(resp, "completion_text", "") or "")
-            seg = raw[raw.find("{"):raw.rfind("}") + 1]
+            seg = raw[raw.find("{") : raw.rfind("}") + 1]
             parsed = json.loads(seg)
-            ids = [int(x) for x in (parsed.get("selected_situations") or []) if str(x).isdigit()]
+            ids = [
+                int(x)
+                for x in (parsed.get("selected_situations") or [])
+                if str(x).isdigit()
+            ]
             selected = [candidates[i - 1] for i in ids if 1 <= i <= len(candidates)]
         except Exception:
             selected = None
 
     if not selected:
         selected = candidates[:MAX_SELECTED_EXPRESSIONS]
-    lines = [f"- 当\"{e['situation']}\"时，可以用\"{e['style']}\"来表达。" for e in selected]
+    lines = [
+        f"- 当\"{e['situation']}\"时，可以用\"{e['style']}\"来表达。" for e in selected
+    ]
     return "【表达习惯参考，请视情况自然的使用】\n" + "\n".join(lines)
 
 
@@ -377,14 +424,18 @@ class LearningStore:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
-            logger.warning("maisoul: 学习库读取失败，原文件已备份为 .corrupt，从空库启动",
-                           exc_info=True)
+            logger.warning(
+                "maisoul: 学习库读取失败，原文件已备份为 .corrupt，从空库启动",
+                exc_info=True,
+            )
             self._backup_corrupt()
             return {}
         err = apivalid.validate_learning_payload(data)
         if err is not None:
-            logger.warning(f"maisoul: 学习库结构非法（{err}），"
-                           "原文件已备份为 .corrupt，从空库启动")
+            logger.warning(
+                f"maisoul: 学习库结构非法（{err}），"
+                "原文件已备份为 .corrupt，从空库启动"
+            )
             self._backup_corrupt()
             return {}
         return data
@@ -403,8 +454,9 @@ class LearningStore:
         半截 JSON，下次启动被当作损坏清零（配合 _load 的备份分支兜底）。"""
         try:
             tmp = self.path.parent / (self.path.name + ".tmp")
-            tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=1),
-                           encoding="utf-8")
+            tmp.write_text(
+                json.dumps(self.data, ensure_ascii=False, indent=1), encoding="utf-8"
+            )
             tmp.replace(self.path)
         except OSError:
             logger.warning("maisoul: 学习库保存失败", exc_info=True)
@@ -413,7 +465,9 @@ class LearningStore:
     def expressions(self, key: str) -> list[dict]:
         return self._bucket(key).get("expressions") or []
 
-    def add_expression(self, key: str, situation: str, style: str, checked: bool) -> bool:
+    def add_expression(
+        self, key: str, situation: str, style: str, checked: bool
+    ) -> bool:
         situation, style = situation.strip(), style.strip()
         if not situation or not style:
             return False
@@ -424,7 +478,8 @@ class LearningStore:
                 self.save()
                 return False
         self._bucket(key)["expressions"].append(
-            {"situation": situation, "style": style, "count": 1, "checked": checked})
+            {"situation": situation, "style": style, "count": 1, "checked": checked}
+        )
         self.save()
         return True
 
@@ -436,7 +491,7 @@ class LearningStore:
         有补齐才落盘。返回是否有改动。"""
         next_id = 1
         for bucket in self.data.values():
-            for item in (bucket.get("expressions") or []):
+            for item in bucket.get("expressions") or []:
                 i = item.get("id") if isinstance(item, dict) else None
                 if isinstance(i, int) and not isinstance(i, bool) and i >= next_id:
                     next_id = i + 1
@@ -461,12 +516,16 @@ class LearningStore:
             for item in self.expressions(key):
                 if not isinstance(item, dict):
                     continue
-                out.append({"id": item.get("id"),
-                            "key": str(key),
-                            "situation": str(item.get("situation") or ""),
-                            "style": str(item.get("style") or ""),
-                            "count": int(item.get("count", 1) or 1),
-                            "checked": bool(item.get("checked"))})
+                out.append(
+                    {
+                        "id": item.get("id"),
+                        "key": str(key),
+                        "situation": str(item.get("situation") or ""),
+                        "style": str(item.get("style") or ""),
+                        "count": int(item.get("count", 1) or 1),
+                        "checked": bool(item.get("checked")),
+                    }
+                )
         return out
 
     def review_expression(self, expr_id: int, action: str) -> bool:
@@ -488,8 +547,14 @@ class LearningStore:
                     return True
         return False
 
-    def upsert_expression(self, situation: str, style: str, checked: bool,
-                          key: str = "global", expr_id: int | None = None) -> dict | None:
+    def upsert_expression(
+        self,
+        situation: str,
+        style: str,
+        checked: bool,
+        key: str = "global",
+        expr_id: int | None = None,
+    ) -> dict | None:
         """审核页弹窗创建/修改单条表达。expr_id 为空=新建（去重并入既有条目）。
 
         返回库内条目引用（含 ensure 后的 id；新建并入既有时返回既有条目），
@@ -536,7 +601,9 @@ class LearningStore:
                     item["meaning"] = meaning
                 self.save()
                 return False
-        self._bucket(key)["jargons"].append({"content": content, "meaning": meaning, "count": 1})
+        self._bucket(key)["jargons"].append(
+            {"content": content, "meaning": meaning, "count": 1}
+        )
         self.save()
         return True
 
@@ -544,13 +611,14 @@ class LearningStore:
 # ---------------------------------------------------------------------- #
 # 配置匹配（LearningItem / 共享组）
 # ---------------------------------------------------------------------- #
-def learning_flags(cfg, list_field: str, platform: str, chat_id: str,
-                    is_group: bool = True) -> tuple[bool, bool]:
+def learning_flags(
+    cfg, list_field: str, platform: str, chat_id: str, is_group: bool = True
+) -> tuple[bool, bool]:
     """返回 (use, learn)。精确命中规则优先，回落全局默认规则，再回落 (True, True)。"""
     matched = None
     default = None
     want_type = "group" if is_group else "private"
-    for item in (cfg.get(list_field) or []):
+    for item in cfg.get(list_field) or []:
         if not isinstance(item, dict) or str(item.get("type") or "group") != want_type:
             continue
         p = str(item.get("platform") or "").strip()
@@ -568,7 +636,7 @@ def learning_flags(cfg, list_field: str, platform: str, chat_id: str,
 def share_key(cfg, groups_field: str, platform: str, chat_id: str) -> str:
     """命中共享组的聊天返回组键，否则 global。"""
     for gi, group in enumerate(cfg.get(groups_field) or []):
-        for target in ((group or {}).get("targets") or []):
+        for target in (group or {}).get("targets") or []:
             if not isinstance(target, dict):
                 continue
             p = str(target.get("platform") or "").strip()
@@ -614,13 +682,20 @@ def expression_habits_block(store: LearningStore, key: str, checked_only: bool) 
     candidates = candidates[:MAX_SELECTED_EXPRESSIONS]
     if not candidates:
         return ""
-    lines = [f"- 当\"{e['situation']}\"时，可以用\"{e['style']}\"来表达。" for e in candidates]
+    lines = [
+        f"- 当\"{e['situation']}\"时，可以用\"{e['style']}\"来表达。"
+        for e in candidates
+    ]
     return "【表达习惯参考，请视情况自然的使用】\n" + "\n".join(lines)
 
 
-def jargon_reference_block(store: LearningStore, key: str, recent_texts: list[str],
-                           exclude: set | None = None,
-                           matched_out: list | None = None) -> str:
+def jargon_reference_block(
+    store: LearningStore,
+    key: str,
+    recent_texts: list[str],
+    exclude: set | None = None,
+    matched_out: list | None = None,
+) -> str:
     """最近上下文文本机械命中词条 → 参考块（上限 10 条）。
 
     exclude：已注入过的词条（planner 轮间去重，对齐 jargon_context_matcher
@@ -633,8 +708,9 @@ def jargon_reference_block(store: LearningStore, key: str, recent_texts: list[st
         content = str(item.get("content") or "").strip()
         if not content or (exclude and content in exclude):
             continue
-        first_index = next((i for i, t in enumerate(recent_texts)
-                            if t and content in t), None)
+        first_index = next(
+            (i for i, t in enumerate(recent_texts) if t and content in t), None
+        )
         if first_index is not None:
             count = int(item.get("count", 1) or 1)
             scored.append(((-count, first_index), item))
@@ -656,21 +732,23 @@ def keyword_reaction_block(cfg, match_text: str) -> str:
     if not match_text:
         return ""
     matched_reactions: list[str] = []
-    for rule in (cfg.get("keyword_rules") or []):
+    for rule in cfg.get("keyword_rules") or []:
         if not isinstance(rule, dict):
             continue
-        keywords = [str(k).strip() for k in (rule.get("keywords") or []) if str(k).strip()]
+        keywords = [
+            str(k).strip() for k in (rule.get("keywords") or []) if str(k).strip()
+        ]
         if keywords and any(k in match_text for k in keywords):
             reaction = str(rule.get("reaction") or "").strip()
             if reaction:
                 matched_reactions.append(reaction)
-    for rule in (cfg.get("regex_rules") or []):
+    for rule in cfg.get("regex_rules") or []:
         if not isinstance(rule, dict):
             continue
         reaction = str(rule.get("reaction") or "").strip()
         if not reaction:
             continue
-        for pattern in (rule.get("regex") or []):
+        for pattern in rule.get("regex") or []:
             pattern = str(pattern).strip()
             if not pattern:
                 continue
@@ -700,7 +778,7 @@ def _repair_json_array(raw: str) -> list:
     if start < 0 or end <= start:
         return []
     try:
-        parsed = json.loads(raw[start:end + 1])
+        parsed = json.loads(raw[start : end + 1])
         return parsed if isinstance(parsed, list) else []
     except json.JSONDecodeError:
         return []
@@ -717,14 +795,16 @@ def _build_chat_str(buffer: list[dict], bot_name: str, limit: int = 30) -> str:
 
 
 async def _llm(provider, prompt: str, model: str | None = None) -> str:
-    resp = await provider.text_chat(prompt=prompt, session_id="maisoul_learning",
-                                    model=model)
+    resp = await provider.text_chat(
+        prompt=prompt, session_id="maisoul_learning", model=model
+    )
     return str(getattr(resp, "completion_text", "") or "").strip()
 
 
 def build_chat_info(buffer: list[dict], limit: int = 10) -> str:
     """expression_select 的 chat_observe_info：最近 10 条对话行（对齐 _build_chat_info）。"""
     from datetime import datetime as _dt
+
     lines = []
     for m in list(buffer)[-limit:]:
         text = " ".join(str(m.get("text") or "").split())
@@ -735,20 +815,35 @@ def build_chat_info(buffer: list[dict], limit: int = 10) -> str:
     return "\n".join(lines)
 
 
-async def learn_from_chat(provider, cfg, buffer: list[dict], platform: str, chat_id: str,
-                          store: LearningStore, model: str | None = None) -> str:
+async def learn_from_chat(
+    provider,
+    cfg,
+    buffer: list[dict],
+    platform: str,
+    chat_id: str,
+    store: LearningStore,
+    model: str | None = None,
+) -> str:
     """发言后异步学习：表达 + 黑话。返回日志摘要。
 
     整体受 max_expression_learner 信号量约束（对齐 MaiBot 学习并发上限）。
     model：任务级模型绑定（learner 任务）时的按次覆盖。
     """
     async with get_selection_semaphore(cfg):
-        return await _learn_from_chat_inner(provider, cfg, buffer, platform, chat_id,
-                                            store, model=model)
+        return await _learn_from_chat_inner(
+            provider, cfg, buffer, platform, chat_id, store, model=model
+        )
 
 
-async def _learn_from_chat_inner(provider, cfg, buffer: list[dict], platform: str, chat_id: str,
-                                 store: LearningStore, model: str | None = None) -> str:
+async def _learn_from_chat_inner(
+    provider,
+    cfg,
+    buffer: list[dict],
+    platform: str,
+    chat_id: str,
+    store: LearningStore,
+    model: str | None = None,
+) -> str:
     bot_name = str(cfg.get("bot_name") or "麦麦")
     key = share_key(cfg, "expression_groups", platform, chat_id)
     jkey = share_key(cfg, "jargon_groups", platform, chat_id)
@@ -763,7 +858,9 @@ async def _learn_from_chat_inner(provider, cfg, buffer: list[dict], platform: st
     summary = []
     try:
         if learn_expr:
-            raw = await _llm(provider, LEARN_STYLE_PROMPT.format(chat_str=chat_str), model=model)
+            raw = await _llm(
+                provider, LEARN_STYLE_PROMPT.format(chat_str=chat_str), model=model
+            )
             items = [x for x in _repair_json_array(raw) if isinstance(x, dict)]
             added = 0
             for item in items[:10]:
@@ -771,9 +868,16 @@ async def _learn_from_chat_inner(provider, cfg, buffer: list[dict], platform: st
                 style = str(item.get("style") or "")
                 checked = True
                 if cfg.get("expression_self_reflect", True) and situation and style:
-                    criteria = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(_EXPRESSION_CRITERIA))
-                    review_raw = await _llm(provider, EXPRESSION_EVALUATION_PROMPT.format(
-                        situation=situation, style=style, criteria_list=criteria), model=model)
+                    criteria = "\n".join(
+                        f"{i + 1}. {c}" for i, c in enumerate(_EXPRESSION_CRITERIA)
+                    )
+                    review_raw = await _llm(
+                        provider,
+                        EXPRESSION_EVALUATION_PROMPT.format(
+                            situation=situation, style=style, criteria_list=criteria
+                        ),
+                        model=model,
+                    )
                     checked = _suitable_from_review(review_raw)
                 if store.add_expression(key, situation, style, checked):
                     added += 1
@@ -783,7 +887,9 @@ async def _learn_from_chat_inner(provider, cfg, buffer: list[dict], platform: st
 
     try:
         if learn_jargon:
-            raw = await _llm(provider, LEARN_JARGON_PROMPT.format(chat_str=chat_str), model=model)
+            raw = await _llm(
+                provider, LEARN_JARGON_PROMPT.format(chat_str=chat_str), model=model
+            )
             items = [x for x in _repair_json_array(raw) if isinstance(x, dict)]
             known = {j.get("content") for j in store.jargons(jkey)}
             added = 0
@@ -791,11 +897,16 @@ async def _learn_from_chat_inner(provider, cfg, buffer: list[dict], platform: st
                 content = str(item.get("content") or "").strip()
                 if not content or content in known:
                     continue
-                infer_raw = await _llm(provider, JARGON_INFERENCE_PROMPT.format(
-                    content=content, bot_name=bot_name, raw_content_list=chat_str), model=model)
+                infer_raw = await _llm(
+                    provider,
+                    JARGON_INFERENCE_PROMPT.format(
+                        content=content, bot_name=bot_name, raw_content_list=chat_str
+                    ),
+                    model=model,
+                )
                 meaning = ""
                 try:
-                    seg = infer_raw[infer_raw.find("{"):infer_raw.rfind("}") + 1]
+                    seg = infer_raw[infer_raw.find("{") : infer_raw.rfind("}") + 1]
                     parsed = json.loads(seg)
                     meaning = str(parsed.get("meaning") or "")
                     if parsed.get("no_info"):
