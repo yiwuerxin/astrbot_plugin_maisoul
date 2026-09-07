@@ -120,7 +120,8 @@ def _extract_image_refs(event: AstrMessageEvent) -> list[str]:
                 if ref and ref not in refs:
                     refs.append(ref)
     except Exception:
-        pass
+        # 降级：组件结构差异按无识图引用处理，留痕（反注入/识图上下文失效可查）
+        logger.debug("maisoul: 识图引用提取失败（按无引用降级）", exc_info=True)
     return refs
 
 
@@ -135,7 +136,8 @@ def _quote_ids(event: AstrMessageEvent) -> str:
                 if qid and qid not in ids:
                     ids.append(qid)
     except Exception:
-        pass
+        # 降级：Reply 结构差异按无引用处理，留痕（<message quote> 属性缺失可查）
+        logger.debug("maisoul: 引用目标 ID 提取失败（按无引用降级）", exc_info=True)
     return ",".join(ids)
 
 
@@ -145,7 +147,8 @@ def _has_at_bot(P, event: AstrMessageEvent) -> bool:
             if isinstance(seg, At) and str(seg.qq) == str(event.get_self_id()):
                 return True
     except Exception:
-        pass
+        # 降级：按未被 @ 处理，留痕（点名触发静默失效可查）
+        logger.debug("maisoul: @bot 判定失败（按未点名降级）", exc_info=True)
     return False
 
 
@@ -157,7 +160,8 @@ def _is_reply_to_bot(P, event: AstrMessageEvent) -> bool:
             ):
                 return True
     except Exception:
-        pass
+        # 降级：按非回复自己处理，留痕（回复触发静默失效可查）
+        logger.debug("maisoul: 回复 bot 判定失败（按非回复降级）", exc_info=True)
     return False
 
 

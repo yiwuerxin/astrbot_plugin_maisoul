@@ -50,6 +50,14 @@ except ImportError:
         def toDict(self):
             return {"type": "reply", "data": {"id": self.id}}
 
+    class _StubAt:
+        def __init__(self, qq=None):
+            self.qq = qq
+
+    class _StubAstrMessageEvent:
+        # pipeline 模块 import 用（类型注解）；测试自带鸭子事件对象
+        pass
+
     class _StubMessageChain:
         def __init__(self, chain=None):
             self.chain = list(chain or [])
@@ -111,7 +119,9 @@ except ImportError:
     _star.star_map = {}
     _comp.Plain = _StubPlain
     _comp.Reply = _StubReply
+    _comp.At = _StubAt
     _evt.MessageChain = _StubMessageChain
+    _evt.AstrMessageEvent = _StubAstrMessageEvent
     _api.logger = _StubLogger()
     _pkg.core = _core
     _pkg.api = _api
@@ -3280,6 +3290,48 @@ def test_planner():
     check("vector 回落: 维度异常吞掉后走随手抽样", blk6.startswith("【表达习惯参考"))
 
 
+def test_events_util_degradation():
+    print("[事件工具降级]")
+    # GOAL 验收约束：except Exception 必须带 logger 留痕——四处消息组件
+    # 解析 helper 此前是裸 pass，降级发生时完全无痕（反注入/引用链悄悄失效）
+    from astrbot_plugin_maisoul.pipeline import events_util as eu
+
+    class _LogRec:
+        def __init__(self):
+            self.calls = []
+
+        def debug(self, msg, *a, **k):
+            self.calls.append(msg)
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    class _BoomEvt:
+        def get_messages(self):
+            raise RuntimeError("boom")
+
+        def get_self_id(self):
+            return "42"
+
+    rec = _LogRec()
+    _orig = eu.logger
+    eu.logger = rec
+    try:
+        e = _BoomEvt()
+        check("降级: 识图引用坏事件→空列表", eu._extract_image_refs(e) == [])
+        check("降级: quote ids 坏事件→空串", eu._quote_ids(e) == "")
+        check("降级: @bot 判定坏事件→False", eu._has_at_bot(None, e) is False)
+        check("降级: 回复bot 判定坏事件→False", eu._is_reply_to_bot(None, e) is False)
+        check(
+            "降级: 四处异常路径均留 debug 日志",
+            len(rec.calls) >= 4,
+            f"logged={len(rec.calls)}",
+        )
+    finally:
+        eu.logger = _orig
+    check("恢复: logger 复原", eu.logger is _orig)
+
+
 def test_personas():
     print("[多人格]")
     from astrbot_plugin_maisoul.core import personas
@@ -3405,6 +3457,7 @@ if __name__ == "__main__":
     test_bridge_builtin_context()
     test_personas()
     test_taskregistry()
+    test_events_util_degradation()
     test_phase3_mechanisms()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
