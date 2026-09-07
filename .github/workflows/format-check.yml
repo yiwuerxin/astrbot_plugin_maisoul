@@ -1,0 +1,19 @@
+name: Code Format Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  format-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装 black（锁版本：与代码库排版基线一致的版本）
+        run: pip install black==26.5.1
+      - name: black --check
+        run: black --check .
