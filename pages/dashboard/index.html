@@ -2071,6 +2071,22 @@ function rrRowsHTML(list,pi){
 /* 详情两分区（对齐部署版 fe 分区组件）：请求 Items=产出本轮输出前的完整请求
    （工具轮截到输出消息前）；输出结果=本轮模型产物（工具轮=该轮 assistant
    消息；收尾轮/旧事件=planner 思考+回复）。条目编号跨分区连续 */
+function rrEcoSection(eco){
+  /* 生态注入区（maisoul 扩展）：final_state.eco_injection = replyer 收集的
+     注入全文（心弦好感/记忆/世界书）。v6.11.6 引入、v6.14.3 推理页复刻
+     部署版时被带丢（部署版页面无此区）、v6.18.2 在 master-detail 详情恢复。
+     折叠用原生 details——srcdoc 在 sandbox iframe 里，自定义控件回路只有
+     postMessage 一条路（坑 57），原生元素零接线最稳；折叠语义对齐部署版
+     CollapsibleText：≤6 行直出，超出折 6 行空格拼接预览 + 展开全部 */
+  const t=String(eco||'');
+  if(!t)return '';
+  const lines=t.split('\n');
+  const body=lines.length<=6
+    ?`<pre ${RR_PRE}>${esc(t)}</pre>`
+    :`<div><pre ${RR_PRE} style="margin-bottom:4px">${esc(lines.slice(0,6).join(' '))}</pre><details><summary class="cursor-pointer select-none text-xs text-primary" style="text-decoration:underline;text-underline-offset:2px"> 展开全部 (${lines.length} 行)</summary><pre ${RR_PRE} style="margin-top:4px">${esc(t)}</pre></details></div>`;
+  const cnt=rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm',t.length+' 字符');
+  return `<section class="space-y-2 rounded-md border p-2.5 sm:p-3"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">生态注入</span>${cnt}</div>${body}</section>`;
+}
 function rrDetailHTML(rec){
   const d=rec.ev.data||{},req=d.request||{};
   const outIdx=rec.slice&&rec.start!=null?rec.start:-1;
@@ -2080,7 +2096,7 @@ function rrDetailHTML(rec){
   /* 输出结果分区：Items 计数徽章后标本次调用的模型（对齐部署版「模型：${model_name}」文案） */
   const mdlBadge=m.model?rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm font-mono','模型：'+esc(m.model)):'';
   const head=`<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2"><span class="text-sm font-medium">${esc(names)}</span><span class="text-muted-foreground text-xs">${m.tstr}</span><span class="text-muted-foreground ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"><span class="inline-flex items-center gap-1">${RR_SVG_CPU}循环 #${m.cycle==null?'-':m.cycle}</span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${m.dur} s</span><span>输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token</span></span></div>`;
-  return {head:head,items:rrSection('请求 Items',reqItems)+rrSection('输出结果',outItems,mdlBadge)}
+  return {head:head,items:rrSection('请求 Items',reqItems)+rrSection('输出结果',outItems,mdlBadge)+rrEcoSection((d.final_state||{}).eco_injection)}
 }
 function rrPagerHTML(pi){
   const cls='inline-flex cursor-pointer items-center gap-2 font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md px-3 text-xs h-8';
