@@ -245,7 +245,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
    - **会话 ID**：业务代码不得自行拼会话键或造 fallback hash 写库——统一走既有会话键（群=group_id，私聊=sender_id，见坑 23）。
    - **配置**：纯配置改动只动 schema 字段 + 页面 render/collect + 本文档 §4 映射表（§5.3 模式），不需要建测试文件；main.py 里旧配置迁移逻辑保持幂等，已发布的迁移路径不可随意改动，也不擅自新增迁移步骤（对齐 MaiBot「除非明确说明不擅自新增 ConfigUpgradeHook／禁改 legacy_migration」）。
    - **changelog**：本插件无独立 changelog 文件，以 git 提交信息承载——一个功能一行、按模块分段；纯版本号提升不单独成条。
-   - **代码格式 = black 26.5.1**（CI `format-check` 锁版本强制，push/PR 触发）：全库已完成格式化基线（v6.16.1），新改动保持 black 干净；升 black 大版本前先全库重排单独成提交。
+   - **代码格式 = black 26.5.1**（CI `format-check` 锁版本强制，push/PR 触发）：全库已完成格式化基线（v6.17.0），新改动保持 black 干净；升 black 大版本前先全库重排单独成提交。
 
 
 9. **Commit / PR 规范（Conventional Commits，<https://www.conventionalcommits.org>；"Angular 规范"是俗称，Angular 私规不照抄）**：
@@ -622,11 +622,11 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 
 57. **嵌入式整页视图的三连坑：百分比高度塌陷 / srcdoc 内按钮没接宿主 / 重渲染重建 srcdoc（v6.14.4，owner 实报"点击推理过程后进入是空白且没有返回按钮"）**：①推理页 iframe 放在 `.mo-tlin`（auto 高、仅 padding）里，`height:100%` 没有确定高度链可解析 → 回落到替换元素默认 150px——内容其实全渲染了（headless 实测 27 记录/324 item 卡都在 srcdoc 里），只是被压成一条"空白"细缝。修=reason 模式给 `.mo-tl`/`.mo-tlin` 挂 `.mo-reasonhost`（外层 overflow:hidden、内层 height:100%+flex 列），把高度链钉死到 `.mo-root` 的 `calc(100vh-120px)`，滚动交给 iframe 内部滚动容器。②srcdoc 里的「返回监控」最初只复刻了外观没接行为——srcdoc 与宿主同源，按钮 `onclick="parent.moReasonBack()"` 调回宿主（`MO.page='tl'` + 重渲染，正常路径负责摘类复位）。③monitor 每条新事件都会触发 `moRenderTimeline`，reason 分支若无条件重建 iframe → srcdoc 1.7MB 重新解析、白闪、滚动归零；修=`MO.reasonBuilt` 记住已渲染轮次，同轮早退（headless 实测：内部滚动 400px 在重渲染后保持）。**通用教训：往 auto 高容器里塞 height:100% 的替换元素（iframe/video）必塌；整页复刻不只要像素，交互回路的宿主侧接线（返回/刷新）和"渲染幂等"要一并设计**。
 
-58. **builtin 工具直连两件事：执行上下文与激活门控（v6.16.1，web_search_tavily 接入带出）**：①`FunctionToolExecutor` 执行核心 builtin 工具（web_search_* 等 FunctionTool 子类）时经 `run_context.context.context.get_config(umo=...)` 读部署配置（provider_settings）——`call_llm_tool` 的 ContextWrapper 内层必须同时携带 event 与 astrbot Context，只塞 event 必 AttributeError（"执行失败"）。②builtin 的 `active` 标志在 `get_func` 路径恒默认 True：`@builtin_tool(config=...)` 的激活条件（web_search_* 需 provider 匹配+key）只有 WebUI/主代理注入时求值——deferred 池构建须自己按部署配置求值（`bridge._builtin_tool_enabled`，规则缺失视为启用），否则 chat_tools 误列未配置的搜索源会进池且调不通，教 planner 白烧轮次。
+58. **builtin 工具直连两件事：执行上下文与激活门控（v6.17.0，web_search_tavily 接入带出）**：①`FunctionToolExecutor` 执行核心 builtin 工具（web_search_* 等 FunctionTool 子类）时经 `run_context.context.context.get_config(umo=...)` 读部署配置（provider_settings）——`call_llm_tool` 的 ContextWrapper 内层必须同时携带 event 与 astrbot Context，只塞 event 必 AttributeError（"执行失败"）。②builtin 的 `active` 标志在 `get_func` 路径恒默认 True：`@builtin_tool(config=...)` 的激活条件（web_search_* 需 provider 匹配+key）只有 WebUI/主代理注入时求值——deferred 池构建须自己按部署配置求值（`bridge._builtin_tool_enabled`，规则缺失视为启用），否则 chat_tools 误列未配置的搜索源会进池且调不通，教 planner 白烧轮次。
 
 59. **改 `pipeline/*` 后插件 reload 不生效，必须重启容器**：AstrBot 的插件热重载只重载包顶层模块，不级联 importlib.reload `pipeline.*` 子包——reload 后页面/配置生效但管线行为仍旧（症状：文件已更新、行为无变化）。涉及 core/ 页面可 reload；涉及 pipeline/ 一律 `docker restart <astrbot容器>`。
 
-60. **推理过程页的思考素材链路（v6.16.1，客户报"推理过程详情看不到 reasoning"）**：思考只在「推理过程」独立页呈现（owner 指令，不上麦麦观察时间线——planner.response/replier.response 时间线事件已删并有回归用例锁死）。链路：`_planner_cycle` 把每轮 reasoning 记 `reasoning_by_idx`（仅监控序列化副本附到 request.messages[].reasoning，**回灌 contexts 永不带思考**，坑 54 不破）→ `finalize` 汇入 planner.finalized（replyer 思考走 `planner.reasoning`）；前端 rrReasonArticle 渲染 ReasoningItem（部署版预留的 indigo 样式位）。详情按部署版 fe 分区组件拆「请求 Items / 输出结果」（工具轮输出=该轮 assistant 产物消息；收尾轮=planner 思考+回复）。「完整 Item JSON」开合态类组（z-40 提层/加宽）由 rrToggle 切换——同 z 值下 DOM 靠后者胜出，相邻短条目的按钮会盖住展开面板。
+60. **推理过程页的思考素材链路（v6.17.0，客户报"推理过程详情看不到 reasoning"）**：思考只在「推理过程」独立页呈现（owner 指令，不上麦麦观察时间线——planner.response/replier.response 时间线事件已删并有回归用例锁死）。链路：`_planner_cycle` 把每轮 reasoning 记 `reasoning_by_idx`（仅监控序列化副本附到 request.messages[].reasoning，**回灌 contexts 永不带思考**，坑 54 不破）→ `finalize` 汇入 planner.finalized（replyer 思考走 `planner.reasoning`）；前端 rrReasonArticle 渲染 ReasoningItem（部署版预留的 indigo 样式位）。详情按部署版 fe 分区组件拆「请求 Items / 输出结果」（工具轮输出=该轮 assistant 产物消息；收尾轮=planner 思考+回复）。「完整 Item JSON」开合态类组（z-40 提层/加宽）由 rrToggle 切换——同 z 值下 DOM 靠后者胜出，相邻短条目的按钮会盖住展开面板。
 
 ## 9. 打包与发布
 
