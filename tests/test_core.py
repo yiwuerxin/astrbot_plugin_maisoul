@@ -54,6 +54,10 @@ except ImportError:
         def __init__(self, qq=None):
             self.qq = qq
 
+    class _StubAtAll(_StubAt):
+        def __init__(self):
+            super().__init__(qq="all")
+
     class _StubAstrMessageEvent:
         # pipeline 模块 import 用（类型注解）；测试自带鸭子事件对象
         pass
@@ -120,6 +124,7 @@ except ImportError:
     _comp.Plain = _StubPlain
     _comp.Reply = _StubReply
     _comp.At = _StubAt
+    _comp.AtAll = _StubAtAll
     _evt.MessageChain = _StubMessageChain
     _evt.AstrMessageEvent = _StubAstrMessageEvent
     _api.logger = _StubLogger()
@@ -502,6 +507,27 @@ def test_scoring():
 
     r = ev("DeepSeek，帮我写个脚本", at_bot=False)
     check("叫别的AI被抑制", r.score < 20, str(r.score))
+
+    # 主名入档：bot_name 与 aliases 同权（此前档位只查 aliases，叫主名拿不到 80 档）
+    # pending=0 且无间隔样本 → 压力分恒 0，只验证档位与内容分
+    r = scoring.evaluate(
+        make_state([("u", "x", False)], pending=0),
+        at_bot=False,
+        text="麦麦你觉得呢",
+        aliases=[],
+        bot_name="麦麦",
+        frequency=1.0,
+    )
+    check("主名入档: 叫主名80档触发", r.score >= 80, str(r.score))
+    r = scoring.evaluate(
+        make_state([("u", "x", False)], pending=0),
+        at_bot=False,
+        text="小小麦你觉得呢",
+        aliases=[],
+        bot_name="麦麦",
+        frequency=1.0,
+    )
+    check("主名入档: 叫小小麦不触发", r.score < 80, str(r.score))
 
     st = make_state(
         [(f"q{i}", "今天天气不错啊大家", False) for i in range(25)],
@@ -2383,6 +2409,64 @@ def test_learning():
     )
 
 
+def test_mention():
+    print("[提及判定与at档构成]")
+    from astrbot_plugin_maisoul.core import mention
+
+    BOT, AL = "麦麦", ["小麦"]
+    # 场景来源：群里 @另一个 bot「小麦麦」（aiocqhttp 渲染 " @昵称(QQ号) " 进文本）
+    check(
+        "提及: 开头@小麦麦不命中",
+        not mention.is_mentioned(" @小麦麦(123456) 帮我看看", BOT, AL),
+    )
+    check(
+        "提及: 中段@小麦麦不命中",
+        not mention.is_mentioned("帮我@小麦麦(123456)看看这个", BOT, AL),
+    )
+    check(
+        "提及: 纯文本小小麦不命中",
+        not mention.is_mentioned("小小麦帮我查一下", BOT, AL),
+    )
+    check("提及: 前缀粘连不命中", not mention.is_mentioned("个麦麦在吗", BOT, AL))
+    # 后缀扩展名纯文本仍命中（中文无分词的已知残留；@场景由 exclude_names 兜底）
+    check(
+        "提及: 后缀扩展名文本仍命中(已知残留)",
+        mention.is_mentioned("麦麦子今天干嘛", BOT, AL),
+    )
+    check("提及: 真点名命中", mention.is_mentioned("@麦麦 帮我看看", BOT, AL))
+    check("提及: 纯文本叫主名命中", mention.is_mentioned("麦麦你觉得呢", BOT, AL))
+    check("提及: 别名命中", mention.is_mentioned("小麦觉得呢", BOT, AL))
+    check("提及: 标点包围命中", mention.is_mentioned("（麦麦）在吗", BOT, AL))
+    check(
+        "提及: 剥渲染token后正文叫名仍命中",
+        mention.is_mentioned("@别人(111) 麦麦在吗", BOT, AL),
+    )
+    check("提及: @前缀写法的别名命中", mention.is_mentioned("@小麦 来", BOT, AL))
+    # exclude_names：At 段里 @其他人 的昵称（无 qq 渲染/昵称含空格的防线）
+    check(
+        "提及: 同名他人被exclude排除",
+        not mention.is_mentioned("帮我 @麦麦 查", BOT, AL, exclude_names=["麦麦"]),
+    )
+    check(
+        "提及: 含空格昵称被exclude排除",
+        not mention.is_mentioned("喊 麦 麦麦 出来", BOT, AL, exclude_names=["麦 麦麦"]),
+    )
+    check("提及: 空文本/空关键字安全", not mention.is_mentioned("", BOT, ["", "  "]))
+
+    # explicit 旁路降级（AtAll/引用回复不算 @bot，唤醒前缀保持）
+    check("at档: At段命中", mention.effective_at_bot(True, False, False, False))
+    check("at档: 前缀唤醒保持", mention.effective_at_bot(False, True, False, False))
+    check("at档: @全体成员降级", not mention.effective_at_bot(False, True, True, False))
+    check("at档: 引用回复降级", not mention.effective_at_bot(False, True, False, True))
+    check(
+        "at档: AtAll+Reply都不遮蔽真At",
+        mention.effective_at_bot(True, True, True, True),
+    )
+    check(
+        "at档: 无任何信号为否", not mention.effective_at_bot(False, False, True, True)
+    )
+
+
 def test_phase3_mechanisms():
     print("[Phase3 机制：P-E/P-F/P-D]")
     import time as _t
@@ -3615,6 +3699,7 @@ if __name__ == "__main__":
     test_personas()
     test_taskregistry()
     test_events_util_degradation()
+    test_mention()
     test_phase3_mechanisms()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
