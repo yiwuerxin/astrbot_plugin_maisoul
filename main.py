@@ -1,4 +1,4 @@
-"""astrbot_plugin_maisoul v6.18.1 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
+"""astrbot_plugin_maisoul v6.18.3 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
 
 main.py 只做注册/生命周期/钩子薄壳（M7 拆分）；管线逻辑在 pipeline/ 包：
 - pipeline/gating        门控：逃生舱/过滤词/双模式分发/空窗补偿
@@ -38,7 +38,7 @@ _RUNTIME_DATA_FILES = (
 
 
 @register(
-    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.18.1"
+    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.18.3"
 )
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -91,14 +91,15 @@ class MaiSoulPlugin(Star):
             self.config.get("task_models")
         )
         logger.info(
-            f"maisoul v6.18.1 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.18.3 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
             f"{'开' if self.config.get('maid_bridge', True) else '关'}"
         )
-        # M10：观察账本后台 writer（emit 只入队，落库经 to_thread 移出事件循环）
-        self.monitor.start_writer()
+        # M10：观察账本后台 writer（emit 只入队，落库经 to_thread 移出事件循环）；
+        # 经 TaskRegistry 发起（create_task 唯一入口约束，v6.18.2）
+        self.monitor.start_writer(self._registry)
         # M11：错字引擎预热——首次构建要遍历两万汉字逐个 pinyin() + 读字频表
         # + jieba 词典，内联在首条回复的发送路径上会卡秒级；装载时后台线程
         # 提前完成，发送路径只取现成实例
@@ -170,4 +171,4 @@ class MaiSoulPlugin(Star):
         await self._registry.cancel_and_wait_all(timeout=5.0)
         await self.monitor.stop_writer()  # M10：冲刷残余事件后再关连接池
         self.monitor.close()
-        logger.info("maisoul v6.18.1 已卸载")
+        logger.info("maisoul v6.18.3 已卸载")

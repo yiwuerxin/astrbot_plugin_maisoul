@@ -19,6 +19,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import jieba
+from astrbot.api import logger
 from pypinyin import Style, pinyin
 
 _DATA_DIR = Path(__file__).resolve().parent.parent
@@ -79,8 +80,33 @@ class ChineseTypoGenerator:
     # ------------------------------------------------------------------ #
     def _load_char_frequency(self) -> dict:
         if _FREQ_FILE.exists():
-            with open(_FREQ_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+            try:
+                with open(_FREQ_FILE, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                # 形状校验：json.load 对 null/列表/标量/非数值不抛异常，直接
+                # 带出去会在查频时 AttributeError——形状不对一律按损坏自愈
+                if (
+                    not isinstance(loaded, dict)
+                    or not loaded
+                    or not all(isinstance(v, (int, float)) for v in loaded.values())
+                ):
+                    raise ValueError("invalid frequency cache shape")
+                return loaded
+            except (OSError, ValueError):
+                # 坏缓存自愈（对齐 learning 库的 .corrupt 处理）：备份原文件后
+                # 重建，禁止让错字引擎整体不可用
+                logger.warning(
+                    "maisoul: 字频缓存损坏，已备份为 .corrupt 并按 jieba 重建",
+                    exc_info=True,
+                )
+                try:
+                    _FREQ_FILE.replace(
+                        _FREQ_FILE.parent / (_FREQ_FILE.name + ".corrupt")
+                    )
+                except OSError:
+                    logger.debug(
+                        "maisoul: 字频缓存损坏备份失败（继续重建）", exc_info=True
+                    )
         # 无缓存时按 MaiBot 逻辑从 jieba 词典生成并落盘
         char_freq = defaultdict(int)
         dict_path = os.path.join(os.path.dirname(jieba.__file__), "dict.txt")
@@ -96,10 +122,14 @@ class ChineseTypoGenerator:
         max_freq = max(char_freq.values())
         normalized = {c: v / max_freq * 1000 for c, v in char_freq.items()}
         try:
-            with open(_FREQ_FILE, "w", encoding="utf-8") as f:
+            # 原子落盘：直接 open("w") 写中途崩溃会留半截 JSON，下次启动
+            # 走上面的损坏分支（tmp+replace，对齐 learning.save）
+            tmp = _FREQ_FILE.parent / (_FREQ_FILE.name + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(normalized, f, ensure_ascii=False, indent=2)
+            tmp.replace(_FREQ_FILE)
         except OSError:
-            pass
+            logger.debug("maisoul: 字频缓存落盘失败（本次用内存态）", exc_info=True)
         return normalized
 
     def _get_jieba_dict(self) -> dict:
