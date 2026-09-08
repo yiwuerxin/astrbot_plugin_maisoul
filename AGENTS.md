@@ -583,7 +583,7 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 
 ### 8.5 planner 管线
 
-29. **分工铁律：planner 唯一干活者、replyer 纯嘴**。可见工具 4 个（reply/wait/send_emoji/tool_search；fetch_history 为 MaiBot focus 专属、v6.13.5 移除）；管家与生态工具全部进 **deferred 池**（tool_search 发现后下一轮可用；打分表 1000/300/200/100/25/10、返回文案、`<system-reminder>` 模板均为 MaiBot 原文；提醒只进当次请求不进 contexts 历史；`PlannerState.discovered_tools` 会话级）。replyer 不带 func_tool（independent/native 模式例外，管家桥留 replyer 侧）。
+29. **分工铁律：planner 唯一干活者、replyer 纯嘴**。可见工具 4 个（reply/wait/send_emoji/tool_search；fetch_history 为 MaiBot focus 专属、v6.13.5 移除）；管家与生态工具全部进 **deferred 池**（tool_search 发现后下一轮可用；打分表 1000/300/200/100/25/10、返回文案、`<system-reminder>` 模板均为 MaiBot 原文；提醒只进当次请求不进 contexts 历史；`PlannerState.discovered_tools` 会话级）。**未命中回执 v6.19.1 起为「原文提示 + maisoul 纠正段」**（`tool_search_no_hit_text`：烂 query 如 "context history message" 自然语言漂移时，附当前仍可发现的工具名清单封顶 20 + 「直接用工具名或前缀作 query，不要用自然语言描述」指引——MaiBot 只有一句提示，模型会连着重试同类 query 空转烧轮次；池空/全发现退回原文）。)replyer 不带 func_tool（independent/native 模式例外，管家桥留 replyer 侧）。
 30. （v6.13.5 废弃）fetch_history 已整体移除：MaiBot 侧它是 focus 模式专属工具（`_is_builtin_tool_enabled_by_config` 要求 `experimental.focus_mode`，部署版 false），工具集/结果格式/context_msg_ids 去重机制一并删除——部署版 planner 的 7 工具集（wait/reply/query_memory/query_person_profile/send_emoji/send_image/tool_search）里根本没有它。
 31. planner 上下文 2× 稳定窗（`max(base, base×2)`），相邻消息跨日插 `时间：YYYY-MM-DD HH:MM:SS` 行。
 32. 防复读：本轮思考与上轮 difflib 相似度 >0.9 → 替换固定反思文本（`planner.PLANNER_REFLECT_ON_REPEAT`）；上轮存 `PlannerState.last_analysis`。
