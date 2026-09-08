@@ -3067,6 +3067,34 @@ def test_planner():
     hits = P.search_deferred_tools(pool, "m", 1)
     check("tool_search: limit 截断", len(hits) == 1)
 
+    # v6.19.1：未命中纠正回执（烂 query 附可发现工具名清单，防连续空转）
+    nohit = P.tool_search_no_hit_text(pool, set())
+    check(
+        "tool_search: 未命中回执附工具名清单与重试指引",
+        nohit.startswith(P.TOOL_SEARCH_NO_HIT)
+        and "当前可搜索的 deferred tools：call_maid、search_meme、send_meme" in nohit
+        and "不要用自然语言描述" in nohit,
+        nohit[:120],
+    )
+    nohit2 = P.tool_search_no_hit_text(pool, {"call_maid"})
+    check(
+        "tool_search: 已发现的不进清单",
+        "call_maid" not in nohit2 and "search_meme" in nohit2,
+    )
+    check(
+        "tool_search: 池空/全发现退回原文提示",
+        P.tool_search_no_hit_text([], set()) == P.TOOL_SEARCH_NO_HIT
+        and P.tool_search_no_hit_text(pool, {"call_maid", "search_meme", "send_meme"})
+        == P.TOOL_SEARCH_NO_HIT,
+    )
+    big = [
+        {"name": f"tool_{i}", "description": "x", "tool": object()} for i in range(25)
+    ]
+    check(
+        "tool_search: 清单封顶 20 个",
+        P.tool_search_no_hit_text(big, set()).count("tool_") == 20,
+    )
+
     reminder = P.build_deferred_reminder(pool, set())
     check(
         "reminder: 模板原文与编号",
@@ -3103,8 +3131,11 @@ def test_planner():
     check("tool_search 流: 二次调用标此前已发现", "search_meme（此前已发现）" in r2, r2)
     r3 = deps2.on_tool_search({"query": "zzz", "limit": 5})
     check(
-        "tool_search 流: 无命中文案原文",
-        r3 == P.TOOL_SEARCH_NO_HIT and "未找到匹配的 deferred tools" in r3,
+        "tool_search 流: 无命中=原文提示+纠正段（v6.19.1，烂 query 附清单）",
+        r3.startswith(P.TOOL_SEARCH_NO_HIT)
+        and "当前可搜索的 deferred tools" in r3
+        and "不要用自然语言描述" in r3,
+        r3[:120],
     )
     check(
         "PlannerState: discovered_tools 字段存在",
