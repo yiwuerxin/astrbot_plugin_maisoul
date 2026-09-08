@@ -296,6 +296,29 @@ TOOL_SEARCH_NO_HIT = (
 )
 
 
+def tool_search_no_hit_text(pool: list[dict], discovered) -> str:
+    """未命中回执 = MaiBot 原文提示 + maisoul 扩展纠正段（MaiBot 没有的防呆）。
+
+    烂 query（自然语言描述/占位符串，如 "context history message"、
+    "xx是什么意思"）是模型漂移的常见形态——MaiBot 只回一句提示，模型
+    可能连着重试同类 query 空转烧轮次；扩展段列出当前仍可发现的
+    deferred 工具名并给出明确重试格式，下一轮几乎必然修正。
+    池空或全部已发现时退回原文提示。清单封顶 20 个防刷屏。"""
+    names: list[str] = []
+    for item in pool or []:
+        name = str(item.get("name") or "").strip()
+        if name and name not in (discovered or set()) and name not in names:
+            names.append(name)
+    if not names:
+        return TOOL_SEARCH_NO_HIT
+    return (
+        TOOL_SEARCH_NO_HIT
+        + "\n当前可搜索的 deferred tools："
+        + "、".join(names[:20])
+        + "。请直接用以上工具名（或其前缀）作为 query 重试，不要用自然语言描述。"
+    )
+
+
 def search_deferred_tools(pool: list[dict], query: str, limit: int = 5) -> list[dict]:
     """按 MaiBot runtime.search_deferred_tool_specs 的分数表匹配 deferred 工具：
     精确=1000 / 名称前缀=300 / 名称包含=200 / 描述包含=100 / 分词名称=25 / 分词描述=10，
@@ -657,7 +680,10 @@ class PlannerDeps:
             self.deferred_pool, str(args.get("query") or ""), limit
         )
         if not hits:
-            return TOOL_SEARCH_NO_HIT
+            # 未命中走纠正回执（附可发现工具名清单，防烂 query 连续空转）
+            return tool_search_no_hit_text(
+                self.deferred_pool, self.st.planner_state().discovered_tools
+            )
         discovered = self.st.planner_state().discovered_tools
         # 新发现判定要在更新前做（MaiBot 同款标记）
         result = tool_search_result_text(hits, set(discovered))
