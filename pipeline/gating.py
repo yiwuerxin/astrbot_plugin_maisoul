@@ -10,9 +10,17 @@ import asyncio
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..core import sanitize, trigger
+from ..core import mention, sanitize, trigger
 from ..core.states import session_key
-from .events_util import _has_at_bot, _is_reply_to_bot, _msg_id, _record, _session_name
+from .events_util import (
+    _has_at_all,
+    _has_at_bot,
+    _is_reply_to_bot,
+    _msg_id,
+    _other_at_names,
+    _record,
+    _session_name,
+)
 from .planner_host import _schedule_planner
 from .replyer import _generate_and_send, _webchat_sender
 
@@ -21,7 +29,11 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     if not P.config["enable"]:
         return
 
-    raw_text = (event.message_str or "").strip()
+    # 全接收（坑 61）：waking_check 命中唤醒前缀时会原地剥掉前缀改写
+    # message_str（"麦麦你胖了"→"你胖了"），门控/观察页/planner 上下文全都
+    # 丢失说明对象——从消息链拼全量原文，不读 wake_prefix 配置（各部署
+    # 唤醒词任意多个，同步配置必漏）；链上无文本回落 message_str
+    raw_text = sanitize.full_plain_text(event.get_messages(), event.message_str)
     # P-F 反注入清洗：引用前缀/合并转发占位不冒充本人发言；提及判定前
     # 剥掉指向其他 AI 的开头 @呼名（At 组件的 at_bot 强判定不受影响）
     text = sanitize.sanitize_text(raw_text)
@@ -108,7 +120,11 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
 
     aliases = [str(a) for a in (P.config.get("aliases") or [])]
     bot_name = str(P.config["bot_name"])
-    mentioned = any(k and k in mention_text for k in [bot_name, *aliases])
+    # 提及判定走 mention.is_mentioned（前边界匹配 + 剥适配器渲染的 @他人
+    # token + At 段他人昵称排除）——@小麦麦不再被"麦麦"子串误命中
+    mentioned = mention.is_mentioned(
+        mention_text, bot_name, aliases, exclude_names=_other_at_names(P, event)
+    )
     if not mentioned:
         # 回复引用机器人 = 提及（对齐 is_mentioned_bot_in_message 第 6 层：
         # 回复引用算 mention 不算 at；批次内任一命中即算——扫当前消息+未消费积压）
@@ -117,8 +133,15 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
             for m in st.buffer
             if st.last_fire_ts and float(m.get("ts") or 0) > st.last_fire_ts
         )
-    # 显式召唤（@ 或唤醒前缀）与 At 段同级——都算 at 档强制触发
-    at_bot = _has_at_bot(P, event) or explicit
+    # 显式召唤（@ 或唤醒前缀）与 At 段同级——但框架 waking_check 对 @全体
+    # 成员/引用回复也统一置唤醒标志，整体并入 at 档会把这两类升级成强制
+    # 必回、绕过 mentioned_bot_reply 的默认关，故经 effective_at_bot 降级
+    at_bot = mention.effective_at_bot(
+        _has_at_bot(P, event),
+        explicit,
+        _has_at_all(P, event),
+        _is_reply_to_bot(P, event),
+    )
     fired, detail, nec = trigger.should_trigger(
         st,
         P.config,

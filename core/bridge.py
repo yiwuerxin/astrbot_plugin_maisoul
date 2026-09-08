@@ -29,6 +29,12 @@ TOOL_DEPENDENCIES: dict[str, list[str]] = {
 # 独立模式 chat_toolset 不受影响（它没有内置 send_emoji，两步制对必须完整）。
 DEFERRED_EXCLUDE: set = {"send_meme", "search_meme"}
 
+# 独立模式 chat_toolset 排除集：fetch_chat_history 是 planner deferred 专属
+# （结果全量回填 contexts，planner_host 的 tool 轮）；独立模式 replyer 的
+# 工具回路 exec_tool_calls 有 result[:500] 截断（管家桥二轮回填要紧凑），
+# 手动加进 chat_tools 会被静默截成 500 字符——设计上就不该出现在这条路上
+CHAT_TOOLSET_EXCLUDE: set = {"fetch_chat_history"}
+
 
 def complete_tool_deps(names: list) -> list:
     """把列表中工具的前置依赖补进列表（去重，保持原顺序）。"""
@@ -50,6 +56,8 @@ def build_chat_toolset(context, cfg):
 
         exposed = []
         for name in complete_tool_deps(cfg.get("chat_tools") or []):
+            if name in CHAT_TOOLSET_EXCLUDE:
+                continue  # planner deferred 专属工具不进独立模式工具集（防 500 截断路径）
             tool = mgr.get_func(name)
             if tool is None:
                 continue
@@ -108,6 +116,12 @@ def list_deferred_tools(context, cfg) -> list[dict]:
         names = complete_tool_deps(cfg.get("chat_tools") or [])
         if cfg.get("maid_bridge", True):
             names.append("call_maid")
+        # maisoul 自有工具：会话历史获取（v6.20.0）——本插件方法注册的
+        # llm_tool，数据源 GroupState.buffer（MaiBot fetch_history 是 focus
+        # 专属、部署版未开，坑 30；此为 maisoul 扩展）。内置进池不占
+        # chat_tools 用户配置域（call_maid 同款待遇），模型按
+        # "history/历史" 类关键词 tool_search 可命中
+        names.append("fetch_chat_history")
         names = [n for n in names if n not in DEFERRED_EXCLUDE]
         seen: set[str] = set()
         for name in names:
@@ -138,7 +152,13 @@ class SyntheticEvent:
     """planner 定时循环里没有原始 event 时的最小替身（unified_msg_origin + get_extra）。
 
     plugins_name=None：钩子注册表不过滤（全部 handler 可见）——仅在极少数
-    无任何真实 event 的场景兜底，正常路径应复用 PlannerState.last_event。"""
+    无任何真实 event 的场景兜底，正常路径应复用 PlannerState.last_event。
+    get_group_id/get_sender_id 从 umo 解析（v6.20.0）：umo 形如
+    "platform:MessageType:会话id"（aiocqhttp 群=群号/私聊=用户ID），段缺省
+    时回退空串——session_key 由此落到 umo 兜底（坑 23 语义），fetch_chat_
+    history 等 llm_tool 在 wait 续轮合成事件下也能定位会话。webchat 的
+    会话段是 "webchat!用户名!会话id" 而真实键=用户名（sender 构造），
+    取中段对齐（v6.20.1）。"""
 
     plugins_name = None
 
@@ -148,6 +168,37 @@ class SyntheticEvent:
 
     def get_extra(self, key, default=None):
         return default
+
+    def _umo_parts(self):
+        parts = str(self.unified_msg_origin or "").split(":")
+        return (
+            parts[1] if len(parts) > 2 else "",
+            parts[-1] if len(parts) > 1 else "",
+        )
+
+    def get_group_id(self):
+        msg_type, sid = self._umo_parts()
+        return sid if msg_type == "GroupMessage" else ""
+
+    def get_sender_id(self):
+        msg_type, sid = self._umo_parts()
+        if msg_type == "GroupMessage":
+            return ""
+        # webchat 拆中段（用户名）——对齐真实事件 sender_id，防键错位
+        if sid.startswith("webchat!"):
+            parts = sid.split("!", 2)
+            if len(parts) == 3:
+                return parts[1]
+        return sid
+
+    def get_platform_name(self):
+        return str(self.unified_msg_origin or "").split(":")[0]
+
+    def get_self_id(self):
+        return ""
+
+    def get_sender_name(self):
+        return ""
 
 
 def _result_text(r) -> str:

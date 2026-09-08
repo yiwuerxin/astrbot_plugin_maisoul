@@ -50,6 +50,18 @@ except ImportError:
         def toDict(self):
             return {"type": "reply", "data": {"id": self.id}}
 
+    class _StubAt:
+        def __init__(self, qq=None):
+            self.qq = qq
+
+    class _StubAtAll(_StubAt):
+        def __init__(self):
+            super().__init__(qq="all")
+
+    class _StubAstrMessageEvent:
+        # pipeline 模块 import 用（类型注解）；测试自带鸭子事件对象
+        pass
+
     class _StubMessageChain:
         def __init__(self, chain=None):
             self.chain = list(chain or [])
@@ -111,7 +123,10 @@ except ImportError:
     _star.star_map = {}
     _comp.Plain = _StubPlain
     _comp.Reply = _StubReply
+    _comp.At = _StubAt
+    _comp.AtAll = _StubAtAll
     _evt.MessageChain = _StubMessageChain
+    _evt.AstrMessageEvent = _StubAstrMessageEvent
     _api.logger = _StubLogger()
     _pkg.core = _core
     _pkg.api = _api
@@ -493,6 +508,27 @@ def test_scoring():
     r = ev("DeepSeek，帮我写个脚本", at_bot=False)
     check("叫别的AI被抑制", r.score < 20, str(r.score))
 
+    # 主名入档：bot_name 与 aliases 同权（此前档位只查 aliases，叫主名拿不到 80 档）
+    # pending=0 且无间隔样本 → 压力分恒 0，只验证档位与内容分
+    r = scoring.evaluate(
+        make_state([("u", "x", False)], pending=0),
+        at_bot=False,
+        text="麦麦你觉得呢",
+        aliases=[],
+        bot_name="麦麦",
+        frequency=1.0,
+    )
+    check("主名入档: 叫主名80档触发", r.score >= 80, str(r.score))
+    r = scoring.evaluate(
+        make_state([("u", "x", False)], pending=0),
+        at_bot=False,
+        text="小小麦你觉得呢",
+        aliases=[],
+        bot_name="麦麦",
+        frequency=1.0,
+    )
+    check("主名入档: 叫小小麦不触发", r.score < 80, str(r.score))
+
     st = make_state(
         [(f"q{i}", "今天天气不错啊大家", False) for i in range(25)],
         pending=25,
@@ -732,6 +768,68 @@ def test_typo():
         "拼音缓存: .get 读取不污染缓存",
         "__不存在的音节__" not in typo_mod._shared_pinyin_dict(),
     )
+
+    # 字频缓存自愈（v6.18.2）：坏 JSON 备份为 .corrupt 后重建而非炸掉引擎；
+    # 落盘走 .tmp+replace 原子写（对齐 learning 库），不留 .tmp 残留
+    import pathlib as _pl
+    import tempfile as _tf
+
+    _orig_freq = typo_mod._FREQ_FILE
+    try:
+        _tmpdir = _pl.Path(_tf.mkdtemp())
+        # 坏缓存 → 重建 + 备份
+        _bad = _tmpdir / "data_char_frequency.json"
+        _bad.write_text('{"截断的坏', encoding="utf-8")
+        typo_mod._FREQ_FILE = _bad
+        _gen3 = ChineseTypoGenerator(
+            error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+        )
+        check(
+            "坏字频缓存: 不抛异常且重建可用",
+            len(_gen3.char_frequency) > 5000,
+            str(len(_gen3.char_frequency)),
+        )
+        check(
+            "坏字频缓存: 原文件备份为 .corrupt",
+            (_tmpdir / "data_char_frequency.json.corrupt").exists() and _bad.exists(),
+        )
+        # 合法 JSON 但形状不对（列表/null/标量/非数值）同样走自愈——json.load
+        # 不抛异常，旧实现会把 list/None 当字频表带出，到运行期才 AttributeError
+        for _idx, _bad_shape in enumerate(["[1, 2, 3]", "null", '{"的": "x"}']):
+            _sd = _tmpdir / f"shape{_idx}"
+            _sd.mkdir()
+            _sf = _sd / "data_char_frequency.json"
+            _sf.write_text(_bad_shape, encoding="utf-8")
+            typo_mod._FREQ_FILE = _sf
+            _gs = ChineseTypoGenerator(
+                error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+            )
+            check(
+                f"坏字频缓存: 合法JSON形状不对也自愈#{_idx}",
+                isinstance(_gs.char_frequency, dict)
+                and len(_gs.char_frequency) > 5000
+                and (_sd / "data_char_frequency.json.corrupt").exists(),
+                f"type={type(_gs.char_frequency).__name__}",
+            )
+        # 无缓存 → 生成 + 原子落盘
+        _fresh_dir = _tmpdir / "freq_fresh"
+        _fresh_dir.mkdir()
+        _new = _fresh_dir / "data_char_frequency.json"
+        typo_mod._FREQ_FILE = _new
+        ChineseTypoGenerator(
+            error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+        )
+        check(
+            "字频缓存: 无缓存时生成并落盘",
+            _new.exists()
+            and isinstance(json.loads(_new.read_text(encoding="utf-8")), dict),
+        )
+        check(
+            "字频缓存: 落盘无 .tmp 残留",
+            not (_fresh_dir / "data_char_frequency.json.tmp").exists(),
+        )
+    finally:
+        typo_mod._FREQ_FILE = _orig_freq
 
 
 def test_prompt():
@@ -1008,6 +1106,58 @@ def test_states():
     check("pick: 主候选", pick["model"] == "m1")
     check("pick: 空候选返回 None", modelbind.pick_model([], "random", {}, "x") is None)
 
+    # v6.18.2：LLM 失败时 used 记录实际尝试的候选（旧实现成功才写 used，
+    # planner 的 llm.error 上报只能回落默认 provider——归因错对象）
+    from types import SimpleNamespace as _SNS
+
+    from astrbot_plugin_maisoul.pipeline import modelbind_host as _mh
+
+    class _FailBound:
+        provider_config = {"id": "prov-bound"}
+
+        def get_model(self):
+            return "ignored"
+
+        async def text_chat(self, model=None, **kw):
+            raise RuntimeError(f"boom:{model}")
+
+    class _Ctx:
+        provider_manager = _SNS(inst_map={"prov-bound": _FailBound()})
+
+        def get_using_provider(self):
+            return _SNS(
+                provider_config={"id": "prov-default"},
+                get_model=lambda: "default-model",
+            )
+
+    _P = _SNS(context=_Ctx())
+    _cfg_bind = {
+        "task_models": [
+            {
+                "task": "planner",
+                "models": [{"provider": "prov-bound", "model": "agnes-2.5-flash"}],
+                "strategy": "sequential",
+            }
+        ]
+    }
+    _used = {}
+    try:
+        asyncio.run(
+            _mh._task_text_chat(_P, "planner", _cfg_bind, used=_used, prompt="x")
+        )
+    except RuntimeError:
+        pass
+    check(
+        "失败上报: used 记录实际尝试的模型",
+        _used.get("model") == "agnes-2.5-flash",
+        str(_used),
+    )
+    check(
+        "失败上报: used 记录实际尝试的 provider",
+        _used.get("provider") == "prov-bound",
+        str(_used),
+    )
+
     sm = StateManager()
     st = sm.get("g1")
     st.record_external(
@@ -1143,6 +1293,19 @@ def test_bridge_toolset():
                 ["send_meme", "search_meme", "steal_meme", "query_favor", "call_maid"]
             )
 
+    class _Ctx2(_Ctx):
+        def get_llm_tool_manager(self):
+            return _FakeMgr(
+                [
+                    "send_meme",
+                    "search_meme",
+                    "steal_meme",
+                    "query_favor",
+                    "call_maid",
+                    "fetch_chat_history",
+                ]
+            )
+
     cfg = {"chat_tools": ["send_meme"], "maid_bridge": True}
     ts = bridge.build_chat_toolset(_Ctx(), cfg)
     names = sorted(t.name for t in ts.tools)
@@ -1166,6 +1329,18 @@ def test_bridge_toolset():
     check(
         "显式加入的等价物生效",
         "query_favor" in names and "send_meme" in names,
+        str(names),
+    )
+
+    # v6.20.0：fetch_chat_history 是 planner deferred 专属，不进独立模式工具集
+    # （独立回路 exec_tool_calls 有 [:500] 截断——Sourcery #19 评论带出的真实
+    # 隐患：WebUI 工具弹窗列出全部注册工具，手动加进 chat_tools 会走截断路）
+    cfg = {"chat_tools": ["send_meme", "fetch_chat_history"], "maid_bridge": False}
+    ts = bridge.build_chat_toolset(_Ctx2(), cfg)
+    names = sorted(t.name for t in ts.tools)
+    check(
+        "chat_toolset: fetch_chat_history 手动加入也被排除",
+        "fetch_chat_history" not in names and names == ["search_meme", "send_meme"],
         str(names),
     )
 
@@ -1657,6 +1832,15 @@ def test_monitor():
     check(
         "finalized: native_tool_calls 无信号不编造",
         "native_tool_calls" not in fin["planner"],
+    )
+    check(
+        "finalized: 未上报模型时 planner.model_name 缺省（旧事件不渲染模型）",
+        "model_name" not in fin["planner"]
+        and all("model_name" not in m for m in fin["request"]["messages"]),
+    )
+    check(
+        "finalized: 无 replyer 生成时无 replyer 块（旧事件无回复器流程）",
+        "replyer" not in fin,
     )
 
     since = events[1]["data"]["event_id"]
@@ -2254,6 +2438,64 @@ def test_learning():
     )
 
 
+def test_mention():
+    print("[提及判定与at档构成]")
+    from astrbot_plugin_maisoul.core import mention
+
+    BOT, AL = "麦麦", ["小麦"]
+    # 场景来源：群里 @另一个 bot「小麦麦」（aiocqhttp 渲染 " @昵称(QQ号) " 进文本）
+    check(
+        "提及: 开头@小麦麦不命中",
+        not mention.is_mentioned(" @小麦麦(123456) 帮我看看", BOT, AL),
+    )
+    check(
+        "提及: 中段@小麦麦不命中",
+        not mention.is_mentioned("帮我@小麦麦(123456)看看这个", BOT, AL),
+    )
+    check(
+        "提及: 纯文本小小麦不命中",
+        not mention.is_mentioned("小小麦帮我查一下", BOT, AL),
+    )
+    check("提及: 前缀粘连不命中", not mention.is_mentioned("个麦麦在吗", BOT, AL))
+    # 后缀扩展名纯文本仍命中（中文无分词的已知残留；@场景由 exclude_names 兜底）
+    check(
+        "提及: 后缀扩展名文本仍命中(已知残留)",
+        mention.is_mentioned("麦麦子今天干嘛", BOT, AL),
+    )
+    check("提及: 真点名命中", mention.is_mentioned("@麦麦 帮我看看", BOT, AL))
+    check("提及: 纯文本叫主名命中", mention.is_mentioned("麦麦你觉得呢", BOT, AL))
+    check("提及: 别名命中", mention.is_mentioned("小麦觉得呢", BOT, AL))
+    check("提及: 标点包围命中", mention.is_mentioned("（麦麦）在吗", BOT, AL))
+    check(
+        "提及: 剥渲染token后正文叫名仍命中",
+        mention.is_mentioned("@别人(111) 麦麦在吗", BOT, AL),
+    )
+    check("提及: @前缀写法的别名命中", mention.is_mentioned("@小麦 来", BOT, AL))
+    # exclude_names：At 段里 @其他人 的昵称（无 qq 渲染/昵称含空格的防线）
+    check(
+        "提及: 同名他人被exclude排除",
+        not mention.is_mentioned("帮我 @麦麦 查", BOT, AL, exclude_names=["麦麦"]),
+    )
+    check(
+        "提及: 含空格昵称被exclude排除",
+        not mention.is_mentioned("喊 麦 麦麦 出来", BOT, AL, exclude_names=["麦 麦麦"]),
+    )
+    check("提及: 空文本/空关键字安全", not mention.is_mentioned("", BOT, ["", "  "]))
+
+    # explicit 旁路降级（AtAll/引用回复不算 @bot，唤醒前缀保持）
+    check("at档: At段命中", mention.effective_at_bot(True, False, False, False))
+    check("at档: 前缀唤醒保持", mention.effective_at_bot(False, True, False, False))
+    check("at档: @全体成员降级", not mention.effective_at_bot(False, True, True, False))
+    check("at档: 引用回复降级", not mention.effective_at_bot(False, True, False, True))
+    check(
+        "at档: AtAll+Reply都不遮蔽真At",
+        mention.effective_at_bot(True, True, True, True),
+    )
+    check(
+        "at档: 无任何信号为否", not mention.effective_at_bot(False, False, True, True)
+    )
+
+
 def test_phase3_mechanisms():
     print("[Phase3 机制：P-E/P-F/P-D]")
     import time as _t
@@ -2286,6 +2528,36 @@ def test_phase3_mechanisms():
     check(
         "P-F 点名: 指向自己的前缀不剥",
         sanitize.strip_leading_ai_mention("@麦麦 你好", "麦麦", []) == "@麦麦 你好",
+    )
+    # 坑 61 全接收：waking_check 剥唤醒前缀改写 message_str，全量原文从消息链拼回
+    from types import SimpleNamespace as _NS
+
+    check(
+        "全接收: 唤醒前缀剥除后链上恢复全量原文",
+        sanitize.full_plain_text([_NS(text="麦麦你胖了")], "你胖了") == "麦麦你胖了",
+    )
+    check(
+        "全接收: 多文本段拼接（含空白段跳过）",
+        sanitize.full_plain_text(
+            [_NS(text="麦麦"), _NS(text="  "), _NS(text="你胖了")], ""
+        )
+        == "麦麦你胖了",
+    )
+    check(
+        "全接收: 链上无文本回落 message_str（纯图/表情）",
+        sanitize.full_plain_text([_NS(qq="123"), _NS(url="http://x")], "你胖了")
+        == "你胖了",
+    )
+    check(
+        "全接收: 两者皆空得空串（下游转 [图片/表情] 占位）",
+        sanitize.full_plain_text([], "") == "",
+    )
+    check(
+        "全接收: 非 .text 属性不误收（At/Reply 等组件无文本贡献）",
+        sanitize.full_plain_text(
+            [_NS(qq="10001", name="某人"), _NS(text="你好")], "你好"
+        )
+        == "你好",
     )
 
     # P-E 频率窗口反馈
@@ -2470,7 +2742,17 @@ def test_taskregistry():
         ],
         planner_content="去回复",
         reasoning_by_idx={1: "先想想语气…"},
+        model_by_idx={1: "test-planner-model"},
+        planner_model_name="test-planner-model",
         replyer_reasoning="回复器思考：要热情一点",
+        replyer_trace={
+            "system_prompt": "【身份】麦麦",
+            "user_message": "【记录】你好",
+            "output": "早呀",
+            "model": "reply-model-x",
+            "provider": "src_r",
+            "duration_ms": 2345.6,
+        },
     )
     m3.close()
     import json as _json
@@ -2485,12 +2767,43 @@ def test_taskregistry():
         str(msgs[1])[:80],
     )
     check(
+        "推理过程: assistant 轮附 model_name（与 reasoning 同机制不回灌）",
+        msgs[1].get("model_name") == "test-planner-model"
+        and "model_name" not in msgs[0],
+        str(msgs[1])[:80],
+    )
+    check(
         "推理过程: 回复器思考在 planner 块",
         data["planner"].get("reasoning") == "回复器思考：要热情一点",
+    )
+    check(
+        "推理过程: 整循环模型名在 planner 块（多模型去重拼接）",
+        data["planner"].get("model_name") == "test-planner-model",
+    )
+    rp = data.get("replyer") or {}
+    check(
+        "推理过程: replyer 块=回复器流程素材（v6.19.0 扩展）",
+        rp.get("system_prompt") == "【身份】麦麦"
+        and rp.get("user_message") == "【记录】你好"
+        and rp.get("output") == "早呀"
+        and rp.get("model_name") == "reply-model-x"
+        and rp.get("duration_ms") == 2345.6
+        and rp.get("reasoning") == "回复器思考：要热情一点",
+        str(rp)[:80],
+    )
+    from astrbot_plugin_maisoul.core.monitor import _serialize_planner_block as _spb
+
+    check(
+        "推理过程: 仅模型名也产出 planner 块（model_name 进 None 守卫）",
+        (_spb(None, None, None, None, None, None, model_name="m-x") or {}).get(
+            "model_name"
+        )
+        == "m-x",
     )
 
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
     import asyncio as _aio2
+    from astrbot_plugin_maisoul.core.taskregistry import TaskRegistry as _TR
     from astrbot_plugin_maisoul.core.monitor import (
         MaisakaMonitorEventRecord as _Rec,
         Monitor as _M,
@@ -2500,7 +2813,7 @@ def test_taskregistry():
     async def _writer_scenario():
         s2 = _MS(pathlib.Path(tempfile.mkdtemp()) / "m10.db")
         m2 = _M(s2)
-        m2.start_writer()
+        m2.start_writer(_TR())
         m2.emit_session_start(
             "g1",
             "群 g1",
@@ -2520,6 +2833,93 @@ def test_taskregistry():
     with s2._session_factory() as sess:
         n = len(sess.query(_Rec).all())
     check("M10 writer: 事件经后台协程落库", n >= 2, f"rows={n}")
+
+    # v6.18.2 回归：writer 正在 flush（to_thread 落库中）时后续事件入队并停机，
+    # 哨兵会在下一轮批量排水中被取出——旧实现此时直接 return 丢弃已取批次
+    # （与同行注释承诺相反）。生产对应：忙碌群消息持续入队时卸载插件。
+    # 时序用线程屏障钉死（entered/release），不依赖墙钟 sleep。
+    import threading as _th
+
+    async def _sentinel_scenario():
+        s4 = _MS(pathlib.Path(tempfile.mkdtemp()) / "sen.db")
+        m4 = _M(s4)
+        _orig_record = s4.record
+        _entered = _th.Event()
+        _release = _th.Event()
+
+        def _gated_record(event, data):
+            _entered.set()  # writer 已进入 flush（to_thread 线程内）
+            _release.wait(timeout=5)
+            return _orig_record(event, data)
+
+        s4.record = _gated_record
+        m4.start_writer(_TR())
+        m4.emit_message_sent(
+            "g1", "麦麦", "m0", "id0", time.time(), "reply", platform="qq"
+        )
+        for _ in range(200):
+            if _entered.is_set():
+                break
+            await _aio2.sleep(0.005)
+        # 闸门断言：writer 未进入 flush 时尾部排水兜底会让 rows 检查假绿，
+        # 必须先确认时序真的成立（PR review 意见）
+        check("writer 停止: 用例前置 writer 已停在 flush", _entered.is_set())
+        m4.emit_message_sent(
+            "g1", "麦麦", "m1", "id1", time.time(), "reply", platform="qq"
+        )
+        m4.emit_message_sent(
+            "g1", "麦麦", "m2", "id2", time.time(), "reply", platform="qq"
+        )
+        _qref = m4._queue
+        _stop_task = _aio2.create_task(m4.stop_writer())
+        for _ in range(200):  # 等 stop_writer 同步序言把哨兵放进队列
+            if m4._queue is None and _qref is not None and _qref.qsize() >= 3:
+                break
+            await _aio2.sleep(0.005)
+        _release.set()  # 放行 writer：取 m1 → 排水 m2 → 撞哨兵
+        await _stop_task
+        return s4
+
+    s4 = _aio2.run(_sentinel_scenario())
+    with s4._session_factory() as sess:
+        n4 = len(sess.query(_Rec).all())
+    check(
+        "writer 停止: 排水中撞哨兵不丢已取批次",
+        n4 == 3,
+        f"rows={n4}（应为 3，旧实现丢 m1/m2 整批）",
+    )
+
+    # v6.18.2：writer 经 TaskRegistry 发起（create_task 唯一入口约束；
+    # 旧实现裸 create_task，与 REFACTOR_NOTES「grep 仅 TaskRegistry 本体」的
+    # 验收声明不符）
+
+    async def _writer_reg_scenario():
+        s5 = _MS(pathlib.Path(tempfile.mkdtemp()) / "reg.db")
+        m5 = _M(s5)
+        reg5 = _TR()
+        m5.start_writer(reg5)
+        size_running = reg5.size
+        m5.emit_message_sent(
+            "g1", "麦麦", "x", "i", time.time(), "reply", platform="qq"
+        )
+        await m5.stop_writer()
+        await _aio2.sleep(0)  # done_callback 清理一拍
+        return size_running, reg5.size
+
+    try:
+        _size_running, _size_after = _aio2.run(_writer_reg_scenario())
+    except TypeError:
+        _size_running, _size_after = -1, -1  # 旧签名无 registry 参数
+    check(
+        "writer 注册: start_writer 经 TaskRegistry spawn",
+        _size_running == 1,
+        f"size={_size_running}",
+    )
+    check(
+        "writer 注册: 停止后自动移除",
+        _size_after == 0,
+        f"size={_size_after}",
+    )
 
     # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
     from astrbot_plugin_maisoul.core.states import StateManager as _SM
@@ -2692,6 +3092,34 @@ def test_planner():
     hits = P.search_deferred_tools(pool, "m", 1)
     check("tool_search: limit 截断", len(hits) == 1)
 
+    # v6.19.1：未命中纠正回执（烂 query 附可发现工具名清单，防连续空转）
+    nohit = P.tool_search_no_hit_text(pool, set())
+    check(
+        "tool_search: 未命中回执附工具名清单与重试指引",
+        nohit.startswith(P.TOOL_SEARCH_NO_HIT)
+        and "当前可搜索的 deferred tools：call_maid、search_meme、send_meme" in nohit
+        and "不要用自然语言描述" in nohit,
+        nohit[:120],
+    )
+    nohit2 = P.tool_search_no_hit_text(pool, {"call_maid"})
+    check(
+        "tool_search: 已发现的不进清单",
+        "call_maid" not in nohit2 and "search_meme" in nohit2,
+    )
+    check(
+        "tool_search: 池空/全发现退回原文提示",
+        P.tool_search_no_hit_text([], set()) == P.TOOL_SEARCH_NO_HIT
+        and P.tool_search_no_hit_text(pool, {"call_maid", "search_meme", "send_meme"})
+        == P.TOOL_SEARCH_NO_HIT,
+    )
+    big = [
+        {"name": f"tool_{i}", "description": "x", "tool": object()} for i in range(25)
+    ]
+    check(
+        "tool_search: 清单封顶 20 个",
+        P.tool_search_no_hit_text(big, set()).count("tool_") == 20,
+    )
+
     reminder = P.build_deferred_reminder(pool, set())
     check(
         "reminder: 模板原文与编号",
@@ -2728,8 +3156,11 @@ def test_planner():
     check("tool_search 流: 二次调用标此前已发现", "search_meme（此前已发现）" in r2, r2)
     r3 = deps2.on_tool_search({"query": "zzz", "limit": 5})
     check(
-        "tool_search 流: 无命中文案原文",
-        r3 == P.TOOL_SEARCH_NO_HIT and "未找到匹配的 deferred tools" in r3,
+        "tool_search 流: 无命中=原文提示+纠正段（v6.19.1，烂 query 附清单）",
+        r3.startswith(P.TOOL_SEARCH_NO_HIT)
+        and "当前可搜索的 deferred tools" in r3
+        and "不要用自然语言描述" in r3,
+        r3[:120],
     )
     check(
         "PlannerState: discovered_tools 字段存在",
@@ -3179,6 +3610,176 @@ def test_planner():
     check("vector 回落: 维度异常吞掉后走随手抽样", blk6.startswith("【表达习惯参考"))
 
 
+def test_history_tool():
+    """fetch_chat_history 纯逻辑（v6.20.0；v6.20.1 排除集改 planner 同口径）：
+    可见集计算/窗口裁剪/过滤/封顶/正序/渲染。"""
+    print("[历史获取工具]")
+    import time as _t
+    from astrbot_plugin_maisoul.core import history as H
+    from astrbot_plugin_maisoul.core.bridge import SyntheticEvent
+
+    def rec(i, text, sid="u1", name="小明", ts=None):
+        return {
+            "sid": sid,
+            "name": name,
+            "msg_id": f"m{i}",
+            "text": text,
+            "ts": ts if ts is not None else 1700000000.0 + i * 60,
+            "at_bot": False,
+            "reply_bot": False,
+            "quote": "",
+        }
+
+    records = [rec(i, f"消息{i}") for i in range(100)]
+    # ① 窗口裁剪：planner 已见集（无分析时等价最近 window 条）不进结果
+    seen80 = {id(m) for m in records[-80:]}
+    picked = H.fetch_history_slice(records, seen80)
+    ids = [m["msg_id"] for m in picked]
+    check(
+        "历史: 已见集裁剪——最近 window 条不进结果（只取 m0~m19）",
+        set(ids) <= {f"m{i}" for i in range(20)} and "m99" not in ids,
+        str(ids[:3]),
+    )
+    check(
+        "历史: 默认条数 20 且按时间正序",
+        len(picked) == 20
+        and picked[0]["msg_id"] == "m0"
+        and picked[-1]["msg_id"] == "m19",
+        str(ids[:3]),
+    )
+    # ② keyword 过滤（已见集之外的范围内命中）
+    records2 = [rec(i, f"话题{i}聊到{chr(65 + i % 3)}") for i in range(100)]
+    seen80b = {id(m) for m in records2[-80:]}
+    picked2 = H.fetch_history_slice(records2, seen80b, keyword="话题9")
+    check(
+        "历史: 关键词过滤只留命中",
+        all("话题9" in m["text"] for m in picked2) and len(picked2) > 0,
+        str(len(picked2)),
+    )
+    # ③ limit 封顶 50 / 下限 1
+    check(
+        "历史: limit 封顶 50（已见集之外须有足量记录）",
+        len(H.fetch_history_slice(records, {id(m) for m in records[-10:]}, "", 500))
+        == 50,
+    )
+    check(
+        "历史: limit 下限 1",
+        len(H.fetch_history_slice(records, seen80, "", 0)) == 1,
+    )
+    # ④ 已见集覆盖全部记录
+    check(
+        "历史: 已见集全覆盖返回空",
+        H.fetch_history_slice(records[:50], {id(m) for m in records[:50]}) == [],
+    )
+    # ⑤ 渲染：说明头 + <message 前缀 + 跨日插行 + 自发消息标记
+    day1 = _t.mktime((2024, 1, 1, 10, 0, 0, 0, 0, -1))
+    day2 = day1 + 86400
+    recs = [
+        rec(1, "早的", ts=day1),
+        rec(2, "晚的", sid="self", name="麦麦", ts=day2),
+    ]
+    text = H.render_history_result(recs, 5, True)
+    check(
+        "历史: 渲染含说明头/<message/跨日行/自发标记",
+        text.startswith("以下是比当前上下文窗口更早的聊天记录（2 条")
+        and "<message " in text
+        and "时间：2024-01-01" in text
+        and "时间：2024-01-02" in text
+        and 'is_self_message="true"' in text,
+        text[:100],
+    )
+    check(
+        "历史: 空结果文案不编造",
+        H.render_history_result([], 0).startswith("没有可返回的更早聊天记录"),
+    )
+    # ⑥ 盲区修复回归（v6.20.1）：分析回灌占坑后 planner 实际可见聊天数
+    # = 窗口 − 窗口内分析数；排除集必须按同口径收窄——旧实现按 buffer
+    # 条数硬排 2×base，m20~m29 既不在 planner 窗口内也不被工具返回，
+    # 任何途径都取不到（永久盲区）
+    analyses = [
+        {"ts": records[i]["ts"] + 0.5, "text": f"分析{j}"}
+        for j, i in enumerate(range(90, 100))
+    ]
+    no_pending = records[-1]["ts"] + 10  # 水位新于全部消息 → pending 空
+    seen_gap = H.planner_seen_ids(records, analyses, 80, no_pending, True)
+    picked_gap = H.fetch_history_slice(records, seen_gap)
+    ids_gap = [m["msg_id"] for m in picked_gap]
+    check(
+        "历史: 分析占坑后排除集收窄（盲区段 m20~m29 可取回）",
+        "m20" in ids_gap and "m29" in ids_gap and "m30" not in ids_gap,
+        str(ids_gap[:3]),
+    )
+    # ⑦ pending（水位后新消息）计入已见——排水机制会注入 planner，
+    # 即使按条数落在窗口外也不由工具返回
+    seen_pend = H.planner_seen_ids(records, [], 80, records[90]["ts"], True)
+    picked_pend = H.fetch_history_slice(records, seen_pend)
+    ids_pend = [m["msg_id"] for m in picked_pend]
+    check(
+        "历史: pending 计入已见（排水将注入，不重复喂）",
+        "m10" in ids_pend and "m11" not in ids_pend and len(picked_pend) == 11,
+        str(ids_pend[:3]),
+    )
+    # ⑧ SyntheticEvent 会话解析（wait 续轮合成事件下定位会话）
+    se_group = SyntheticEvent("aiocqhttp:GroupMessage:123456")
+    se_priv = SyntheticEvent("aiocqhttp:FriendMessage:10001")
+    se_wc = SyntheticEvent("webchat:FriendMessage:webchat!owner!a1b2")
+    check(
+        "历史: SyntheticEvent 群/私聊会话键解析",
+        se_group.get_group_id() == "123456"
+        and se_group.get_sender_id() == ""
+        and se_priv.get_sender_id() == "10001"
+        and se_priv.get_group_id() == ""
+        and se_group.get_platform_name() == "aiocqhttp",
+    )
+    check(
+        "历史: SyntheticEvent webchat 键=用户名（对齐真实 sender_id）",
+        se_wc.get_sender_id() == "owner" and se_wc.get_group_id() == "",
+        se_wc.get_sender_id(),
+    )
+
+
+def test_events_util_degradation():
+    print("[事件工具降级]")
+    # GOAL 验收约束：except Exception 必须带 logger 留痕——四处消息组件
+    # 解析 helper 此前是裸 pass，降级发生时完全无痕（反注入/引用链悄悄失效）
+    from astrbot_plugin_maisoul.pipeline import events_util as eu
+
+    class _LogRec:
+        def __init__(self):
+            self.calls = []
+
+        def debug(self, msg, *a, **k):
+            self.calls.append(msg)
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    class _BoomEvt:
+        def get_messages(self):
+            raise RuntimeError("boom")
+
+        def get_self_id(self):
+            return "42"
+
+    rec = _LogRec()
+    _orig = eu.logger
+    eu.logger = rec
+    try:
+        e = _BoomEvt()
+        check("降级: 识图引用坏事件→空列表", eu._extract_image_refs(e) == [])
+        check("降级: quote ids 坏事件→空串", eu._quote_ids(e) == "")
+        check("降级: @bot 判定坏事件→False", eu._has_at_bot(None, e) is False)
+        check("降级: 回复bot 判定坏事件→False", eu._is_reply_to_bot(None, e) is False)
+        check(
+            "降级: 四处异常路径均留 debug 日志",
+            len(rec.calls) >= 4,
+            f"logged={len(rec.calls)}",
+        )
+    finally:
+        eu.logger = _orig
+    check("恢复: logger 复原", eu.logger is _orig)
+
+
 def test_personas():
     print("[多人格]")
     from astrbot_plugin_maisoul.core import personas
@@ -3304,6 +3905,9 @@ if __name__ == "__main__":
     test_bridge_builtin_context()
     test_personas()
     test_taskregistry()
+    test_events_util_degradation()
+    test_mention()
+    test_history_tool()
     test_phase3_mechanisms()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）

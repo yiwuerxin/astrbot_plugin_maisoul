@@ -372,14 +372,30 @@ class Monitor:
             # 观察账本写入失败不阻断聊天管线，但必须留痕（高频路径用 debug）
             logger.debug(f"maisoul: 麦麦观察事件写入失败: {event}", exc_info=True)
 
-    def start_writer(self) -> None:
-        """启动后台落库 writer 协程（M10）。幂等；需在事件循环内调用。"""
+    def start_writer(self, registry) -> None:
+        """启动后台落库 writer 协程（M10）。幂等；需在事件循环内调用。
+
+        registry（TaskRegistry）：create_task 唯一入口约束——writer 必须
+        经注册表发起（强引用 + 卸载时 cancel_and_wait_all 统一管理）。"""
         if self._writer is not None and not self._writer.done():
             return
         self._queue = asyncio.Queue(maxsize=2000)
-        self._writer = asyncio.create_task(self._writer_loop(), name="monitor_writer")
+        self._writer = registry.spawn(self._writer_loop(), name="monitor_writer")
 
     _SENTINEL = object()  # stop_writer 的优雅退出信号
+
+    async def _flush_batch(self, batch: list) -> None:
+        """按序落库并广播一批事件（writer 的批量写路径；单条失败留痕不阻断）。"""
+        for ev, d in batch:
+            try:
+                broadcast_data = d
+                if ev not in NON_PERSISTED_EVENTS:
+                    broadcast_data = await asyncio.to_thread(self.store.record, ev, d)
+                self.bus.publish(ev, broadcast_data)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug(f"maisoul: 麦麦观察事件写入失败: {ev}", exc_info=True)
 
     async def _writer_loop(self) -> None:
         q = self._queue
@@ -392,20 +408,13 @@ class Monitor:
             while len(batch) < 64 and not q.empty():
                 nxt = q.get_nowait()
                 if nxt is self._SENTINEL:
-                    return  # 排水中收到停止信号：本批已取项照常落库后退出
+                    # 排水中收到停止信号：本批已取项照常落库后退出
+                    # （直接 return 会把整批已取事件丢掉——忙碌群卸载时丢
+                    # 麦麦观察事件库最后一批，v6.18.2 修复）
+                    await self._flush_batch(batch)
+                    return
                 batch.append(nxt)
-            for ev, d in batch:
-                try:
-                    broadcast_data = d
-                    if ev not in NON_PERSISTED_EVENTS:
-                        broadcast_data = await asyncio.to_thread(
-                            self.store.record, ev, d
-                        )
-                    self.bus.publish(ev, broadcast_data)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.debug(f"maisoul: 麦麦观察事件写入失败: {ev}", exc_info=True)
+            await self._flush_batch(batch)
 
     async def stop_writer(self, timeout: float = 5.0) -> None:
         """优雅冲刷并停止（terminate 用）。
@@ -592,54 +601,68 @@ class Monitor:
         eco_injection: str = "",
         planner_system_prompt: str = "",
         reasoning_by_idx=None,
+        model_by_idx=None,
+        planner_model_name: str = "",
         replyer_reasoning: str = "",
+        replyer_trace=None,
     ) -> None:
         """广播一轮 planner 结束后的最终聚合事件（MaiBot 原事件名与嵌套结构）。
 
         token 用量来自 AstrBot LLMResponse.usage（TokenUsage：input_other+
         input_cached=输入、output=输出），在 _planner_cycle 逐轮累计。
         native_tool_calls / prompt_html_uri 是 MaiBot Provider 专属，缺省即省。
-        system_prompt / messages[].tool_calls 是 maisoul 扩展（推理过程页复刻
-        部署版 ReasoningLogViewerPage 需要，MaiBot 从 dump 文件取）。
+        system_prompt / messages[].tool_calls / messages[].model_name /
+        planner.model_name 是 maisoul 扩展（推理过程页复刻部署版
+        ReasoningLogViewerPage 需要，MaiBot 从 dump 文件取；模型名展示对齐
+        部署版「模型：${model_name}」文案，MaiBot 载荷本身不带）。
         """
-        self._broadcast(
-            "planner.finalized",
-            {
-                "session_id": session_id,
-                "cycle_id": cycle_id,
-                "timestamp": time.time(),
-                "request": _serialize_request_block(
-                    planner_request_messages,
-                    planner_selected_history_count,
-                    planner_tool_count,
-                    planner_system_prompt or None,
-                    reasoning_map=reasoning_by_idx,
-                ),
-                "planner": _serialize_planner_block(
-                    planner_content,
-                    planner_tool_calls,
-                    planner_prompt_tokens,
-                    planner_completion_tokens,
-                    planner_total_tokens,
-                    planner_duration_ms,
-                    replyer_reasoning,
-                ),
-                "tools": _serialize_tool_results(list(tools or [])),
-                "interrupted": planner_interrupted,
-                "final_state": {
-                    "time_records": dict(time_records or {}),
-                    "agent_state": agent_state,
-                    "end_reason": end_reason,
-                    "end_detail": end_detail,
-                    # maisoul 扩展：本轮 replyer 收集的生态注入全文（心弦好感/记忆/世界书）
-                    "eco_injection": eco_injection or "",
-                },
+        payload = {
+            "session_id": session_id,
+            "cycle_id": cycle_id,
+            "timestamp": time.time(),
+            "request": _serialize_request_block(
+                planner_request_messages,
+                planner_selected_history_count,
+                planner_tool_count,
+                planner_system_prompt or None,
+                reasoning_map=reasoning_by_idx,
+                model_map=model_by_idx,
+            ),
+            "planner": _serialize_planner_block(
+                planner_content,
+                planner_tool_calls,
+                planner_prompt_tokens,
+                planner_completion_tokens,
+                planner_total_tokens,
+                planner_duration_ms,
+                replyer_reasoning,
+                model_name=planner_model_name,
+            ),
+            "tools": _serialize_tool_results(list(tools or [])),
+            "interrupted": planner_interrupted,
+            "final_state": {
+                "time_records": dict(time_records or {}),
+                "agent_state": agent_state,
+                "end_reason": end_reason,
+                "end_detail": end_detail,
+                # maisoul 扩展：本轮 replyer 收集的生态注入全文（心弦好感/记忆/世界书）
+                "eco_injection": eco_injection or "",
             },
-        )
+        }
+        replyer_block = _serialize_replyer_block(replyer_trace, replyer_reasoning)
+        if replyer_block is not None:
+            # maisoul 扩展：回复器流程素材（推理过程页「类型」切换用），缺省即省
+            payload["replyer"] = replyer_block
+        self._broadcast("planner.finalized", payload)
 
 
 def _serialize_request_block(
-    messages, selected_history_count, tool_count, system_prompt=None, reasoning_map=None
+    messages,
+    selected_history_count,
+    tool_count,
+    system_prompt=None,
+    reasoning_map=None,
+    model_map=None,
 ):
     if messages is None and selected_history_count is None and tool_count is None:
         return None
@@ -649,15 +672,19 @@ def _serialize_request_block(
         "tool_count": int(tool_count or 0),
     }
     rmap = {int(k): v for k, v in dict(reasoning_map or {}).items()}
+    mmap = {int(k): v for k, v in dict(model_map or {}).items()}
     for i, m in enumerate(list(messages or [])):
         if not isinstance(m, dict):
             continue
         item = {"role": str(m.get("role", "unknown")), "content": m.get("content")}
-        # 推理过程页：assistant 轮附思考（ReasoningItem）——仅进监控副本，
-        # 回灌 contexts 永不带 reasoning（坑 54），两边互不影响
+        # 推理过程页：assistant 轮附思考（ReasoningItem）与该轮调用的模型名
+        # ——均仅进监控副本，回灌 contexts 永不带（坑 54），两边互不影响
         reasoning = str(rmap.get(i, "") or "").strip()
         if reasoning and item["role"] == "assistant":
             item["reasoning"] = reasoning
+        model_name = str(mmap.get(i, "") or "").strip()
+        if model_name and item["role"] == "assistant":
+            item["model_name"] = model_name
         if m.get("tool_calls"):
             item["tool_calls"] = m["tool_calls"]
         if str(m.get("role")) == "tool" and m.get("tool_call_id"):
@@ -676,6 +703,7 @@ def _serialize_planner_block(
     total_tokens,
     duration_ms,
     replyer_reasoning="",
+    model_name="",
 ):
     if (
         content is None
@@ -684,6 +712,7 @@ def _serialize_planner_block(
         and prompt_tokens is None
         and completion_tokens is None
         and total_tokens is None
+        and not str(model_name or "").strip()
     ):
         return None
     out = {
@@ -702,10 +731,47 @@ def _serialize_planner_block(
         "total_tokens": int(total_tokens or 0),
         "duration_ms": float(duration_ms or 0.0),
     }
+    if str(model_name or "").strip():
+        out["model_name"] = str(model_name).strip()  # 本次循环调用的模型（去重拼接）
     if str(replyer_reasoning or "").strip():
         out["reasoning"] = str(
             replyer_reasoning
         ).strip()  # 推理过程页：reply 工具的回复器思考
+    return out
+
+
+def _serialize_replyer_block(trace, reasoning=""):
+    """推理过程页「回复器」流程素材（maisoul 扩展，v6.19.0）。
+
+    trace 来自 _planner_execute_reply 的 replyer_trace：请求双段 + 输出全文 +
+    本次服务的模型/耗时。全空（本轮无 reply 生成）返回 None，旧事件无此键。
+    """
+    t = dict(trace or {})
+    system_prompt = str(t.get("system_prompt") or "").strip()
+    user_message = str(t.get("user_message") or "").strip()
+    output = str(t.get("output") or "").strip()
+    model_name = str(t.get("model") or "").strip()
+    duration_ms = float(t.get("duration_ms") or 0.0)
+    if not any(
+        (
+            system_prompt,
+            user_message,
+            output,
+            model_name,
+            duration_ms,
+            str(reasoning or "").strip(),
+        )
+    ):
+        return None
+    out = {
+        "system_prompt": system_prompt,
+        "user_message": user_message,
+        "output": output,
+        "model_name": model_name,
+        "duration_ms": duration_ms,
+    }
+    if str(reasoning or "").strip():
+        out["reasoning"] = str(reasoning).strip()
     return out
 
 

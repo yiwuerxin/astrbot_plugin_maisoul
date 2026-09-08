@@ -368,6 +368,7 @@ code{font-family:var(--mono);font-size:.9em;background:hsl(var(--muted));border-
 .mo-badge.outline{background:transparent;color:var(--mo-fg)}
 /* monitor 内覆盖：text-[10px] / px-1.5 text-[10px] / h-5 px-1.5 / h-4 px-1 / text-xs font-normal / gap-1 */
 .mo-badge.t10{font-size:10px}
+.mo-badge.mono{font-family:var(--mo-mono);font-weight:500}
 .mo-badge.p6{padding-left:6px;padding-right:6px}
 .mo-badge.h20{height:20px;padding-left:6px;padding-right:6px;font-size:10px}
 .mo-badge.h16{height:16px;padding-left:4px;padding-right:4px;font-size:10px}
@@ -612,7 +613,7 @@ let FB = null;
 let maisoulTab = 'core';
 function setMsTab(t){maisoulTab=t;render('maisoul')}
 const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理',exprv:'表达审核'};
-const PAGE_VERSION = 'v6.15.4';
+const PAGE_VERSION = 'v6.20.1';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -1795,6 +1796,7 @@ function moCard(e,waitChain){
     const planCard=`<div class="mo-card plan"><div class="mo-cbody">
       <div class="mo-chead"><span class="mo-ic mo-okc">${moIcon('brain',16)}</span><span class="mo-ctitle">Planner</span>
         ${tools.length?`<button class="mo-rbtn" title="在新页面查看本轮完整工作流（推理过程）" onclick="MO.page='reason';MO.reasoning=${e.id};moRenderTimeline();window.scrollTo(0,0)">${moIcon('file-text',12)} 推理过程</button>`:''}
+        ${p.model_name?`<span class="mo-badge outline t10 mono" title="本次 Planner 调用的模型${(p.model_name.includes(' / ')?'（多轮多模型去重并列）':'')}">${esc(p.model_name)}</span>`:''}
         <span class="mo-badge outline fnorm" style="margin-left:auto">${moFmtMs(p.duration_ms)}</span>
         ${hasReq?`<span class="mo-badge secondary t10">上下文 ${r.selected_history_count==null?0:r.selected_history_count} 条 / 可用工具 ${r.tool_count==null?0:r.tool_count}</span>`:''}
         ${hasTok?`<span class="mo-badge outline t10">${p.prompt_tokens||0}+${p.completion_tokens||0} tokens</span>`:''}
@@ -1880,7 +1882,14 @@ function moReasonFill(ev){
   if(f)f.srcdoc=moBuildReasonDoc(ev);
 }
 /* srcdoc 与宿主同源：iframe 内控件经 parent 调宿主（返回监控/分页/筛选/记录展开） */
-function moReasonBack(){MO.page='tl';MO.reasoning=null;moRenderAll()}
+function moReasonBack(){MO.page='tl';MO.reasoning=null;delete MO.rrStage;moRenderAll()}
+function moReasonStage(v){
+  /* 类型切换（v6.20.0）：'planner'/'replyer'，null=类型选择视图。
+     视图级切换置空 reasonBuilt 强制重建 srcdoc（增量协议只服务列表/详情） */
+  MO.rrStage=(v==='planner'||v==='replyer')?v:null;
+  MO.reasonBuilt=null;
+  moRenderTimeline();
+}
 /* ---- 推理过程页：逐像素复刻部署版 ReasoningLogViewerPage（logs-D_9unzIh.js）
    的渲染产物——同类名 DOM + 原版 CSS（<style id=mbrc> 内嵌 maibot_dashboard
    dist index-gQUKboHR.css，JetBrains 字体 base64），数据来自 maisoul 的
@@ -1988,10 +1997,10 @@ function rrOutItems(d,outIdx,n0){
   }
   return items;
 }
-function rrSection(title,items){
+function rrSection(title,items,extra){
   /* 部署版 fe 分区容器：标题 + secondary 计数徽章；空分区给「没有 Items。」 */
   const cnt=rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm',items.length+' Items');
-  return `<section class="space-y-2 rounded-md border p-2.5 sm:p-3"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">${title}</span>${cnt}</div>${items.length?`<div class="space-y-2">${items.join('')}</div>`:`<p class="text-muted-foreground text-xs">没有 Items。</p>`}</section>`;
+  return `<section class="space-y-2 rounded-md border p-2.5 sm:p-3"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">${title}</span>${cnt}${extra||''}</div>${items.length?`<div class="space-y-2">${items.join('')}</div>`:`<p class="text-muted-foreground text-xs">没有 Items。</p>`}</section>`;
 }
 /* ---- 记录源：每轮动作一条（对齐部署版粒度）+ 会话/类型筛选 + 真分页 ----
    部署版左列 280px 记录列表：记录=一轮推理（assistant.tool_calls 消息开轮，
@@ -2010,7 +2019,7 @@ function rrRoundsOf(ev){
   });
   let recs;
   if(rounds.length){
-    recs=rounds.map((r,k)=>({key:ev.id+'_'+k,ev:ev,start:r.start,tools:r.tools,slice:true}))
+    recs=rounds.map((r,k)=>({key:ev.id+'_'+k,ev:ev,start:r.start,tools:r.tools,slice:true,ri:k}))
   }else{
     /* 旧事件（v6.14.3 前无 messages[].tool_calls 扩展）：按 d.tools 逐动作拆，详情给整循环 */
     const names=(d.tools||[]).map(t=>t&&t.tool_name).filter(Boolean);
@@ -2025,14 +2034,22 @@ function rrTypeOfRec(rec){
   if(ts.every(n=>n==='finish'||n==='wait'))return 'wait';
   return 'tools'
 }
+function rrRoundsOfReplyer(ev){
+  /* 回复器流程：一轮 finalized 一条（有 v6.20.0 扩展 replyer 块才可见，
+     标题=输出预览——对齐部署版 replyer 记录 display_title=output_preview） */
+  return ((ev.data||{}).replyer)?[{key:ev.id+'_rp',ev:ev,rp:true,tools:[],slice:false}]:[]
+}
 function rrFiltered(){
   const rr=MO.rr||{};
   let evs=MO.events.filter(x=>x.type==='planner.finalized');
   if(rr.sess)evs=evs.filter(x=>x.sid===rr.sess);
+  /* stage 分流（对齐部署版 ?stage=planner|replyer）：replyer 只看带 replyer 块的事件 */
+  const replyer=MO.rrStage==='replyer';
+  if(replyer)evs=evs.filter(x=>(x.data||{}).replyer);
   const recs=[];
   [...evs].reverse().forEach(ev=>{
-    let rs=rrRoundsOf(ev);
-    if(rr.type)rs=rs.filter(r=>rrTypeOfRec(r)===rr.type);
+    let rs=replyer?rrRoundsOfReplyer(ev):rrRoundsOf(ev);
+    if(!replyer&&rr.type)rs=rs.filter(r=>rrTypeOfRec(r)===rr.type);
     recs.push(...rs)
   });
   return recs
@@ -2042,33 +2059,87 @@ function rrPageInfo(list){
   const page=Math.min(Math.max(1,(MO.rr&&MO.rr.page)||1),pages);
   return {total:list.length,pages,page};
 }
+/* 本次调用的模型（maisoul 扩展）：工具轮=该轮 assistant 消息的 model_name；
+   收尾轮/旧事件=最后一条带模型的 assistant 轮，再回落整循环去重值 */
+function rrModelOf(rec){
+  const d=rec.ev.data||{},msgs=((d.request||{}).messages)||[];
+  if(rec.slice&&rec.start!=null){const m=msgs[rec.start];if(m&&m.model_name)return String(m.model_name)}
+  for(let i=msgs.length-1;i>=0;i--){const m=msgs[i];if(m&&m.role==='assistant'&&m.model_name)return String(m.model_name)}
+  return String(((d.planner||{}).model_name)||'')
+}
 function rrRecMeta(rec){
   const d=rec.ev.data||{},p=d.planner||{};
   const ts=new Date((d.timestamp||rec.ev.ts)*1000);
   return {tstr:String(ts.getMonth()+1).padStart(2,'0')+'/'+String(ts.getDate()).padStart(2,'0')+' '+ts.toTimeString().slice(0,8),
     dur:((p.duration_ms||0)/1000).toFixed(2),tin:p.prompt_tokens||0,tout:p.completion_tokens||0,
-    size:(JSON.stringify(((d.request||{}).messages)||[]).length/1024).toFixed(1),cycle:d.cycle_id}
+    size:(JSON.stringify(((d.request||{}).messages)||[]).length/1024).toFixed(1),cycle:d.cycle_id,model:rrModelOf(rec)}
 }
 function rrRowHTML(rec,selected){
   const m=rrRecMeta(rec),names=(rec.tools||[]).join('、');
-  const meta=`模型：maisoul planner · 耗时：${m.dur} s · 输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token`;
+  const meta=`模型：${m.model||'maisoul planner'} · 耗时：${m.dur} s · 输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token`;
   const cls='flex w-full flex-col gap-1.5 rounded-md border px-2.5 py-2 text-left text-sm transition-colors sm:gap-2 sm:px-3 '+(selected?'border-primary bg-primary/10 text-foreground selrow':'hover:border-border hover:bg-muted/60 border-transparent');
   return `<button type="button" class="${cls}" data-tools="${esc(names)}" onclick="rrSel('${esc(rec.key)}')"><div class="flex items-start justify-between gap-2"><div class="min-w-0 flex-1"><div class="flex min-w-0 items-start gap-1.5"><div class="text-foreground line-clamp-2 min-w-0 text-sm font-medium" title="${esc(names)}">${esc(names)}</div></div></div><span class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">${RR_SVG_CLOCK}${m.tstr}</span></div><div class="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs" title="${esc(meta)}"><span class="inline-flex min-w-0 items-center gap-1">${RR_SVG_CPU}<span class="truncate">循环 #${m.cycle==null?'-':m.cycle}</span></span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${m.dur} s</span><span class="inline-flex items-center gap-1">输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token</span><span class="shrink-0">${m.size} KB</span></div></button>`
 }
+function rrReplyerRowHTML(rec,selected){
+  /* 回复器记录行（对齐部署版 replyer 记录：标题=输出预览，meta=模型/耗时） */
+  const d=rec.ev.data||{},rp=d.replyer||{};
+  const ts=new Date((d.timestamp||rec.ev.ts)*1000);
+  const tstr=String(ts.getMonth()+1).padStart(2,'0')+'/'+String(ts.getDate()).padStart(2,'0')+' '+ts.toTimeString().slice(0,8);
+  const dur=((rp.duration_ms||0)/1000).toFixed(2);
+  const title=(String(rp.output||'').replace(/\s+/g,' ').trim()).slice(0,60)||'（无输出）';
+  const meta=`模型：${rp.model_name||'maisoul replyer'} · 耗时：${dur} s`;
+  const cls='flex w-full flex-col gap-1.5 rounded-md border px-2.5 py-2 text-left text-sm transition-colors sm:gap-2 sm:px-3 '+(selected?'border-primary bg-primary/10 text-foreground selrow':'hover:border-border hover:bg-muted/60 border-transparent');
+  return `<button type="button" class="${cls}" data-tools="reply" onclick="rrSel('${esc(rec.key)}')"><div class="flex items-start justify-between gap-2"><div class="min-w-0 flex-1"><div class="flex min-w-0 items-start gap-1.5"><div class="text-foreground line-clamp-2 min-w-0 text-sm font-medium" title="${esc(title)}">${esc(title)}</div></div></div><span class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">${RR_SVG_CLOCK}${tstr}</span></div><div class="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs" title="${esc(meta)}"><span class="inline-flex min-w-0 items-center gap-1">${RR_SVG_CPU}<span class="truncate">循环 #${d.cycle_id==null?'-':d.cycle_id}</span></span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${dur} s</span>${rp.model_name?`<span class="inline-flex items-center gap-1">${RR_SVG_CPU}${esc(rp.model_name)}</span>`:''}</div></button>`
+}
 function rrRowsHTML(list,pi){
-  return list.slice((pi.page-1)*RR_PAGE,pi.page*RR_PAGE).map(r=>rrRowHTML(r,r.key===(MO.rr&&MO.rr.sel))).join('')
+  return list.slice((pi.page-1)*RR_PAGE,pi.page*RR_PAGE).map(r=>r.rp?rrReplyerRowHTML(r,r.key===(MO.rr&&MO.rr.sel)):rrRowHTML(r,r.key===(MO.rr&&MO.rr.sel))).join('')
 }
 /* 详情两分区（对齐部署版 fe 分区组件）：请求 Items=产出本轮输出前的完整请求
    （工具轮截到输出消息前）；输出结果=本轮模型产物（工具轮=该轮 assistant
    消息；收尾轮/旧事件=planner 思考+回复）。条目编号跨分区连续 */
+function rrEcoSection(eco){
+  /* 生态注入区（maisoul 扩展）：final_state.eco_injection = replyer 收集的
+     注入全文（心弦好感/记忆/世界书）。v6.11.6 引入、v6.14.3 推理页复刻
+     部署版时被带丢（部署版页面无此区）、v6.20.0 在 master-detail 详情恢复。
+     折叠用原生 details——srcdoc 在 sandbox iframe 里，自定义控件回路只有
+     postMessage 一条路（坑 57），原生元素零接线最稳；折叠语义对齐部署版
+     CollapsibleText：≤6 行直出，超出折 6 行空格拼接预览 + 展开全部 */
+  const t=String(eco||'');
+  if(!t)return '';
+  const lines=t.split('\n');
+  const body=lines.length<=6
+    ?`<pre ${RR_PRE}>${esc(t)}</pre>`
+    :`<div><pre ${RR_PRE} style="margin-bottom:4px">${esc(lines.slice(0,6).join(' '))}</pre><details><summary class="cursor-pointer select-none text-xs text-primary" style="text-decoration:underline;text-underline-offset:2px"> 展开全部 (${lines.length} 行)</summary><pre ${RR_PRE} style="margin-top:4px">${esc(t)}</pre></details></div>`;
+  const cnt=rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm',t.length+' 字符');
+  return `<section class="space-y-2 rounded-md border p-2.5 sm:p-3"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">生态注入</span>${cnt}</div>${body}</section>`;
+}
 function rrDetailHTML(rec){
   const d=rec.ev.data||{},req=d.request||{};
+  /* 回复器详情：请求双段（system/user）+ 输出（思考+正文）+ 生态注入 */
+  if(rec.rp){
+    const rp=d.replyer||{};
+    const ts=new Date((d.timestamp||rec.ev.ts)*1000);
+    const tstr=String(ts.getMonth()+1).padStart(2,'0')+'/'+String(ts.getDate()).padStart(2,'0')+' '+ts.toTimeString().slice(0,8);
+    const dur=((rp.duration_ms||0)/1000).toFixed(2);
+    let n=0;const next=()=>++n;
+    const reqItems=[];
+    if(rp.system_prompt)reqItems.push(rrPlainArticle(next(),'system',rp.system_prompt,{item_type:'SystemMessageItem',content:rp.system_prompt}));
+    if(rp.user_message)reqItems.push(rrPlainArticle(next(),'user',rp.user_message,{item_type:'UserMessageItem',content:rp.user_message}));
+    const outItems=[];
+    if(rp.reasoning)outItems.push(rrReasonArticle(next(),rp.reasoning,{item_type:'ReasoningItem',output:true,content:rp.reasoning}));
+    if(rp.output)outItems.push(rrPlainArticle(next(),'assistant',rp.output,{item_type:'AssistantMessageItem',output:true,content:rp.output}));
+    const mdlBadge=rp.model_name?rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm font-mono','模型：'+esc(rp.model_name)):'';
+    const head=`<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2"><span class="text-sm font-medium">回复器</span><span class="text-muted-foreground text-xs">${tstr}</span><span class="text-muted-foreground ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"><span class="inline-flex items-center gap-1">${RR_SVG_CPU}循环 #${d.cycle_id==null?'-':d.cycle_id}</span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${dur} s</span><span class="inline-flex items-center gap-1" title="推理过程编号（事件 id，跨会话稳定）">#${rec.ev.id}</span></span></div>`;
+    return {head:head,items:rrSection('请求 Items',reqItems)+rrSection('输出 Items',outItems,mdlBadge)+rrEcoSection((d.final_state||{}).eco_injection)}
+  }
   const outIdx=rec.slice&&rec.start!=null?rec.start:-1;
   const reqItems=rrMsgItems({request:req},outIdx>=0?outIdx:null,0);
   const outItems=rrOutItems(d,outIdx,reqItems.length);
   const m=rrRecMeta(rec),names=(rec.tools||[]).join('、');
-  const head=`<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2"><span class="text-sm font-medium">${esc(names)}</span><span class="text-muted-foreground text-xs">${m.tstr}</span><span class="text-muted-foreground ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"><span class="inline-flex items-center gap-1">${RR_SVG_CPU}循环 #${m.cycle==null?'-':m.cycle}</span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${m.dur} s</span><span>输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token</span></span></div>`;
-  return {head:head,items:rrSection('请求 Items',reqItems)+rrSection('输出结果',outItems)}
+  /* 输出结果分区：Items 计数徽章后标本次调用的模型（对齐部署版「模型：${model_name}」文案） */
+  const mdlBadge=m.model?rrBadge('border-transparent bg-secondary text-secondary-foreground shadow-sm font-mono','模型：'+esc(m.model)):'';
+  const head=`<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2"><span class="text-sm font-medium">${esc(names)}</span><span class="text-muted-foreground text-xs">${m.tstr}</span><span class="text-muted-foreground ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"><span class="inline-flex items-center gap-1">${RR_SVG_CPU}循环 #${m.cycle==null?'-':m.cycle}</span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${m.dur} s</span><span>输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token</span><span class="inline-flex items-center gap-1" title="推理过程编号（事件 id，跨会话稳定）">#${rec.ev.id}${rec.ri!=null?('·R'+(rec.ri+1)):''}</span></span></div>`;
+  return {head:head,items:rrSection('请求 Items',reqItems)+rrSection('输出结果',outItems,mdlBadge)+rrEcoSection((d.final_state||{}).eco_injection)}
 }
 function rrPagerHTML(pi){
   const cls='inline-flex cursor-pointer items-center gap-2 font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md px-3 text-xs h-8';
@@ -2076,12 +2147,46 @@ function rrPagerHTML(pi){
 }
 function rrFootTok(rec){
   if(!rec)return '';
+  if(rec.rp){const rp=(rec.ev.data||{}).replyer||{};return `耗时 ${((rp.duration_ms||0)/1000).toFixed(2)} s`}
   const m=rrRecMeta(rec);
   return `输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token`;
+}
+function rrStageCards(){
+  /* 类型选择视图的阶段卡数据（对齐部署版 /stages 卡片：会话数 + 最新时间）。
+     无记录的阶段不渲染（部署版 Yn 分组过滤 items.length>0 同语义）；
+     中文名照抄部署版 nn 映射：planner=规划器 replyer=回复器 */
+  const fin=MO.events.filter(x=>x.type==='planner.finalized');
+  const p2=n=>String(n).padStart(2,'0');
+  const mk=(name,label,pred)=>{
+    const evs=fin.filter(pred);
+    if(!evs.length)return null;
+    const latest=Math.max.apply(null,evs.map(x=>((x.data||{}).timestamp)||x.ts||0));
+    const d=new Date(latest*1000);
+    return {name:name,label:label,sessions:new Set(evs.map(x=>x.sid)).size,
+      latest:latest>0?(p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds())):''}
+  };
+  return [mk('planner','规划器',()=>true),mk('replyer','回复器',x=>(x.data||{}).replyer)].filter(Boolean)
 }
 function moBuildReasonDoc(selEv){
   const cssEl=document.getElementById('mbrc');
   const css=cssEl?cssEl.textContent:'';
+  const styles=`<style>${css}</style><style>html,body{height:100%;margin:0}body{display:flex;flex-direction:column}.rr-hide{display:none!important}/* 开态 JSON 盒宽 lg:w-[min(48%,46rem)] 与网格类同因不在内嵌 dist 快照，按 Tailwind lg(64rem) 语义补齐；z-40/shadow-xl/max-h-[32rem] 直接用 dist 已有类 */@media(min-width:64rem){.lg\\:w-\\[min\\(48\\%\\,46rem\\)\\]{width:min(48%,46rem)}}/* 部署版左列 280px 任意值网格类不在其 dist 主 CSS；且插件页内容区≈1em 千像素，Tailwind lg(1024) 常年不触发——按 48rem 补网格+高度覆盖（模板字符串里反斜杠要写两个，单个会被转义吃掉） */
+@media(min-width:48rem){.lg\\:grid-cols-\\[280px_minmax\\(0\\,1fr\\)\\]{grid-template-columns:280px minmax(0,1fr)}.lg\\:h-auto{height:auto}.lg\\:min-h-0{min-height:0}}.rr-drop{position:absolute;top:calc(100% + 4px);left:0;z-index:40;min-width:160px;background-color:hsl(var(--color-background));border:1px solid hsl(var(--color-border));border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);max-height:260px;overflow-y:auto;padding:4px;display:flex;flex-direction:column;gap:1px}.rr-ditem{text-align:left;padding:6px 10px;font-size:12px;line-height:1.4;border-radius:4px;color:var(--color-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}.rr-ditem:hover{background-color:hsl(var(--color-muted))}.rr-ditem.on{background-color:hsl(var(--color-muted));font-weight:600}</style>`;
+  /* 类型选择视图（对齐部署版 stage 卡片页）：主流程分组 + 阶段卡网格；
+     进入推理页默认 planner 流程，点「类型」按钮到此，点卡片进对应流程 */
+  if(MO.rrStage===null){
+    const cards=rrStageCards();
+    const card=c=>`<div class="group bg-background relative flex min-h-20 flex-col rounded-md border text-left shadow-sm transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out hover:border-primary/80 hover:bg-primary/5 hover:-translate-y-0.5 hover:shadow-md"><button type="button" class="focus-visible:ring-ring flex min-h-20 flex-1 cursor-pointer flex-col justify-between rounded-md p-3 pr-10 text-left focus-visible:ring-2 focus-visible:outline-none" onclick="rrStage('${c.name}')"><div class="space-y-1.5"><div class="text-primary text-sm font-extrabold tracking-normal uppercase transition-colors sm:text-base">${c.name}</div><div class="text-foreground group-hover:text-primary text-sm font-semibold transition-colors">${c.label}</div></div><div class="text-muted-foreground group-hover:text-foreground/80 mt-2 text-xs transition-colors">${c.sessions} 个会话${c.latest?` · 最新 ${c.latest}`:''}</div></button></div>`;
+    const body=cards.length
+      ?`<section class="grid gap-2 sm:grid-cols-[72px_minmax(0,1fr)] sm:items-start"><div class="text-muted-foreground px-1 pt-1 text-xs font-medium sm:pt-3">主流程</div><div class="grid gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">${cards.map(card).join('')}</div></section>`
+      :`<div class="text-muted-foreground px-3 py-10 text-center text-sm">没有找到推理过程类型</div>`;
+    return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>推理过程</title>${styles}</head><body class="bg-background text-foreground"><main id="main-content" class="relative isolate min-h-0 flex-1 outline-none overflow-hidden bg-background" style="display:flex;flex-direction:column;height:100%;padding:8px"><div class="bg-background flex h-full min-h-0 flex-col overflow-hidden rounded-md border"><div class="flex items-center gap-2 border-b px-2 py-1.5"><button type="button" class="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap font-medium transition-colors border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md px-2.5 text-xs h-7" data-dashboard-button="true" onclick="rrBack()">${RR_SVG_BACK}返回监控</button><span class="text-muted-foreground truncate text-xs">推理过程 · 类型</span></div><div class="min-h-0 flex-1 overflow-auto"><div class="space-y-4 p-2 sm:p-3">${body}</div></div></div></main><script>
+function rrHost(m){m.__moReason=1;try{parent.postMessage(m,'*')}catch(e){}}
+function rrBack(){rrHost({cmd:'back'})}
+function rrStage(v){rrHost({cmd:'stage',val:v||null})}
+<\/script><\/body><\/html>`;
+  }
+
   /* 整页交互状态：会话默认跟随侧栏选中；选中记录=点击循环的最后一条（收尾轮） */
   const allFin=MO.events.filter(x=>x.type==='planner.finalized');
   MO.rr={page:1,sess:MO.sel||'',type:'',sel:null};
@@ -2098,17 +2203,16 @@ function moBuildReasonDoc(selEv){
   const sessOpts=[{v:'',t:'全部会话'}].concat([...new Set(allFin.map(x=>x.sid))].map(s=>({v:s,t:(MO.sessions[s]&&MO.sessions[s].name)||s})));
   const dropItem=(key,o,cur)=>`<button type="button" class="rr-ditem${cur===o.v?' on':''}" data-v="${esc(o.v)}" onclick="rrPick('${key}',this.dataset.v)">${esc(o.t)}</button>`;
   const sessDrop=sessOpts.map(o=>dropItem('sess',o,MO.rr.sess)).join('');
-  const typeDrop=RR_TYPES.map(o=>dropItem('type',{v:o[0],t:o[1]},MO.rr.type)).join('');
   const sessLabel=(sessOpts.find(o=>o.v===MO.rr.sess)||sessOpts[0]).t;
-  const typeLabel=(RR_TYPES.find(o=>o[0]===MO.rr.type)||RR_TYPES[0])[1];
+  /* 部署版「类型」按钮：左箭头图标 + 固定文案，点击回推理过程类型选择视图
+     （v6.20.0；原动作类型下拉撤销——部署版工具栏无此件，动作过滤输入框保留） */
   /* 部署版 master-detail 骨架：grid lg:[280px_1fr]，左=返回+条数/筛选/记录列表/分页，右=详情 */
   const leftHead=`<div class="flex items-center gap-2 border-b px-2 py-1.5"><button type="button" class="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap font-medium transition-colors border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md px-2.5 text-xs h-7" data-dashboard-button="true" onclick="rrBack()">${RR_SVG_BACK}返回监控</button><span class="text-muted-foreground truncate text-xs">推理过程</span></div>
   <div class="text-muted-foreground flex h-8 flex-shrink-0 items-center justify-between border-b px-2.5 text-xs"><span id="rr_cnt_total">${pi.total} 条记录</span><span id="rr_cnt_page">第 ${pi.page} / ${pi.pages} 页</span></div>
-  <div class="flex flex-shrink-0 flex-col gap-2 border-b p-2"><div class="flex items-center gap-2"><div class="relative shrink-0" data-drop><button type="button" id="rr_typebtn" class="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap font-medium transition-colors border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md px-3 text-xs shrink-0 justify-start h-9" data-dashboard-button="true" onclick="rrDrop('rr_type_drop',event)">${RR_SVG_BACK}<span id="rr_type_label">${esc(typeLabel)}</span></button><div id="rr_type_drop" class="rr-drop rr-hide">${typeDrop}</div></div><div class="relative min-w-0 flex-1" data-drop><button type="button" id="rr_sessbtn" class="border-input ring-offset-background focus:ring-ring flex cursor-pointer items-center justify-between rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-sm focus:ring-1 focus:outline-none h-9 w-full" onclick="rrDrop('rr_sess_drop',event)"><span class="truncate" id="rr_sess_label">${esc(sessLabel)}</span>${RR_SVG_CHEV}</button><div id="rr_sess_drop" class="rr-drop rr-hide" style="right:0">${sessDrop}</div></div><button class="inline-flex cursor-pointer items-center justify-center gap-2 font-medium transition-colors border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs shrink-0 p-0 h-8 w-8" data-dashboard-button="true" aria-label="刷新" title="刷新" onclick="location.reload()">${RR_SVG_REFRESH}</button></div><div class="relative"><input data-dashboard-input="true" id="rr_actfilter" class="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex w-full rounded-md border bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none md:text-sm h-9" placeholder="动作过滤" value="" oninput="rrFilter()"></div><div class="relative">${RR_SVG_SEARCH}<input data-dashboard-input="true" id="rr_search" class="border-input placeholder:text-muted-foreground focus:ring-ring flex w-full rounded-md border bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus:ring-1 focus:outline-none md:text-sm h-9 pl-9" placeholder="搜索会话、文件名、模型或记录摘要" value="" oninput="rrFilter()"></div></div>`;
+  <div class="flex flex-shrink-0 flex-col gap-2 border-b p-2"><div class="flex items-center gap-2"><div class="shrink-0"><button type="button" class="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap font-medium transition-colors border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md px-3 text-xs shrink-0 justify-start h-9" data-dashboard-button="true" title="切换推理过程类型（规划器/回复器）" onclick="rrStage()">${RR_SVG_BACK}<span>类型</span></button></div><div class="relative min-w-0 flex-1" data-drop><button type="button" id="rr_sessbtn" class="border-input ring-offset-background focus:ring-ring flex cursor-pointer items-center justify-between rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-sm focus:ring-1 focus:outline-none h-9 w-full" onclick="rrDrop('rr_sess_drop',event)"><span class="truncate" id="rr_sess_label">${esc(sessLabel)}</span>${RR_SVG_CHEV}</button><div id="rr_sess_drop" class="rr-drop rr-hide" style="right:0">${sessDrop}</div></div><button class="inline-flex cursor-pointer items-center justify-center gap-2 font-medium transition-colors border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs shrink-0 p-0 h-8 w-8" data-dashboard-button="true" aria-label="刷新" title="刷新" onclick="location.reload()">${RR_SVG_REFRESH}</button></div><div class="relative"><input data-dashboard-input="true" id="rr_actfilter" class="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex w-full rounded-md border bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none md:text-sm h-9" placeholder="动作过滤" value="" oninput="rrFilter()"></div><div class="relative">${RR_SVG_SEARCH}<input data-dashboard-input="true" id="rr_search" class="border-input placeholder:text-muted-foreground focus:ring-ring flex w-full rounded-md border bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus:ring-1 focus:outline-none md:text-sm h-9 pl-9" placeholder="搜索会话、文件名、模型或记录摘要" value="" oninput="rrFilter()"></div></div>`;
   const foot=`<div class="flex h-11 flex-shrink-0 items-center justify-between border-t px-3 lg:h-12"><div class="flex items-center gap-2" id="rr_pager">${rrPagerHTML(pi)}</div><div class="text-muted-foreground mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-[11px] leading-4" id="rr_foot_tok">${rrFootTok(selRec)}</div></div>`;
   const emptyDet=`<div class="text-muted-foreground flex h-full items-center justify-center text-sm">在左侧选择一条记录查看详情</div>`;
-  const doc=`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>推理过程</title><style>${css}</style><style>html,body{height:100%;margin:0}body{display:flex;flex-direction:column}.rr-hide{display:none!important}/* 开态 JSON 盒宽 lg:w-[min(48%,46rem)] 与网格类同因不在内嵌 dist 快照，按 Tailwind lg(64rem) 语义补齐；z-40/shadow-xl/max-h-[32rem] 直接用 dist 已有类 */@media(min-width:64rem){.lg\\:w-\\[min\\(48\\%\\,46rem\\)\\]{width:min(48%,46rem)}}/* 部署版左列 280px 任意值网格类不在其 dist 主 CSS；且插件页内容区≈1em 千像素，Tailwind lg(1024) 常年不触发——按 48rem 补网格+高度覆盖（模板字符串里反斜杠要写两个，单个会被转义吃掉） */
-@media(min-width:48rem){.lg\\:grid-cols-\\[280px_minmax\\(0\\,1fr\\)\\]{grid-template-columns:280px minmax(0,1fr)}.lg\\:h-auto{height:auto}.lg\\:min-h-0{min-height:0}}.rr-drop{position:absolute;top:calc(100% + 4px);left:0;z-index:40;min-width:160px;background-color:hsl(var(--color-background));border:1px solid hsl(var(--color-border));border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);max-height:260px;overflow-y:auto;padding:4px;display:flex;flex-direction:column;gap:1px}.rr-ditem{text-align:left;padding:6px 10px;font-size:12px;line-height:1.4;border-radius:4px;color:var(--color-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}.rr-ditem:hover{background-color:hsl(var(--color-muted))}.rr-ditem.on{background-color:hsl(var(--color-muted));font-weight:600}</style></head><body class="bg-background text-foreground"><main id="main-content" class="relative isolate min-h-0 flex-1 outline-none overflow-hidden bg-background" style="display:flex;flex-direction:column;height:100%"><div class="flex h-full min-h-0 flex-col gap-2 overflow-hidden sm:gap-3 p-0"><div class="grid min-h-0 flex-1 grid-cols-1 gap-2 transition-[gap,grid-template-columns] duration-300 ease-out lg:gap-3 lg:grid-cols-[280px_minmax(0,1fr)]"><div class="bg-background flex h-[32vh] min-h-[180px] flex-col overflow-hidden rounded-md border lg:h-auto lg:min-h-0">${leftHead}<div class="relative overflow-auto min-h-0 flex-1"><div class="flex flex-col gap-1.5 p-2" id="rr_list">${rrRowsHTML(pre,pi)}</div></div>${foot}</div><div class="bg-background relative flex min-h-0 flex-col overflow-hidden rounded-md border"><div id="rr_detail_head">${det?det.head:''}</div><div class="relative overflow-auto min-h-0 flex-1"><div class="space-y-2 p-2 sm:space-y-3 sm:p-3" id="rr_detail">${det?det.items:emptyDet}</div></div></div></div></div></main><script>
+  const doc=`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>推理过程</title>${styles}</head><body class="bg-background text-foreground"><main id="main-content" class="relative isolate min-h-0 flex-1 outline-none overflow-hidden bg-background" style="display:flex;flex-direction:column;height:100%"><div class="flex h-full min-h-0 flex-col gap-2 overflow-hidden sm:gap-3 p-0"><div class="grid min-h-0 flex-1 grid-cols-1 gap-2 transition-[gap,grid-template-columns] duration-300 ease-out lg:gap-3 lg:grid-cols-[280px_minmax(0,1fr)]"><div class="bg-background flex h-[32vh] min-h-[180px] flex-col overflow-hidden rounded-md border lg:h-auto lg:min-h-0">${leftHead}<div class="relative overflow-auto min-h-0 flex-1"><div class="flex flex-col gap-1.5 p-2" id="rr_list">${rrRowsHTML(pre,pi)}</div></div>${foot}</div><div class="bg-background relative flex min-h-0 flex-col overflow-hidden rounded-md border"><div id="rr_detail_head">${det?det.head:''}</div><div class="relative overflow-auto min-h-0 flex-1"><div class="space-y-2 p-2 sm:space-y-3 sm:p-3" id="rr_detail">${det?det.items:emptyDet}</div></div></div></div></div></main><script>
 function rrToggle(box){const open=box.dataset.state!=='open';box.dataset.state=open?'open':'closed';const b=box.querySelector('.rr-json');if(b)b.classList.toggle('rr-hide',!open);const OFF=['lg:z-10','lg:w-48','lg:shadow-sm'],ON=['lg:z-40','lg:w-[min(48%,46rem)]','lg:shadow-xl'];box.classList.remove(...(open?OFF:ON));box.classList.add(...(open?ON:OFF));const sv=box.querySelector('button svg');if(sv)sv.style.transform=open?'rotate(180deg)':''}
 function rrFilter(){var a=(document.getElementById('rr_actfilter').value||'').toLowerCase();var s=(document.getElementById('rr_search').value||'').toLowerCase();document.querySelectorAll('#rr_list button[data-tools]').forEach(function(r){var tools=(r.getAttribute('data-tools')||'').toLowerCase();var full=r.textContent.toLowerCase();r.style.display=(!a||tools.indexOf(a)>=0)&&(!s||full.indexOf(s)>=0)?'':'none'})}
 function rrCloseDrops(){document.querySelectorAll('.rr-drop').forEach(function(x){x.classList.add('rr-hide')})}
@@ -2121,6 +2225,7 @@ function rrPick(k,v){rrHost({cmd:'set',key:k,val:v})}
 function rrGo(d){rrHost({cmd:'page',delta:d})}
 function rrSel(k){rrHost({cmd:'sel',key:k})}
 function rrBack(){rrHost({cmd:'back'})}
+function rrStage(v){rrHost({cmd:'stage',val:v||null})}
 window.addEventListener('message',function(e){
   var m=e.data;if(!m||m.__moReasonUpd!==1)return;
   if(m.list!=null){var l=document.getElementById('rr_list');if(l){l.innerHTML=m.list;rrFilter()}}
@@ -2156,7 +2261,7 @@ function moReasonUpdate(scrollSel,detailTop){
     f.contentWindow.postMessage({__moReasonUpd:1,
       list:rrRowsHTML(list,pi),
       cntTotal:pi.total+' 条记录',cntPage:'第 '+pi.page+' / '+pi.pages+' 页',
-      pager:rrPagerHTML(pi),sessLabel:sessLabel,typeLabel:typeLabel,
+      pager:rrPagerHTML(pi),sessLabel:sessLabel,
       detailHead:det?det.head:'',detail:det?det.items:'<div class="text-muted-foreground flex h-full items-center justify-center text-sm">在左侧选择一条记录查看详情</div>',
       footTok:rrFootTok(detRec),
       scrollSel:!!scrollSel,detailTop:!!detailTop},'*');
@@ -2212,6 +2317,7 @@ async function startMonitor(){
       else if(m.cmd==='page')moReasonPage(m.delta);
       else if(m.cmd==='sel')moReasonSel(m.key);
       else if(m.cmd==='back')moReasonBack();
+      else if(m.cmd==='stage')moReasonStage(m.val);
     }catch(err){}
   });
   try{

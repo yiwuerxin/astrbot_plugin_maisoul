@@ -249,6 +249,24 @@ def build_history_contexts(
     return contexts, included_chat
 
 
+def split_pending(
+    records: list[dict], last_cycle_ts: float
+) -> tuple[list[dict], list[dict]]:
+    """按排水水位切分 (pending, history)：pending = ts 晚于水位的外部消息
+    （planner 循环内经 _drain_pending 注入）。
+
+    pending 判定的单一实现——planner 循环与 fetch_chat_history 的排除集
+    共用，防两处各写一份表达式后口径漂移（v6.20.1 盲区修复）。"""
+    pending: list[dict] = []
+    history: list[dict] = []
+    for m in records or []:
+        if float(m.get("ts") or 0) > last_cycle_ts and str(m.get("sid")) != "self":
+            pending.append(m)
+        else:
+            history.append(m)
+    return pending, history
+
+
 REPLY_TOOL_SPEC = {
     "type": "object",
     "properties": {
@@ -294,6 +312,29 @@ TOOL_SEARCH_SPEC = {
 TOOL_SEARCH_NO_HIT = (
     "未找到匹配的 deferred tools，请尝试更完整的工具名、前缀或其他关键词。"
 )
+
+
+def tool_search_no_hit_text(pool: list[dict], discovered) -> str:
+    """未命中回执 = MaiBot 原文提示 + maisoul 扩展纠正段（MaiBot 没有的防呆）。
+
+    烂 query（自然语言描述/占位符串，如 "context history message"、
+    "xx是什么意思"）是模型漂移的常见形态——MaiBot 只回一句提示，模型
+    可能连着重试同类 query 空转烧轮次；扩展段列出当前仍可发现的
+    deferred 工具名并给出明确重试格式，下一轮几乎必然修正。
+    池空或全部已发现时退回原文提示。清单封顶 20 个防刷屏。"""
+    names: list[str] = []
+    for item in pool or []:
+        name = str(item.get("name") or "").strip()
+        if name and name not in (discovered or set()) and name not in names:
+            names.append(name)
+    if not names:
+        return TOOL_SEARCH_NO_HIT
+    return (
+        TOOL_SEARCH_NO_HIT
+        + "\n当前可搜索的 deferred tools："
+        + "、".join(names[:20])
+        + "。请直接用以上工具名（或其前缀）作为 query 重试，不要用自然语言描述。"
+    )
 
 
 def search_deferred_tools(pool: list[dict], query: str, limit: int = 5) -> list[dict]:
@@ -657,7 +698,10 @@ class PlannerDeps:
             self.deferred_pool, str(args.get("query") or ""), limit
         )
         if not hits:
-            return TOOL_SEARCH_NO_HIT
+            # 未命中走纠正回执（附可发现工具名清单，防烂 query 连续空转）
+            return tool_search_no_hit_text(
+                self.deferred_pool, self.st.planner_state().discovered_tools
+            )
         discovered = self.st.planner_state().discovered_tools
         # 新发现判定要在更新前做（MaiBot 同款标记）
         result = tool_search_result_text(hits, set(discovered))

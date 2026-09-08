@@ -102,11 +102,7 @@ def _schedule_planner(
 
 
 def _drain_pending(P, st, pl) -> list[dict]:
-    pending = [
-        m
-        for m in list(st.buffer)
-        if float(m.get("ts") or 0) > pl.last_cycle_ts and str(m.get("sid")) != "self"
-    ]
+    pending, _ = planner.split_pending(list(st.buffer), pl.last_cycle_ts)
     pl.last_cycle_ts = time.time()
     st.pending_since_fire = 0
     return pending
@@ -171,6 +167,10 @@ async def _planner_cycle(
     reasoning_by_idx: dict[int, str] = (
         {}
     )  # assistant 轮 index→思考（仅监控副本，坑 54 不回灌）
+    planner_models: list[str] = []  # 本循环实际调用的模型（去重，麦麦观察展示）
+    model_by_idx: dict[int, str] = (
+        {}
+    )  # assistant 轮 index→该轮模型（仅监控副本，与 reasoning 同机制）
     pl.eco_injection = ""
     end_reason, end_detail = "", ""
     interrupted = False
@@ -200,7 +200,10 @@ async def _planner_cycle(
             eco_injection=pl.eco_injection,
             planner_system_prompt=system_prompt,
             reasoning_by_idx=reasoning_by_idx,
+            model_by_idx=model_by_idx,
+            planner_model_name=" / ".join(planner_models),
             replyer_reasoning=getattr(pl, "replyer_reasoning", ""),
+            replyer_trace=getattr(pl, "replyer_trace", None),
         )
 
     try:
@@ -255,20 +258,14 @@ async def _planner_cycle(
         base_limit = int(eff_cfg.get(context_key, 40 if is_group else 60))
         context_limit = max(base_limit, base_limit * 2)
         all_buf = list(st.buffer)
-        pending_now = [
-            m
-            for m in all_buf
-            if float(m.get("ts") or 0) > pl.last_cycle_ts
-            and str(m.get("sid")) != "self"
-        ]
+        _, history_buf = planner.split_pending(all_buf, pl.last_cycle_ts)
         # 历史段 = 聊天记录 + 历史 planner 分析按时间交错（对齐 MaiBot 会话
         # 历史：全部聊天消息含自发消息进 user 轮 <message> 前缀，分析作为
         # assistant 轮回灌，输出格式由此自我强化，坑 52/53）；窗口在合并流
-        # 上截取。pending 用对象身份排除（m not in pending_now 是逐条 dict
-        # 值相等比较，O(n²)）
-        pending_ids = {id(m) for m in pending_now}
+        # 上截取。pending 切分走 split_pending（判定与 fetch_chat_history
+        # 排除集共用同一实现，防口径漂移——v6.20.1）
         contexts, history_msgs = planner.build_history_contexts(
-            [m for m in all_buf if id(m) not in pending_ids],
+            history_buf,
             pl.analysis_log,
             context_limit,
             is_group,
@@ -280,9 +277,7 @@ async def _planner_cycle(
             _fold_memory(
                 P,
                 st,
-                [m for m in all_buf if id(m) not in pending_ids][
-                    : max(0, len(all_buf) - context_limit)
-                ],
+                history_buf[: max(0, len(all_buf) - context_limit)],
             )
         # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
         # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
@@ -396,11 +391,15 @@ async def _planner_cycle(
                     f"{planner_bind[1]}@{getattr(planner_bind[0], 'provider_config', {}).get('id', '?')}"
                 )
             llm_started = time.time()
+            round_model_used: dict[str, str] = (
+                {}
+            )  # 本次请求实际服务的模型（观察页展示）
             try:
                 resp = await _task_text_chat(
                     P,
                     "planner",
                     eff_cfg,
+                    used=round_model_used,
                     prompt=final_reminder,
                     session_id=f"maisoul_planner_{gid}",
                     system_prompt=system_prompt,
@@ -413,8 +412,12 @@ async def _planner_cycle(
                     session_id=gid,
                     task_name="planner",
                     request_type="text_chat",
+                    # v6.18.2：优先报 _task_text_chat 实际尝试的模型（绑定/
+                    # 降级链），未知才回落默认 provider 标签
                     model_name=str(
-                        getattr(provider, "id", "") or type(provider).__name__
+                        round_model_used.get("model")
+                        or getattr(provider, "id", "")
+                        or type(provider).__name__
                     ),
                     message=str(e),
                 )
@@ -422,6 +425,10 @@ async def _planner_cycle(
             finally:
                 del contexts[tail_base:]  # 撤销尾部注入（不进历史）
             planner_llm_ms += (time.time() - llm_started) * 1000
+            # 本轮实际模型进观察副本（random/balance 多候选时逐轮可能不同）
+            round_model = str(round_model_used.get("model") or "")
+            if round_model and round_model not in planner_models:
+                planner_models.append(round_model)
             # token 用量累计（LLMResponse.usage：input_other+input_cached=输入，output=输出）
             usage = getattr(resp, "usage", None)
             if usage is not None:
@@ -506,6 +513,8 @@ async def _planner_cycle(
                 contexts.append(assistant_turn)
                 if reasoning:
                     reasoning_by_idx[len(contexts) - 1] = reasoning  # 推理过程页素材
+                if round_model:
+                    model_by_idx[len(contexts) - 1] = round_model  # 推理过程页素材
             if not names:
                 if is_group:
                     pl.record_idle_cycle(eff_cfg)
@@ -910,12 +919,14 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         )
 
     reply_started = time.time()
+    replyer_used: dict[str, str] = {}  # 本次生成实际服务的模型（推理页回复器流程）
     try:
         image_parts = prompt.image_context_parts(st, eff_cfg)
         resp = await _task_text_chat(
             P,
             "replyer",
             eff_cfg,
+            used=replyer_used,
             prompt=user_message,
             session_id=f"maisoul_{gid}",
             system_prompt=system_prompt,
@@ -932,11 +943,20 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         raise
 
     answer = _resp_text(resp)
-    # 推理过程页素材：reply 工具的回复器思考/耗时（挂在 planner 状态上，
-    # 由 finalize 汇入 planner.finalized——不进麦麦观察时间线）
+    # 推理过程页素材：reply 工具的回复器思考/耗时/请求与输出全文（挂在 planner
+    # 状态上，由 finalize 汇入 planner.finalized 的 maisoul 扩展 replyer 块——
+    # 不进麦麦观察时间线；生态注入同轮已有 final_state.eco_injection）
     _pl = st.planner_state()
     _pl.replyer_reasoning = str(getattr(resp, "reasoning_content", None) or "").strip()
     _pl.replyer_duration_ms = (time.time() - reply_started) * 1000
+    _pl.replyer_trace = {
+        "system_prompt": system_prompt,
+        "user_message": user_message,
+        "output": answer,
+        "model": str(replyer_used.get("model") or ""),
+        "provider": str(replyer_used.get("provider") or ""),
+        "duration_ms": _pl.replyer_duration_ms,
+    }
     if not answer:
         return "模型未返回内容，本次未发言"
 

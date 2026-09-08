@@ -72,12 +72,28 @@ def _embedding_provider(P, eff_cfg):
     return resolved if resolved is not None else insts[0]
 
 
-async def _task_text_chat(P, task: str, cfg, **kwargs):
+def _provider_model_label(inst, model: str) -> str:
+    """本次调用实际服务的模型名：按次覆盖优先，空则取 provider 当前模型。"""
+    return str(model or inst.get_model() or "")
+
+
+async def _task_text_chat(P, task: str, cfg, used: dict | None = None, **kwargs):
     """按任务绑定调 text_chat：策略选主候选，异常时依次降级链上后续候选；
-    无绑定走 AstrBot 当前默认 Provider。"""
+    无绑定走 AstrBot 当前默认 Provider。
+
+    used 非空时写入本次成功调用实际使用的 {"model", "provider"}（麦麦观察
+    展示"本次调用的模型"用；text_chat 的 LLMResponse 不回传模型名）。
+    """
     provider = P.context.get_using_provider()
     candidates = modelbind.task_model_candidates(cfg, task)
     if not candidates:
+        if used is not None:
+            # 先写再调（v6.18.2）：失败时 used 已带本次尝试的默认 provider
+            # 标签——llm.error 上报据此归因，不再恒记调用方回落的猜测值
+            used["model"] = _provider_model_label(provider, "")
+            used["provider"] = str(
+                getattr(provider, "provider_config", {}).get("id", "") or ""
+            )
         return await provider.text_chat(**kwargs)
     strategy = modelbind.task_model_strategy(cfg, task)
     chain = modelbind.build_model_chain(candidates, strategy, _task_model_rr, task)
@@ -91,8 +107,16 @@ async def _task_text_chat(P, task: str, cfg, **kwargs):
             )
             continue
         inst, model = resolved
+        if used is not None:
+            # 先写再调（v6.18.2）：失败时 used 保留实际尝试的候选，
+            # 供调用方（planner llm.error）归因；成功路径重写同值不变
+            used["model"] = _provider_model_label(inst, model)
+            used["provider"] = str(
+                getattr(inst, "provider_config", {}).get("id", "") or ""
+            )
         try:
-            return await inst.text_chat(model=model, **kwargs)
+            resp = await inst.text_chat(model=model, **kwargs)
+            return resp
         except Exception as e:
             last_err = e
             logger.warning(
@@ -101,4 +125,9 @@ async def _task_text_chat(P, task: str, cfg, **kwargs):
             )
     if last_err is not None:
         raise last_err
+    if used is not None:
+        used["model"] = _provider_model_label(provider, "")
+        used["provider"] = str(
+            getattr(provider, "provider_config", {}).get("id", "") or ""
+        )
     return await provider.text_chat(**kwargs)

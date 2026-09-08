@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from math import ceil, log1p
 import re
 
+from . import mention
 from .constants import (
     DIRECT_REQUEST_TERMS,
     IDLE_PRESSURE_BONUS,
@@ -84,7 +85,7 @@ def request_reason(text: str, is_direct: bool) -> str:
 def opinion_reason(text: str, is_direct: bool, bot_names: list[str]) -> str:
     if "不怎么看" in text:
         return ""
-    if not is_direct and not any(n and n in text for n in bot_names):
+    if not is_direct and not mention.is_mentioned(text, "", bot_names):
         return ""
     hits = [t for t in OPINION_TERMS if t in text]
     if hits:
@@ -176,7 +177,7 @@ def evaluate(
     aliases 即 MaiBot alias_names。"""
     if at_bot:
         rel, rel_reason = 100, "@"
-    elif any(str(n) and str(n) in text for n in (aliases or [])):
+    elif mention.is_mentioned(text, str(bot_name or "麦麦"), aliases):
         rel, rel_reason = 80, "提及"
     else:
         rel, rel_reason = 0, "普通"

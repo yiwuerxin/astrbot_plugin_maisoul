@@ -1,4 +1,4 @@
-"""astrbot_plugin_maisoul v6.16.0 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
+"""astrbot_plugin_maisoul v6.20.1 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
 
 main.py 只做注册/生命周期/钩子薄壳（M7 拆分）；管线逻辑在 pipeline/ 包：
 - pipeline/gating        门控：逃生舱/过滤词/双模式分发/空窗补偿
@@ -38,7 +38,7 @@ _RUNTIME_DATA_FILES = (
 
 
 @register(
-    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.16.0"
+    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.20.1"
 )
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -91,14 +91,15 @@ class MaiSoulPlugin(Star):
             self.config.get("task_models")
         )
         logger.info(
-            f"maisoul v6.16.0 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.20.1 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
             f"{'开' if self.config.get('maid_bridge', True) else '关'}"
         )
-        # M10：观察账本后台 writer（emit 只入队，落库经 to_thread 移出事件循环）
-        self.monitor.start_writer()
+        # M10：观察账本后台 writer（emit 只入队，落库经 to_thread 移出事件循环）；
+        # 经 TaskRegistry 发起（create_task 唯一入口约束，v6.18.2）
+        self.monitor.start_writer(self._registry)
         # M11：错字引擎预热——首次构建要遍历两万汉字逐个 pinyin() + 读字频表
         # + jieba 词典，内联在首条回复的发送路径上会卡秒级；装载时后台线程
         # 提前完成，发送路径只取现成实例
@@ -162,6 +163,47 @@ class MaiSoulPlugin(Star):
         async for r in admin.maisoul_cmd_impl(self, event):
             yield r
 
+    @filter.llm_tool("fetch_chat_history")
+    async def fetch_chat_history(
+        self, event: AstrMessageEvent, keyword: str = "", limit: int = 20
+    ) -> str:
+        """获取当前会话中比上下文窗口更早的聊天记录原文（群聊为当前群）。
+        当你需要回顾更早聊过的话题、某人之前说过什么、或查一个旧消息时调用。
+        注意：图片/表情消息在记录中只有"[图片/表情]"占位，关键词搜不到图片内容。
+
+        Args:
+            keyword(string): 可选关键词，只返回内容包含该关键词的记录（找特定话题时用；图片内容无法搜索）
+            limit(number): 最多返回条数，默认 20，上限 50
+        """
+        from .core import history as _history
+        from .core.states import session_key
+
+        gid = session_key(event)
+        st = self.states.get(gid)
+        try:
+            is_group = bool(event.get_group_id())
+        except Exception:
+            is_group = False
+        base = int(
+            self.config.get(
+                "max_private_context_size" if not is_group else "max_context_size",
+                60 if not is_group else 40,
+            )
+        )
+        # 稳定窗与 planner 同口径（坑 31：窗口 = max(base, base×2)）；
+        # 排除集 = planner 本轮真实可见消息（稳定窗 included + 待排水
+        # pending，v6.20.1：按 buffer 条数硬排会与分析占坑的合并流窗口
+        # 错位，中间产生模型取不到的盲区）
+        window = max(base, base * 2)
+        records = list(st.buffer)
+        pl = st.planner_state()
+        seen = _history.planner_seen_ids(
+            records, pl.analysis_log, window, pl.last_cycle_ts, is_group
+        )
+        picked = _history.fetch_history_slice(records, seen, keyword, limit)
+        outside_total = max(0, len(records) - len(seen))
+        return _history.render_history_result(picked, outside_total, is_group)
+
     async def terminate(self):
         # M6：任务必有主——先取消并等待全部在飞任务（planner 循环/空窗重查/
         # wait 续轮/学习器），再释放监控库连接池；顺序不可反，否则任务会在
@@ -170,4 +212,4 @@ class MaiSoulPlugin(Star):
         await self._registry.cancel_and_wait_all(timeout=5.0)
         await self.monitor.stop_writer()  # M10：冲刷残余事件后再关连接池
         self.monitor.close()
-        logger.info("maisoul v6.16.0 已卸载")
+        logger.info("maisoul v6.20.1 已卸载")

@@ -60,3 +60,25 @@ def strip_leading_ai_mention(text: str, bot_name: str, aliases: list[str]) -> st
     if not name:
         return text
     return _AT_LEAD_RE.sub("", text or "", count=1).strip()
+
+
+def full_plain_text(segments, fallback: str = "") -> str:
+    """消息链全量文本（坑 61）。
+
+    AstrBot waking_check 命中唤醒前缀时会原地改写 message_str
+    （"<唤醒词>你胖了" → "你胖了"），插件侧从此丢失说明对象——观察页、
+    planner 上下文、提及检测全都看不到唤醒词。消息链（MessageChain）
+    不被 waking_check 改写，从文本段拼回全量原文即可，且不依赖
+    wake_prefix 配置（各部署唤醒词任意多个，读配置同步必然漏）。
+
+    文本段识别走鸭子类型（有非空 .text 属性即文本段，Plain 即此形态；
+    At/Reply/Image 等组件无 .text），core 不 import astrbot 组件。
+    链上无文本（纯图/表情）回落 message_str，保持旧行为。
+    """
+    parts = []
+    for seg in segments or []:
+        t = getattr(seg, "text", None)
+        if isinstance(t, str) and t.strip():
+            parts.append(t)
+    joined = "".join(parts).strip()
+    return joined or str(fallback or "").strip()
