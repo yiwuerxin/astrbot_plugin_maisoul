@@ -50,6 +50,18 @@ except ImportError:
         def toDict(self):
             return {"type": "reply", "data": {"id": self.id}}
 
+    class _StubAt:
+        def __init__(self, qq=None):
+            self.qq = qq
+
+    class _StubAtAll(_StubAt):
+        def __init__(self):
+            super().__init__(qq="all")
+
+    class _StubAstrMessageEvent:
+        # pipeline 模块 import 用（类型注解）；测试自带鸭子事件对象
+        pass
+
     class _StubMessageChain:
         def __init__(self, chain=None):
             self.chain = list(chain or [])
@@ -111,7 +123,10 @@ except ImportError:
     _star.star_map = {}
     _comp.Plain = _StubPlain
     _comp.Reply = _StubReply
+    _comp.At = _StubAt
+    _comp.AtAll = _StubAtAll
     _evt.MessageChain = _StubMessageChain
+    _evt.AstrMessageEvent = _StubAstrMessageEvent
     _api.logger = _StubLogger()
     _pkg.core = _core
     _pkg.api = _api
@@ -493,6 +508,27 @@ def test_scoring():
     r = ev("DeepSeek，帮我写个脚本", at_bot=False)
     check("叫别的AI被抑制", r.score < 20, str(r.score))
 
+    # 主名入档：bot_name 与 aliases 同权（此前档位只查 aliases，叫主名拿不到 80 档）
+    # pending=0 且无间隔样本 → 压力分恒 0，只验证档位与内容分
+    r = scoring.evaluate(
+        make_state([("u", "x", False)], pending=0),
+        at_bot=False,
+        text="麦麦你觉得呢",
+        aliases=[],
+        bot_name="麦麦",
+        frequency=1.0,
+    )
+    check("主名入档: 叫主名80档触发", r.score >= 80, str(r.score))
+    r = scoring.evaluate(
+        make_state([("u", "x", False)], pending=0),
+        at_bot=False,
+        text="小小麦你觉得呢",
+        aliases=[],
+        bot_name="麦麦",
+        frequency=1.0,
+    )
+    check("主名入档: 叫小小麦不触发", r.score < 80, str(r.score))
+
     st = make_state(
         [(f"q{i}", "今天天气不错啊大家", False) for i in range(25)],
         pending=25,
@@ -732,6 +768,68 @@ def test_typo():
         "拼音缓存: .get 读取不污染缓存",
         "__不存在的音节__" not in typo_mod._shared_pinyin_dict(),
     )
+
+    # 字频缓存自愈（v6.18.2）：坏 JSON 备份为 .corrupt 后重建而非炸掉引擎；
+    # 落盘走 .tmp+replace 原子写（对齐 learning 库），不留 .tmp 残留
+    import pathlib as _pl
+    import tempfile as _tf
+
+    _orig_freq = typo_mod._FREQ_FILE
+    try:
+        _tmpdir = _pl.Path(_tf.mkdtemp())
+        # 坏缓存 → 重建 + 备份
+        _bad = _tmpdir / "data_char_frequency.json"
+        _bad.write_text('{"截断的坏', encoding="utf-8")
+        typo_mod._FREQ_FILE = _bad
+        _gen3 = ChineseTypoGenerator(
+            error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+        )
+        check(
+            "坏字频缓存: 不抛异常且重建可用",
+            len(_gen3.char_frequency) > 5000,
+            str(len(_gen3.char_frequency)),
+        )
+        check(
+            "坏字频缓存: 原文件备份为 .corrupt",
+            (_tmpdir / "data_char_frequency.json.corrupt").exists() and _bad.exists(),
+        )
+        # 合法 JSON 但形状不对（列表/null/标量/非数值）同样走自愈——json.load
+        # 不抛异常，旧实现会把 list/None 当字频表带出，到运行期才 AttributeError
+        for _idx, _bad_shape in enumerate(["[1, 2, 3]", "null", '{"的": "x"}']):
+            _sd = _tmpdir / f"shape{_idx}"
+            _sd.mkdir()
+            _sf = _sd / "data_char_frequency.json"
+            _sf.write_text(_bad_shape, encoding="utf-8")
+            typo_mod._FREQ_FILE = _sf
+            _gs = ChineseTypoGenerator(
+                error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+            )
+            check(
+                f"坏字频缓存: 合法JSON形状不对也自愈#{_idx}",
+                isinstance(_gs.char_frequency, dict)
+                and len(_gs.char_frequency) > 5000
+                and (_sd / "data_char_frequency.json.corrupt").exists(),
+                f"type={type(_gs.char_frequency).__name__}",
+            )
+        # 无缓存 → 生成 + 原子落盘
+        _fresh_dir = _tmpdir / "freq_fresh"
+        _fresh_dir.mkdir()
+        _new = _fresh_dir / "data_char_frequency.json"
+        typo_mod._FREQ_FILE = _new
+        ChineseTypoGenerator(
+            error_rate=0.0, min_freq=9, tone_error_rate=0.0, word_replace_rate=0.0
+        )
+        check(
+            "字频缓存: 无缓存时生成并落盘",
+            _new.exists()
+            and isinstance(json.loads(_new.read_text(encoding="utf-8")), dict),
+        )
+        check(
+            "字频缓存: 落盘无 .tmp 残留",
+            not (_fresh_dir / "data_char_frequency.json.tmp").exists(),
+        )
+    finally:
+        typo_mod._FREQ_FILE = _orig_freq
 
 
 def test_prompt():
@@ -1007,6 +1105,58 @@ def test_states():
     pick = modelbind.pick_model(cands, "sequential", {}, "planner")
     check("pick: 主候选", pick["model"] == "m1")
     check("pick: 空候选返回 None", modelbind.pick_model([], "random", {}, "x") is None)
+
+    # v6.18.2：LLM 失败时 used 记录实际尝试的候选（旧实现成功才写 used，
+    # planner 的 llm.error 上报只能回落默认 provider——归因错对象）
+    from types import SimpleNamespace as _SNS
+
+    from astrbot_plugin_maisoul.pipeline import modelbind_host as _mh
+
+    class _FailBound:
+        provider_config = {"id": "prov-bound"}
+
+        def get_model(self):
+            return "ignored"
+
+        async def text_chat(self, model=None, **kw):
+            raise RuntimeError(f"boom:{model}")
+
+    class _Ctx:
+        provider_manager = _SNS(inst_map={"prov-bound": _FailBound()})
+
+        def get_using_provider(self):
+            return _SNS(
+                provider_config={"id": "prov-default"},
+                get_model=lambda: "default-model",
+            )
+
+    _P = _SNS(context=_Ctx())
+    _cfg_bind = {
+        "task_models": [
+            {
+                "task": "planner",
+                "models": [{"provider": "prov-bound", "model": "agnes-2.5-flash"}],
+                "strategy": "sequential",
+            }
+        ]
+    }
+    _used = {}
+    try:
+        asyncio.run(
+            _mh._task_text_chat(_P, "planner", _cfg_bind, used=_used, prompt="x")
+        )
+    except RuntimeError:
+        pass
+    check(
+        "失败上报: used 记录实际尝试的模型",
+        _used.get("model") == "agnes-2.5-flash",
+        str(_used),
+    )
+    check(
+        "失败上报: used 记录实际尝试的 provider",
+        _used.get("provider") == "prov-bound",
+        str(_used),
+    )
 
     sm = StateManager()
     st = sm.get("g1")
@@ -2259,6 +2409,64 @@ def test_learning():
     )
 
 
+def test_mention():
+    print("[提及判定与at档构成]")
+    from astrbot_plugin_maisoul.core import mention
+
+    BOT, AL = "麦麦", ["小麦"]
+    # 场景来源：群里 @另一个 bot「小麦麦」（aiocqhttp 渲染 " @昵称(QQ号) " 进文本）
+    check(
+        "提及: 开头@小麦麦不命中",
+        not mention.is_mentioned(" @小麦麦(123456) 帮我看看", BOT, AL),
+    )
+    check(
+        "提及: 中段@小麦麦不命中",
+        not mention.is_mentioned("帮我@小麦麦(123456)看看这个", BOT, AL),
+    )
+    check(
+        "提及: 纯文本小小麦不命中",
+        not mention.is_mentioned("小小麦帮我查一下", BOT, AL),
+    )
+    check("提及: 前缀粘连不命中", not mention.is_mentioned("个麦麦在吗", BOT, AL))
+    # 后缀扩展名纯文本仍命中（中文无分词的已知残留；@场景由 exclude_names 兜底）
+    check(
+        "提及: 后缀扩展名文本仍命中(已知残留)",
+        mention.is_mentioned("麦麦子今天干嘛", BOT, AL),
+    )
+    check("提及: 真点名命中", mention.is_mentioned("@麦麦 帮我看看", BOT, AL))
+    check("提及: 纯文本叫主名命中", mention.is_mentioned("麦麦你觉得呢", BOT, AL))
+    check("提及: 别名命中", mention.is_mentioned("小麦觉得呢", BOT, AL))
+    check("提及: 标点包围命中", mention.is_mentioned("（麦麦）在吗", BOT, AL))
+    check(
+        "提及: 剥渲染token后正文叫名仍命中",
+        mention.is_mentioned("@别人(111) 麦麦在吗", BOT, AL),
+    )
+    check("提及: @前缀写法的别名命中", mention.is_mentioned("@小麦 来", BOT, AL))
+    # exclude_names：At 段里 @其他人 的昵称（无 qq 渲染/昵称含空格的防线）
+    check(
+        "提及: 同名他人被exclude排除",
+        not mention.is_mentioned("帮我 @麦麦 查", BOT, AL, exclude_names=["麦麦"]),
+    )
+    check(
+        "提及: 含空格昵称被exclude排除",
+        not mention.is_mentioned("喊 麦 麦麦 出来", BOT, AL, exclude_names=["麦 麦麦"]),
+    )
+    check("提及: 空文本/空关键字安全", not mention.is_mentioned("", BOT, ["", "  "]))
+
+    # explicit 旁路降级（AtAll/引用回复不算 @bot，唤醒前缀保持）
+    check("at档: At段命中", mention.effective_at_bot(True, False, False, False))
+    check("at档: 前缀唤醒保持", mention.effective_at_bot(False, True, False, False))
+    check("at档: @全体成员降级", not mention.effective_at_bot(False, True, True, False))
+    check("at档: 引用回复降级", not mention.effective_at_bot(False, True, False, True))
+    check(
+        "at档: AtAll+Reply都不遮蔽真At",
+        mention.effective_at_bot(True, True, True, True),
+    )
+    check(
+        "at档: 无任何信号为否", not mention.effective_at_bot(False, False, True, True)
+    )
+
+
 def test_phase3_mechanisms():
     print("[Phase3 机制：P-E/P-F/P-D]")
     import time as _t
@@ -2547,6 +2755,7 @@ def test_taskregistry():
 
     # M10：writer 协程——emit 只入队，后台批量落库；stop_writer 优雅冲刷
     import asyncio as _aio2
+    from astrbot_plugin_maisoul.core.taskregistry import TaskRegistry as _TR
     from astrbot_plugin_maisoul.core.monitor import (
         MaisakaMonitorEventRecord as _Rec,
         Monitor as _M,
@@ -2556,7 +2765,7 @@ def test_taskregistry():
     async def _writer_scenario():
         s2 = _MS(pathlib.Path(tempfile.mkdtemp()) / "m10.db")
         m2 = _M(s2)
-        m2.start_writer()
+        m2.start_writer(_TR())
         m2.emit_session_start(
             "g1",
             "群 g1",
@@ -2576,6 +2785,93 @@ def test_taskregistry():
     with s2._session_factory() as sess:
         n = len(sess.query(_Rec).all())
     check("M10 writer: 事件经后台协程落库", n >= 2, f"rows={n}")
+
+    # v6.18.2 回归：writer 正在 flush（to_thread 落库中）时后续事件入队并停机，
+    # 哨兵会在下一轮批量排水中被取出——旧实现此时直接 return 丢弃已取批次
+    # （与同行注释承诺相反）。生产对应：忙碌群消息持续入队时卸载插件。
+    # 时序用线程屏障钉死（entered/release），不依赖墙钟 sleep。
+    import threading as _th
+
+    async def _sentinel_scenario():
+        s4 = _MS(pathlib.Path(tempfile.mkdtemp()) / "sen.db")
+        m4 = _M(s4)
+        _orig_record = s4.record
+        _entered = _th.Event()
+        _release = _th.Event()
+
+        def _gated_record(event, data):
+            _entered.set()  # writer 已进入 flush（to_thread 线程内）
+            _release.wait(timeout=5)
+            return _orig_record(event, data)
+
+        s4.record = _gated_record
+        m4.start_writer(_TR())
+        m4.emit_message_sent(
+            "g1", "麦麦", "m0", "id0", time.time(), "reply", platform="qq"
+        )
+        for _ in range(200):
+            if _entered.is_set():
+                break
+            await _aio2.sleep(0.005)
+        # 闸门断言：writer 未进入 flush 时尾部排水兜底会让 rows 检查假绿，
+        # 必须先确认时序真的成立（PR review 意见）
+        check("writer 停止: 用例前置 writer 已停在 flush", _entered.is_set())
+        m4.emit_message_sent(
+            "g1", "麦麦", "m1", "id1", time.time(), "reply", platform="qq"
+        )
+        m4.emit_message_sent(
+            "g1", "麦麦", "m2", "id2", time.time(), "reply", platform="qq"
+        )
+        _qref = m4._queue
+        _stop_task = _aio2.create_task(m4.stop_writer())
+        for _ in range(200):  # 等 stop_writer 同步序言把哨兵放进队列
+            if m4._queue is None and _qref is not None and _qref.qsize() >= 3:
+                break
+            await _aio2.sleep(0.005)
+        _release.set()  # 放行 writer：取 m1 → 排水 m2 → 撞哨兵
+        await _stop_task
+        return s4
+
+    s4 = _aio2.run(_sentinel_scenario())
+    with s4._session_factory() as sess:
+        n4 = len(sess.query(_Rec).all())
+    check(
+        "writer 停止: 排水中撞哨兵不丢已取批次",
+        n4 == 3,
+        f"rows={n4}（应为 3，旧实现丢 m1/m2 整批）",
+    )
+
+    # v6.18.2：writer 经 TaskRegistry 发起（create_task 唯一入口约束；
+    # 旧实现裸 create_task，与 REFACTOR_NOTES「grep 仅 TaskRegistry 本体」的
+    # 验收声明不符）
+
+    async def _writer_reg_scenario():
+        s5 = _MS(pathlib.Path(tempfile.mkdtemp()) / "reg.db")
+        m5 = _M(s5)
+        reg5 = _TR()
+        m5.start_writer(reg5)
+        size_running = reg5.size
+        m5.emit_message_sent(
+            "g1", "麦麦", "x", "i", time.time(), "reply", platform="qq"
+        )
+        await m5.stop_writer()
+        await _aio2.sleep(0)  # done_callback 清理一拍
+        return size_running, reg5.size
+
+    try:
+        _size_running, _size_after = _aio2.run(_writer_reg_scenario())
+    except TypeError:
+        _size_running, _size_after = -1, -1  # 旧签名无 registry 参数
+    check(
+        "writer 注册: start_writer 经 TaskRegistry spawn",
+        _size_running == 1,
+        f"size={_size_running}",
+    )
+    check(
+        "writer 注册: 停止后自动移除",
+        _size_after == 0,
+        f"size={_size_after}",
+    )
 
     # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
     from astrbot_plugin_maisoul.core.states import StateManager as _SM
@@ -3235,6 +3531,48 @@ def test_planner():
     check("vector 回落: 维度异常吞掉后走随手抽样", blk6.startswith("【表达习惯参考"))
 
 
+def test_events_util_degradation():
+    print("[事件工具降级]")
+    # GOAL 验收约束：except Exception 必须带 logger 留痕——四处消息组件
+    # 解析 helper 此前是裸 pass，降级发生时完全无痕（反注入/引用链悄悄失效）
+    from astrbot_plugin_maisoul.pipeline import events_util as eu
+
+    class _LogRec:
+        def __init__(self):
+            self.calls = []
+
+        def debug(self, msg, *a, **k):
+            self.calls.append(msg)
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    class _BoomEvt:
+        def get_messages(self):
+            raise RuntimeError("boom")
+
+        def get_self_id(self):
+            return "42"
+
+    rec = _LogRec()
+    _orig = eu.logger
+    eu.logger = rec
+    try:
+        e = _BoomEvt()
+        check("降级: 识图引用坏事件→空列表", eu._extract_image_refs(e) == [])
+        check("降级: quote ids 坏事件→空串", eu._quote_ids(e) == "")
+        check("降级: @bot 判定坏事件→False", eu._has_at_bot(None, e) is False)
+        check("降级: 回复bot 判定坏事件→False", eu._is_reply_to_bot(None, e) is False)
+        check(
+            "降级: 四处异常路径均留 debug 日志",
+            len(rec.calls) >= 4,
+            f"logged={len(rec.calls)}",
+        )
+    finally:
+        eu.logger = _orig
+    check("恢复: logger 复原", eu.logger is _orig)
+
+
 def test_personas():
     print("[多人格]")
     from astrbot_plugin_maisoul.core import personas
@@ -3360,6 +3698,8 @@ if __name__ == "__main__":
     test_bridge_builtin_context()
     test_personas()
     test_taskregistry()
+    test_events_util_degradation()
+    test_mention()
     test_phase3_mechanisms()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）

@@ -1,3 +1,72 @@
+# REFACTOR_NOTES — v6.18.3（艾特/提及误判修复批次）
+
+群聊实际使用反馈的触发误判修复。版本顺延 v6.18.3，聚焦「被点名」判定的精确性，
+**零数据迁移**。升级：覆盖代码文件后重启（或重载插件）即可。
+
+## 修复清单
+
+- **@他人不再被误判为提及**（新增 core/mention.py 单一真相模块）：aiocqhttp 会把
+  @其他用户渲染为 `@昵称(QQ号)` 纯文本拼进 message_str（@自己首个不渲染），而门控
+  提及判定是裸子串——bot 叫「麦麦」时群里 @另一个 bot「小麦麦」会被"麦麦"子串
+  误命中，mentioned_bot_reply 开启时直接强制必回。现在判定前先剥渲染 @token、
+  排除消息内 At 段的他人昵称，再对 bot_name/aliases 做前边界匹配（「小麦麦」
+  「个麦麦」不命中，「麦麦你觉得呢」命中——中文无分词只做前边界，后缀扩展名的
+  纯文本提及仍命中属已知残留，@场景由 At 段昵称排除精确兜底）。
+- **@全体成员/引用回复不再升级 at 档**（gating.py + mention.effective_at_bot）：
+  AstrBot waking_check 对 @bot、@全体（AtAll）、引用回复、唤醒前缀四种形态统一置
+  is_at_or_wake_command=True，v6.10 起 explicit 整体并入 at_bot——@全体与引用回复
+  被升级成强制必回、绕过 mentioned_bot_reply 默认关（注释承诺「引用算 mention
+  不算 at」名存实亡）。现 AtAll/Reply 命中时对 explicit 降级，回落各自既有档位
+  （引用走 reply_bot→提及路径），真 At 段与唤醒前缀不受影响。
+- **评分提及档补 bot_name**（core/scoring.py）：档位此前只查 aliases——
+  reply_necessity 模式下叫别名「小麦」能拿 80 档触发、叫主名「麦麦」反而是 0 档
+  （实测 35 分 vs 115 分，与门控 mentioned 口径分裂）。现 bot_name 与 aliases
+  同权，统一走 mention.is_mentioned（opinion_reason 同口径收口）。
+- **配套**：admin.py sim 调试口径同步；events_util 新增 _has_at_all/
+  _other_at_names（except 带留痕，AtAll 导入防御式兼容未导出的旧框架）；
+  版本七处同步 v6.18.3。
+
+## 验证
+
+- 新增 test_mention（34 项断言）与主名入档用例，全部先在旧代码上跑红、修复后
+  转绿；自跑模式 412 项检查零失败（v6.18.2 基线 381 项）。
+- 误判场景确定性复现：@他人「小麦麦」开头/中段不再命中提及；@全体/引用回复
+  降级回落；真 @bot、唤醒前缀、纯文本叫名行为不变。
+- black 26.5.1 全仓 `--check` 通过。
+
+# REFACTOR_NOTES — v6.18.2（健壮性修复批次）
+
+外部评审复核后的小修批次。上游 PR#15 已占用 v6.18.1，本批次版本顺延 v6.18.2，全部为局部修复，**零行为面变更、零数据迁移**。
+升级：覆盖代码文件后重启（或重载插件）即可。
+
+## 修复清单
+
+- **字频缓存自愈与原子落盘**（core/typo.py）：损坏的 data_char_frequency.json
+  此前会让错字引擎整体抛错不可用；现在读取失败先备份 `.corrupt` 再按 jieba
+  词典重建（对齐 learning 库的损坏处理惯例），落盘改 tmp+replace 原子写。
+  PR review 补充形状校验：合法 JSON 但 null/列表/非数值 json.load 不抛异常，
+  会在查频时才炸——形状不对同样备份重建
+- **events_util 四处裸 `except: pass` 补 debug 日志**（识图引用/引用 ID/@bot
+  判定/回复判定）：GOAL 验收要求 except 必带留痕——这些 helper 在反注入清洗
+  路径上，此前降级完全无痕。行为不变（仍按空/False 降级），仅加 exc_info 日志。
+- **观察 writer 停机丢批次**（core/monitor.py）：writer 正在 flush（to_thread
+  落库中）时后续事件入队并停机，哨兵会在下一轮批量排水中被取出——旧实现
+  直接 return 把已取整批丢弃（与同行注释承诺相反）；生产对应「忙碌群消息
+  持续入队时卸载插件」场景。现在排水中撞哨兵先冲刷已取批次再退出。
+- **writer 经 TaskRegistry 发起**：start_writer 改为必传 registry（main.py 与
+  测试同步更新），消灭最后一处裸 `asyncio.create_task`——使
+  「grep create_task 仅 TaskRegistry 本体」的验收声明重新成立。
+- **LLM 失败上报归因**（pipeline/modelbind_host.py + planner_host.py）：
+  `_task_text_chat` 改为每次尝试前写 `used`（成功路径重写同值，语义不变），
+  planner 的 llm.error 据此上报**实际尝试的模型**（任务绑定/降级链场景），
+  不再恒记默认 provider 标签。
+
+## 验证
+
+- pytest 与自执行双入口全绿（22 用例 / 381 项检查，本次新增 5 项回归，全部
+  先在旧代码上验证失败后转绿；writer 丢批次用例用线程屏障钉死时序）。
+- black 26.5.1 全仓 `--check` 通过；`grep create_task` 审计干净。
+
 # REFACTOR_NOTES — v6.16.0（GOAL 双插件加固重构）
 
 本次按外部审查报告与 GOAL 任务书完成 P0 修复、结构重构与 MaiBot 机制移植。

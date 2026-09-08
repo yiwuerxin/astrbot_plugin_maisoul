@@ -372,14 +372,30 @@ class Monitor:
             # 观察账本写入失败不阻断聊天管线，但必须留痕（高频路径用 debug）
             logger.debug(f"maisoul: 麦麦观察事件写入失败: {event}", exc_info=True)
 
-    def start_writer(self) -> None:
-        """启动后台落库 writer 协程（M10）。幂等；需在事件循环内调用。"""
+    def start_writer(self, registry) -> None:
+        """启动后台落库 writer 协程（M10）。幂等；需在事件循环内调用。
+
+        registry（TaskRegistry）：create_task 唯一入口约束——writer 必须
+        经注册表发起（强引用 + 卸载时 cancel_and_wait_all 统一管理）。"""
         if self._writer is not None and not self._writer.done():
             return
         self._queue = asyncio.Queue(maxsize=2000)
-        self._writer = asyncio.create_task(self._writer_loop(), name="monitor_writer")
+        self._writer = registry.spawn(self._writer_loop(), name="monitor_writer")
 
     _SENTINEL = object()  # stop_writer 的优雅退出信号
+
+    async def _flush_batch(self, batch: list) -> None:
+        """按序落库并广播一批事件（writer 的批量写路径；单条失败留痕不阻断）。"""
+        for ev, d in batch:
+            try:
+                broadcast_data = d
+                if ev not in NON_PERSISTED_EVENTS:
+                    broadcast_data = await asyncio.to_thread(self.store.record, ev, d)
+                self.bus.publish(ev, broadcast_data)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug(f"maisoul: 麦麦观察事件写入失败: {ev}", exc_info=True)
 
     async def _writer_loop(self) -> None:
         q = self._queue
@@ -392,20 +408,13 @@ class Monitor:
             while len(batch) < 64 and not q.empty():
                 nxt = q.get_nowait()
                 if nxt is self._SENTINEL:
-                    return  # 排水中收到停止信号：本批已取项照常落库后退出
+                    # 排水中收到停止信号：本批已取项照常落库后退出
+                    # （直接 return 会把整批已取事件丢掉——忙碌群卸载时丢
+                    # 麦麦观察事件库最后一批，v6.18.2 修复）
+                    await self._flush_batch(batch)
+                    return
                 batch.append(nxt)
-            for ev, d in batch:
-                try:
-                    broadcast_data = d
-                    if ev not in NON_PERSISTED_EVENTS:
-                        broadcast_data = await asyncio.to_thread(
-                            self.store.record, ev, d
-                        )
-                    self.bus.publish(ev, broadcast_data)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.debug(f"maisoul: 麦麦观察事件写入失败: {ev}", exc_info=True)
+            await self._flush_batch(batch)
 
     async def stop_writer(self, timeout: float = 5.0) -> None:
         """优雅冲刷并停止（terminate 用）。
