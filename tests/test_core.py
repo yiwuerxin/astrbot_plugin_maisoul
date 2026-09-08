@@ -1293,6 +1293,19 @@ def test_bridge_toolset():
                 ["send_meme", "search_meme", "steal_meme", "query_favor", "call_maid"]
             )
 
+    class _Ctx2(_Ctx):
+        def get_llm_tool_manager(self):
+            return _FakeMgr(
+                [
+                    "send_meme",
+                    "search_meme",
+                    "steal_meme",
+                    "query_favor",
+                    "call_maid",
+                    "fetch_chat_history",
+                ]
+            )
+
     cfg = {"chat_tools": ["send_meme"], "maid_bridge": True}
     ts = bridge.build_chat_toolset(_Ctx(), cfg)
     names = sorted(t.name for t in ts.tools)
@@ -1316,6 +1329,18 @@ def test_bridge_toolset():
     check(
         "显式加入的等价物生效",
         "query_favor" in names and "send_meme" in names,
+        str(names),
+    )
+
+    # v6.20.0：fetch_chat_history 是 planner deferred 专属，不进独立模式工具集
+    # （独立回路 exec_tool_calls 有 [:500] 截断——Sourcery #19 评论带出的真实
+    # 隐患：WebUI 工具弹窗列出全部注册工具，手动加进 chat_tools 会走截断路）
+    cfg = {"chat_tools": ["send_meme", "fetch_chat_history"], "maid_bridge": False}
+    ts = bridge.build_chat_toolset(_Ctx2(), cfg)
+    names = sorted(t.name for t in ts.tools)
+    check(
+        "chat_toolset: fetch_chat_history 手动加入也被排除",
+        "fetch_chat_history" not in names and names == ["search_meme", "send_meme"],
         str(names),
     )
 

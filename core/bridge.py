@@ -29,6 +29,12 @@ TOOL_DEPENDENCIES: dict[str, list[str]] = {
 # 独立模式 chat_toolset 不受影响（它没有内置 send_emoji，两步制对必须完整）。
 DEFERRED_EXCLUDE: set = {"send_meme", "search_meme"}
 
+# 独立模式 chat_toolset 排除集：fetch_chat_history 是 planner deferred 专属
+# （结果全量回填 contexts，planner_host 的 tool 轮）；独立模式 replyer 的
+# 工具回路 exec_tool_calls 有 result[:500] 截断（管家桥二轮回填要紧凑），
+# 手动加进 chat_tools 会被静默截成 500 字符——设计上就不该出现在这条路上
+CHAT_TOOLSET_EXCLUDE: set = {"fetch_chat_history"}
+
 
 def complete_tool_deps(names: list) -> list:
     """把列表中工具的前置依赖补进列表（去重，保持原顺序）。"""
@@ -50,6 +56,8 @@ def build_chat_toolset(context, cfg):
 
         exposed = []
         for name in complete_tool_deps(cfg.get("chat_tools") or []):
+            if name in CHAT_TOOLSET_EXCLUDE:
+                continue  # planner deferred 专属工具不进独立模式工具集（防 500 截断路径）
             tool = mgr.get_func(name)
             if tool is None:
                 continue
