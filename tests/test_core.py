@@ -3585,6 +3585,97 @@ def test_planner():
     check("vector 回落: 维度异常吞掉后走随手抽样", blk6.startswith("【表达习惯参考"))
 
 
+def test_history_tool():
+    """fetch_chat_history 纯逻辑（v6.20.0）：窗口裁剪/过滤/封顶/正序/渲染。"""
+    print("[历史获取工具]")
+    import time as _t
+    from astrbot_plugin_maisoul.core import history as H
+    from astrbot_plugin_maisoul.core.bridge import SyntheticEvent
+
+    def rec(i, text, sid="u1", name="小明", ts=None):
+        return {
+            "sid": sid,
+            "name": name,
+            "msg_id": f"m{i}",
+            "text": text,
+            "ts": ts if ts is not None else 1700000000.0 + i * 60,
+            "at_bot": False,
+            "reply_bot": False,
+            "quote": "",
+        }
+
+    records = [rec(i, f"消息{i}") for i in range(100)]
+    # ① 窗口裁剪：最近 80 条（2×40）不返回，取更早的
+    picked = H.fetch_history_slice(records, window=80)
+    ids = [m["msg_id"] for m in picked]
+    check(
+        "历史: 窗口外裁剪——最近 window 条不进结果（只取 m0~m19）",
+        set(ids) <= {f"m{i}" for i in range(20)} and "m99" not in ids,
+        str(ids[:3]),
+    )
+    check(
+        "历史: 默认条数 20 且按时间正序",
+        len(picked) == 20
+        and picked[0]["msg_id"] == "m0"
+        and picked[-1]["msg_id"] == "m19",
+        str(ids[:3]),
+    )
+    # ② keyword 过滤（窗口外范围内命中）
+    records2 = [rec(i, f"话题{i}聊到{chr(65 + i % 3)}") for i in range(100)]
+    picked2 = H.fetch_history_slice(records2, window=80, keyword="话题9")
+    check(
+        "历史: 关键词过滤只留命中",
+        all("话题9" in m["text"] for m in picked2) and len(picked2) > 0,
+        str(len(picked2)),
+    )
+    # ③ limit 封顶 50 / 下限 1
+    check(
+        "历史: limit 封顶 50（窗口外须有足量记录）",
+        len(H.fetch_history_slice(records, 10, "", 500)) == 50,
+    )
+    check(
+        "历史: limit 下限 1",
+        len(H.fetch_history_slice(records, 80, "", 0)) == 1,
+    )
+    # ④ 窗口外为空
+    check(
+        "历史: 窗口外为空返回空",
+        H.fetch_history_slice(records[:50], 80) == [],
+    )
+    # ⑤ 渲染：说明头 + <message 前缀 + 跨日插行 + 自发消息标记
+    day1 = _t.mktime((2024, 1, 1, 10, 0, 0, 0, 0, -1))
+    day2 = day1 + 86400
+    recs = [
+        rec(1, "早的", ts=day1),
+        rec(2, "晚的", sid="self", name="麦麦", ts=day2),
+    ]
+    text = H.render_history_result(recs, 5, True)
+    check(
+        "历史: 渲染含说明头/<message/跨日行/自发标记",
+        text.startswith("以下是比当前上下文窗口更早的聊天记录（2 条")
+        and "<message " in text
+        and "时间：2024-01-01" in text
+        and "时间：2024-01-02" in text
+        and 'is_self_message="true"' in text,
+        text[:100],
+    )
+    check(
+        "历史: 空结果文案不编造",
+        H.render_history_result([], 0).startswith("没有可返回的更早聊天记录"),
+    )
+    # ⑥ SyntheticEvent 会话解析（wait 续轮合成事件下定位会话）
+    se_group = SyntheticEvent("aiocqhttp:GroupMessage:123456")
+    se_priv = SyntheticEvent("aiocqhttp:FriendMessage:10001")
+    check(
+        "历史: SyntheticEvent 群/私聊会话键解析",
+        se_group.get_group_id() == "123456"
+        and se_group.get_sender_id() == ""
+        and se_priv.get_sender_id() == "10001"
+        and se_priv.get_group_id() == ""
+        and se_group.get_platform_name() == "aiocqhttp",
+    )
+
+
 def test_events_util_degradation():
     print("[事件工具降级]")
     # GOAL 验收约束：except Exception 必须带 logger 留痕——四处消息组件
@@ -3754,6 +3845,7 @@ if __name__ == "__main__":
     test_taskregistry()
     test_events_util_degradation()
     test_mention()
+    test_history_tool()
     test_phase3_mechanisms()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
