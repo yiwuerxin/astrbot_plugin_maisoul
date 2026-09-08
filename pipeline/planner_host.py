@@ -207,6 +207,7 @@ async def _planner_cycle(
             model_by_idx=model_by_idx,
             planner_model_name=" / ".join(planner_models),
             replyer_reasoning=getattr(pl, "replyer_reasoning", ""),
+            replyer_trace=getattr(pl, "replyer_trace", None),
         )
 
     try:
@@ -930,12 +931,14 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         )
 
     reply_started = time.time()
+    replyer_used: dict[str, str] = {}  # 本次生成实际服务的模型（推理页回复器流程）
     try:
         image_parts = prompt.image_context_parts(st, eff_cfg)
         resp = await _task_text_chat(
             P,
             "replyer",
             eff_cfg,
+            used=replyer_used,
             prompt=user_message,
             session_id=f"maisoul_{gid}",
             system_prompt=system_prompt,
@@ -952,11 +955,20 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         raise
 
     answer = _resp_text(resp)
-    # 推理过程页素材：reply 工具的回复器思考/耗时（挂在 planner 状态上，
-    # 由 finalize 汇入 planner.finalized——不进麦麦观察时间线）
+    # 推理过程页素材：reply 工具的回复器思考/耗时/请求与输出全文（挂在 planner
+    # 状态上，由 finalize 汇入 planner.finalized 的 maisoul 扩展 replyer 块——
+    # 不进麦麦观察时间线；生态注入同轮已有 final_state.eco_injection）
     _pl = st.planner_state()
     _pl.replyer_reasoning = str(getattr(resp, "reasoning_content", None) or "").strip()
     _pl.replyer_duration_ms = (time.time() - reply_started) * 1000
+    _pl.replyer_trace = {
+        "system_prompt": system_prompt,
+        "user_message": user_message,
+        "output": answer,
+        "model": str(replyer_used.get("model") or ""),
+        "provider": str(replyer_used.get("provider") or ""),
+        "duration_ms": _pl.replyer_duration_ms,
+    }
     if not answer:
         return "模型未返回内容，本次未发言"
 

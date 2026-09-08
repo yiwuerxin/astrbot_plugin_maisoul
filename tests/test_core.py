@@ -1813,6 +1813,10 @@ def test_monitor():
         "model_name" not in fin["planner"]
         and all("model_name" not in m for m in fin["request"]["messages"]),
     )
+    check(
+        "finalized: 无 replyer 生成时无 replyer 块（旧事件无回复器流程）",
+        "replyer" not in fin,
+    )
 
     since = events[1]["data"]["event_id"]
     tail = store.replay(since_event_id=since, limit=10)
@@ -2716,6 +2720,14 @@ def test_taskregistry():
         model_by_idx={1: "test-planner-model"},
         planner_model_name="test-planner-model",
         replyer_reasoning="回复器思考：要热情一点",
+        replyer_trace={
+            "system_prompt": "【身份】麦麦",
+            "user_message": "【记录】你好",
+            "output": "早呀",
+            "model": "reply-model-x",
+            "provider": "src_r",
+            "duration_ms": 2345.6,
+        },
     )
     m3.close()
     import json as _json
@@ -2742,6 +2754,17 @@ def test_taskregistry():
     check(
         "推理过程: 整循环模型名在 planner 块（多模型去重拼接）",
         data["planner"].get("model_name") == "test-planner-model",
+    )
+    rp = data.get("replyer") or {}
+    check(
+        "推理过程: replyer 块=回复器流程素材（v6.19.0 扩展）",
+        rp.get("system_prompt") == "【身份】麦麦"
+        and rp.get("user_message") == "【记录】你好"
+        and rp.get("output") == "早呀"
+        and rp.get("model_name") == "reply-model-x"
+        and rp.get("duration_ms") == 2345.6
+        and rp.get("reasoning") == "回复器思考：要热情一点",
+        str(rp)[:80],
     )
     from astrbot_plugin_maisoul.core.monitor import _serialize_planner_block as _spb
 
