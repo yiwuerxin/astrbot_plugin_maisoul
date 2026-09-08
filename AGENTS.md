@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.14.6：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议结构对齐与 reply 后续轮（坑 55，v4f 无需换模型即收敛中文结构化正文）；表达方式 vector_intent 语义召回（嵌入任务槽 + 向量缓存 + 回落）；推理过程整页复刻 + 交互修复 + 麦麦观察全屏 + 推理页全控件接真（坑 57/58，v6.14.4-v6.15.0）。
+> 当前版本 v6.20.1：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议结构对齐与 reply 后续轮（坑 55，v4f 无需换模型即收敛中文结构化正文）；表达方式 vector_intent 语义召回（嵌入任务槽 + 向量缓存 + 回落）；推理过程整页复刻 + 交互修复 + 麦麦观察全屏 + 推理页全控件接真（坑 57/58，v6.14.4-v6.15.0）。
 
 ---
 
@@ -230,7 +230,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
    - 单文件、零外部依赖（无 CDN）；
    - **内联 script 里绝不出现 body/script 的闭合标签字面量**（服务端注入会误伤，历史事故）；
    - 桥获取必须走 `ensureBridge()`（官方 SDK 2.5s 轮询 → 内置 postMessage 备用桥），禁止直接读全局。
-5. 版本号三处同步：metadata.yaml、main.py `@register`、页面 PAGE_VERSION + status API。
+5. 版本号六处同步（坑 12 全清单）：metadata.yaml、main.py `@register`、模块 docstring 与加载/卸载日志、PAGE_VERSION、status API、pipeline/admin.py 的 `/maisoul` 状态行。
 6. 复刻保真原则：凡标"对齐 MaiBot xxx"的常量/公式，改动前先对照 MaiBot 官方仓库源码（github.com/Mai-with-u/MaiBot）的对应文件。
 7. **需求铁律（项目首要政策）**：任何功能需求，**默认含义是"完全对标 MaiBot，功能要完全一样"**——行为、配置字段、提示词结构、参数默认值都按 MaiBot 源码来，不许自作主张做"近似/简化版"。**实现写法也要照抄 MaiBot**（MaiBot 用 SQL 表就用 SQL 表，不许以"插件侧更轻"为由换成 JSON 等变体）；**WebUI 仿照对象 = MaiBot 部署实例的构建产物**（`:dashboard端口` 的 pip 包 `maibot_dashboard` dist），不是容器里的前端源码 dump——样式、颜色、字号、圆角、图标（lucide SVG，不用 emoji）、文案必须**一模一样**：部署版有的一个不能少，部署版没有的（如暂停按钮、自造徽章）**不许自己加**；比对方法 = 抓部署 chunk 里的中文字符串与 CSS 变量/组件类。只有两种情况可以偏离：① MaiBot 没有该功能（此时按 AstrBot 生态最优实现，自己写）；② **相对 MaiBot 本身的写法确实有更好的替代**——必须先在 Issue/PR 中说明并获维护者同意才能用，不许默认采用。拿不准就先查源码再动手，不要凭记忆或直觉实现。
 8. **代码规范（v6.10.0 移植自 MaiBot AGENTS.md：<https://github.com/Mai-with-u/MaiBot/blob/main/AGENTS.md>，已按插件形态适配，2026-09-02 复核上游全文补入提交卫生/UI 叠层排查/实验目录三条；不适配项：uv/pyproject、npm build、A_memorix、插件提交仓库流程、data-dashboard-style 主题与 Radix/motion 组件（本插件单文件零依赖页无此设施）、prompt 多语言模板（maisoul 提示词仅中文、直取 MaiBot 中文原文））**：
@@ -251,7 +251,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
 9. **Commit / PR 规范（Conventional Commits，<https://www.conventionalcommits.org>；"Angular 规范"是俗称，Angular 私规不照抄）**：
    - **Commit**：`<type>(<scope>): 祈使句摘要`——一行、动词开头，≤72 字符为硬线；正文写**为什么**（72 列手动换行）；破坏性变更用 `feat!:` 或 `BREAKING CHANGE:` footer；**不列文件清单**（仅文件移动/全局配置/对外 API 变更三种情况点名文件）
    - **PR 四段**：① 改动简述（用户可感知，即 changelog 口径）② 为什么改（背景）③ 核心改动（只挑 1-2 个关键文件或风险点；**UI 改动必须附前后截图**）④ 测试情况
-   - **版本号联动**：`fix`→patch、`feat`→minor、`BREAKING CHANGE`→major（本插件版本号四处同步见坑 12）
+   - **版本号联动**：`fix`→patch、`feat`→minor、`BREAKING CHANGE`→major（本插件版本号六处同步见坑 12）
    - **不提交无边界的格式化/ruff/导入整理/大面积实现整理**（MaiBot 原文）——这类 diff 会淹没真实改动、无法 review；确需整理时单独成提交并在正文说明范围，不与功能改动混在一起
    - **自检标准**：reviewer 不点开 Files changed 就能懂 = 合格；只写"优化"= 不及格
 
