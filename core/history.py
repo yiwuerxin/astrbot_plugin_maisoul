@@ -11,24 +11,42 @@ from __future__ import annotations
 
 from datetime import datetime as _dt
 
-from .planner import render_planner_message
+from .planner import build_history_contexts, render_planner_message, split_pending
 
 MAX_HISTORY_LIMIT = 50
 DEFAULT_HISTORY_LIMIT = 20
 
 
+def planner_seen_ids(
+    records: list[dict],
+    analyses,
+    context_limit: int,
+    last_cycle_ts: float,
+    is_group: bool = True,
+) -> set[int]:
+    """planner 本轮可见的聊天消息身份集 = 稳定窗 included + 待排水 pending。
+
+    与 planner 请求同一套选取逻辑（split_pending + build_history_contexts
+    复用）——v6.20.1 前工具按 buffer 条数硬排 2×base，而 planner 稳定窗在
+    「聊天+分析」合并流上截取、分析占坑，两窗不一致的中间段任何途径都
+    取不到（盲区）；现按真实可见集排除。"""
+    pending, history_buf = split_pending(records, last_cycle_ts)
+    _, included = build_history_contexts(history_buf, analyses, context_limit, is_group)
+    return {id(m) for m in pending} | {id(m) for m in included}
+
+
 def fetch_history_slice(
     records: list[dict],
-    window: int,
+    seen_ids: set[int],
     keyword: str = "",
     limit: int = DEFAULT_HISTORY_LIMIT,
 ) -> list[dict]:
-    """窗口外记录选取：排除最近 window 条（planner 稳定窗内已见，不重复
-    灌），keyword 命中过滤（text 包含、不区分大小写），从新到旧取 limit 条
-    （下限 1、封顶 50），返回按时间正序（阅读顺序）。"""
-    all_records = list(records or [])
-    cut = len(all_records) - max(0, int(window or 0))
-    older = all_records[: max(0, cut)]
+    """已见集之外记录的选取：排除 planner 本轮可见消息（seen_ids 取
+    planner_seen_ids，防重复灌），keyword 命中过滤（text 包含、不区分
+    大小写），从新到旧取 limit 条（下限 1、封顶 50），返回按时间正序
+    （阅读顺序）。"""
+    all_records = records or []
+    older = [m for m in all_records if id(m) not in (seen_ids or set())]
     kw = str(keyword or "").strip().lower()
     if kw:
         older = [m for m in older if kw in str(m.get("text") or "").lower()]

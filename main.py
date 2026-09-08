@@ -1,4 +1,4 @@
-"""astrbot_plugin_maisoul v6.20.0 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
+"""astrbot_plugin_maisoul v6.20.1 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
 
 main.py 只做注册/生命周期/钩子薄壳（M7 拆分）；管线逻辑在 pipeline/ 包：
 - pipeline/gating        门控：逃生舱/过滤词/双模式分发/空窗补偿
@@ -38,7 +38,7 @@ _RUNTIME_DATA_FILES = (
 
 
 @register(
-    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.20.0"
+    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.20.1"
 )
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -91,7 +91,7 @@ class MaiSoulPlugin(Star):
             self.config.get("task_models")
         )
         logger.info(
-            f"maisoul v6.20.0 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.20.1 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -169,9 +169,10 @@ class MaiSoulPlugin(Star):
     ) -> str:
         """获取当前会话中比上下文窗口更早的聊天记录原文（群聊为当前群）。
         当你需要回顾更早聊过的话题、某人之前说过什么、或查一个旧消息时调用。
+        注意：图片/表情消息在记录中只有"[图片/表情]"占位，关键词搜不到图片内容。
 
         Args:
-            keyword(string): 可选关键词，只返回内容包含该关键词的记录（找特定话题时用）
+            keyword(string): 可选关键词，只返回内容包含该关键词的记录（找特定话题时用；图片内容无法搜索）
             limit(number): 最多返回条数，默认 20，上限 50
         """
         from .core import history as _history
@@ -189,12 +190,18 @@ class MaiSoulPlugin(Star):
                 60 if not is_group else 40,
             )
         )
-        # 稳定窗与 planner 同口径（坑 31：窗口 = max(base, base×2)）——
-        # 窗口内模型已见，只喂窗口外的部分，防重复灌
+        # 稳定窗与 planner 同口径（坑 31：窗口 = max(base, base×2)）；
+        # 排除集 = planner 本轮真实可见消息（稳定窗 included + 待排水
+        # pending，v6.20.1：按 buffer 条数硬排会与分析占坑的合并流窗口
+        # 错位，中间产生模型取不到的盲区）
         window = max(base, base * 2)
         records = list(st.buffer)
-        picked = _history.fetch_history_slice(records, window, keyword, limit)
-        outside_total = max(0, len(records) - window)
+        pl = st.planner_state()
+        seen = _history.planner_seen_ids(
+            records, pl.analysis_log, window, pl.last_cycle_ts, is_group
+        )
+        picked = _history.fetch_history_slice(records, seen, keyword, limit)
+        outside_total = max(0, len(records) - len(seen))
         return _history.render_history_result(picked, outside_total, is_group)
 
     async def terminate(self):
@@ -205,4 +212,4 @@ class MaiSoulPlugin(Star):
         await self._registry.cancel_and_wait_all(timeout=5.0)
         await self.monitor.stop_writer()  # M10：冲刷残余事件后再关连接池
         self.monitor.close()
-        logger.info("maisoul v6.20.0 已卸载")
+        logger.info("maisoul v6.20.1 已卸载")

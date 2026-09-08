@@ -249,6 +249,24 @@ def build_history_contexts(
     return contexts, included_chat
 
 
+def split_pending(
+    records: list[dict], last_cycle_ts: float
+) -> tuple[list[dict], list[dict]]:
+    """按排水水位切分 (pending, history)：pending = ts 晚于水位的外部消息
+    （planner 循环内经 _drain_pending 注入）。
+
+    pending 判定的单一实现——planner 循环与 fetch_chat_history 的排除集
+    共用，防两处各写一份表达式后口径漂移（v6.20.1 盲区修复）。"""
+    pending: list[dict] = []
+    history: list[dict] = []
+    for m in records or []:
+        if float(m.get("ts") or 0) > last_cycle_ts and str(m.get("sid")) != "self":
+            pending.append(m)
+        else:
+            history.append(m)
+    return pending, history
+
+
 REPLY_TOOL_SPEC = {
     "type": "object",
     "properties": {

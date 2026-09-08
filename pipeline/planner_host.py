@@ -102,11 +102,7 @@ def _schedule_planner(
 
 
 def _drain_pending(P, st, pl) -> list[dict]:
-    pending = [
-        m
-        for m in list(st.buffer)
-        if float(m.get("ts") or 0) > pl.last_cycle_ts and str(m.get("sid")) != "self"
-    ]
+    pending, _ = planner.split_pending(list(st.buffer), pl.last_cycle_ts)
     pl.last_cycle_ts = time.time()
     st.pending_since_fire = 0
     return pending
@@ -262,20 +258,14 @@ async def _planner_cycle(
         base_limit = int(eff_cfg.get(context_key, 40 if is_group else 60))
         context_limit = max(base_limit, base_limit * 2)
         all_buf = list(st.buffer)
-        pending_now = [
-            m
-            for m in all_buf
-            if float(m.get("ts") or 0) > pl.last_cycle_ts
-            and str(m.get("sid")) != "self"
-        ]
+        _, history_buf = planner.split_pending(all_buf, pl.last_cycle_ts)
         # 历史段 = 聊天记录 + 历史 planner 分析按时间交错（对齐 MaiBot 会话
         # 历史：全部聊天消息含自发消息进 user 轮 <message> 前缀，分析作为
         # assistant 轮回灌，输出格式由此自我强化，坑 52/53）；窗口在合并流
-        # 上截取。pending 用对象身份排除（m not in pending_now 是逐条 dict
-        # 值相等比较，O(n²)）
-        pending_ids = {id(m) for m in pending_now}
+        # 上截取。pending 切分走 split_pending（判定与 fetch_chat_history
+        # 排除集共用同一实现，防口径漂移——v6.20.1）
         contexts, history_msgs = planner.build_history_contexts(
-            [m for m in all_buf if id(m) not in pending_ids],
+            history_buf,
             pl.analysis_log,
             context_limit,
             is_group,
@@ -287,9 +277,7 @@ async def _planner_cycle(
             _fold_memory(
                 P,
                 st,
-                [m for m in all_buf if id(m) not in pending_ids][
-                    : max(0, len(all_buf) - context_limit)
-                ],
+                history_buf[: max(0, len(all_buf) - context_limit)],
             )
         # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
         # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）

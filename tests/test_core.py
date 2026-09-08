@@ -3611,7 +3611,8 @@ def test_planner():
 
 
 def test_history_tool():
-    """fetch_chat_history 纯逻辑（v6.20.0）：窗口裁剪/过滤/封顶/正序/渲染。"""
+    """fetch_chat_history 纯逻辑（v6.20.0；v6.20.1 排除集改 planner 同口径）：
+    可见集计算/窗口裁剪/过滤/封顶/正序/渲染。"""
     print("[历史获取工具]")
     import time as _t
     from astrbot_plugin_maisoul.core import history as H
@@ -3630,11 +3631,12 @@ def test_history_tool():
         }
 
     records = [rec(i, f"消息{i}") for i in range(100)]
-    # ① 窗口裁剪：最近 80 条（2×40）不返回，取更早的
-    picked = H.fetch_history_slice(records, window=80)
+    # ① 窗口裁剪：planner 已见集（无分析时等价最近 window 条）不进结果
+    seen80 = {id(m) for m in records[-80:]}
+    picked = H.fetch_history_slice(records, seen80)
     ids = [m["msg_id"] for m in picked]
     check(
-        "历史: 窗口外裁剪——最近 window 条不进结果（只取 m0~m19）",
+        "历史: 已见集裁剪——最近 window 条不进结果（只取 m0~m19）",
         set(ids) <= {f"m{i}" for i in range(20)} and "m99" not in ids,
         str(ids[:3]),
     )
@@ -3645,9 +3647,10 @@ def test_history_tool():
         and picked[-1]["msg_id"] == "m19",
         str(ids[:3]),
     )
-    # ② keyword 过滤（窗口外范围内命中）
+    # ② keyword 过滤（已见集之外的范围内命中）
     records2 = [rec(i, f"话题{i}聊到{chr(65 + i % 3)}") for i in range(100)]
-    picked2 = H.fetch_history_slice(records2, window=80, keyword="话题9")
+    seen80b = {id(m) for m in records2[-80:]}
+    picked2 = H.fetch_history_slice(records2, seen80b, keyword="话题9")
     check(
         "历史: 关键词过滤只留命中",
         all("话题9" in m["text"] for m in picked2) and len(picked2) > 0,
@@ -3655,17 +3658,18 @@ def test_history_tool():
     )
     # ③ limit 封顶 50 / 下限 1
     check(
-        "历史: limit 封顶 50（窗口外须有足量记录）",
-        len(H.fetch_history_slice(records, 10, "", 500)) == 50,
+        "历史: limit 封顶 50（已见集之外须有足量记录）",
+        len(H.fetch_history_slice(records, {id(m) for m in records[-10:]}, "", 500))
+        == 50,
     )
     check(
         "历史: limit 下限 1",
-        len(H.fetch_history_slice(records, 80, "", 0)) == 1,
+        len(H.fetch_history_slice(records, seen80, "", 0)) == 1,
     )
-    # ④ 窗口外为空
+    # ④ 已见集覆盖全部记录
     check(
-        "历史: 窗口外为空返回空",
-        H.fetch_history_slice(records[:50], 80) == [],
+        "历史: 已见集全覆盖返回空",
+        H.fetch_history_slice(records[:50], {id(m) for m in records[:50]}) == [],
     )
     # ⑤ 渲染：说明头 + <message 前缀 + 跨日插行 + 自发消息标记
     day1 = _t.mktime((2024, 1, 1, 10, 0, 0, 0, 0, -1))
@@ -3688,9 +3692,37 @@ def test_history_tool():
         "历史: 空结果文案不编造",
         H.render_history_result([], 0).startswith("没有可返回的更早聊天记录"),
     )
-    # ⑥ SyntheticEvent 会话解析（wait 续轮合成事件下定位会话）
+    # ⑥ 盲区修复回归（v6.20.1）：分析回灌占坑后 planner 实际可见聊天数
+    # = 窗口 − 窗口内分析数；排除集必须按同口径收窄——旧实现按 buffer
+    # 条数硬排 2×base，m20~m29 既不在 planner 窗口内也不被工具返回，
+    # 任何途径都取不到（永久盲区）
+    analyses = [
+        {"ts": records[i]["ts"] + 0.5, "text": f"分析{j}"}
+        for j, i in enumerate(range(90, 100))
+    ]
+    no_pending = records[-1]["ts"] + 10  # 水位新于全部消息 → pending 空
+    seen_gap = H.planner_seen_ids(records, analyses, 80, no_pending, True)
+    picked_gap = H.fetch_history_slice(records, seen_gap)
+    ids_gap = [m["msg_id"] for m in picked_gap]
+    check(
+        "历史: 分析占坑后排除集收窄（盲区段 m20~m29 可取回）",
+        "m20" in ids_gap and "m29" in ids_gap and "m30" not in ids_gap,
+        str(ids_gap[:3]),
+    )
+    # ⑦ pending（水位后新消息）计入已见——排水机制会注入 planner，
+    # 即使按条数落在窗口外也不由工具返回
+    seen_pend = H.planner_seen_ids(records, [], 80, records[90]["ts"], True)
+    picked_pend = H.fetch_history_slice(records, seen_pend)
+    ids_pend = [m["msg_id"] for m in picked_pend]
+    check(
+        "历史: pending 计入已见（排水将注入，不重复喂）",
+        "m10" in ids_pend and "m11" not in ids_pend and len(picked_pend) == 11,
+        str(ids_pend[:3]),
+    )
+    # ⑧ SyntheticEvent 会话解析（wait 续轮合成事件下定位会话）
     se_group = SyntheticEvent("aiocqhttp:GroupMessage:123456")
     se_priv = SyntheticEvent("aiocqhttp:FriendMessage:10001")
+    se_wc = SyntheticEvent("webchat:FriendMessage:webchat!owner!a1b2")
     check(
         "历史: SyntheticEvent 群/私聊会话键解析",
         se_group.get_group_id() == "123456"
@@ -3698,6 +3730,11 @@ def test_history_tool():
         and se_priv.get_sender_id() == "10001"
         and se_priv.get_group_id() == ""
         and se_group.get_platform_name() == "aiocqhttp",
+    )
+    check(
+        "历史: SyntheticEvent webchat 键=用户名（对齐真实 sender_id）",
+        se_wc.get_sender_id() == "owner" and se_wc.get_group_id() == "",
+        se_wc.get_sender_id(),
     )
 
 

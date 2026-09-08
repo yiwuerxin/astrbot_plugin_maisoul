@@ -156,7 +156,9 @@ class SyntheticEvent:
     get_group_id/get_sender_id 从 umo 解析（v6.20.0）：umo 形如
     "platform:MessageType:会话id"（aiocqhttp 群=群号/私聊=用户ID），段缺省
     时回退空串——session_key 由此落到 umo 兜底（坑 23 语义），fetch_chat_
-    history 等 llm_tool 在 wait 续轮合成事件下也能定位会话。"""
+    history 等 llm_tool 在 wait 续轮合成事件下也能定位会话。webchat 的
+    会话段是 "webchat!用户名!会话id" 而真实键=用户名（sender 构造），
+    取中段对齐（v6.20.1）。"""
 
     plugins_name = None
 
@@ -180,7 +182,14 @@ class SyntheticEvent:
 
     def get_sender_id(self):
         msg_type, sid = self._umo_parts()
-        return sid if msg_type != "GroupMessage" else ""
+        if msg_type == "GroupMessage":
+            return ""
+        # webchat 拆中段（用户名）——对齐真实事件 sender_id，防键错位
+        if sid.startswith("webchat!"):
+            parts = sid.split("!", 2)
+            if len(parts) == 3:
+                return parts[1]
+        return sid
 
     def get_platform_name(self):
         return str(self.unified_msg_origin or "").split(":")[0]
