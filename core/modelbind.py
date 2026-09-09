@@ -11,7 +11,10 @@
 import random
 
 STRATEGIES = ("sequential", "random", "balance")
-TASKS = ("planner", "replyer", "emoji", "learner", "expression_use")
+# 六任务：五个聊天/学习任务 + embedding（vector_intent 表达召回的嵌入绑定；
+# 与 _conf_schema.json task_models 默认值同源——漏列会让 normalize 在每次
+# 加载时把该任务的用户绑定从内存剥掉，重载后静默回落第一个嵌入实例）
+TASKS = ("planner", "replyer", "emoji", "learner", "expression_use", "embedding")
 
 
 def _task_entry(cfg, task: str) -> dict:
@@ -27,7 +30,7 @@ def _task_entry(cfg, task: str) -> dict:
 
 
 def normalize_task_models(value) -> list[dict]:
-    """把任意历史形态规范成五任务齐全的 list（缺省补空）。"""
+    """把任意历史形态规范成全任务齐全的 list（缺省补空）。"""
     out = []
     known = {}
     if isinstance(value, dict):

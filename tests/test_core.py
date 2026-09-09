@@ -529,6 +529,23 @@ def test_scoring():
     )
     check("主名入档: 叫小小麦不触发", r.score < 80, str(r.score))
 
+    # v6.20.3：「怎么看」征询模式随 bot_name/aliases 动态构造（旧版正则硬编码
+    # "麦麦"，改名后"XX怎么看"不加分；与 mention 口径收口一致，默认名下
+    # 与 MaiBot 原文字面等价）
+    check(
+        "征询: 默认名怎么看仍命中",
+        scoring.opinion_reason("麦麦你怎么看", True, ["麦麦", "小麦"]) == "怎么看",
+    )
+    check(
+        "征询: 改名后怎么看命中",
+        scoring.opinion_reason("小北怎么看这条新闻", False, ["小北", "阿北"])
+        == "怎么看",
+    )
+    check(
+        "征询: 无名无你不误报",
+        scoring.opinion_reason("这个链接怎么看", True, ["小北", "阿北"]) == "",
+    )
+
     st = make_state(
         [(f"q{i}", "今天天气不错啊大家", False) for i in range(25)],
         pending=25,
@@ -924,6 +941,11 @@ def test_prompt():
             for s in ("当前时间：", "【最近群聊记录】", "当前思考：\n测试触发原因")
         ),
     )
+    # v6.20.3：上下文上限 0 → 空转写（旧写法 [-0:] 切片会误取全量 buffer）
+    fm_zero = prompt.build_final_user_message(
+        st, dict(cfg, max_context_size=0), "原因", ""
+    )
+    check("final: 上下文上限0为空转写", "【最近群聊记录】" not in fm_zero, fm_zero[:80])
     check("final: MaiBot 结尾指令原文", fm.endswith(prompt.REPLY_INSTRUCTION))
     check("final: 无自造防复读块", "你最近说过" not in fm)
 
@@ -1078,15 +1100,31 @@ def test_states():
         == "sequential",
     )
     norm = modelbind.normalize_task_models(
-        [{"task": "planner", "models": ["junk"], "strategy": "random"}]
+        [
+            {"task": "planner", "models": ["junk"], "strategy": "random"},
+            {
+                "task": "embedding",
+                "models": [{"provider": "e1", "model": "emb-1"}],
+            },
+        ]
     )
     check(
-        "绑定: normalize 补齐五任务且清洗无效项",
-        len(norm) == 5
+        "绑定: normalize 补齐全任务且清洗无效项",
+        len(norm) == len(modelbind.TASKS)
         and norm[0]["models"] == []
         and norm[0]["strategy"] == "random"
         and norm[1]["task"] == "replyer",
         str(norm[:2]),
+    )
+    # v6.20.3：embedding 任务槽必须随 normalize 保留（schema 默认/模型管理页
+    # 均含 embedding 任务；此前五任务清单会把用户配好的嵌入绑定从内存剥掉，
+    # 重载后静默回落第一个嵌入实例）
+    emb_entry = next((t for t in norm if t["task"] == "embedding"), None)
+    check(
+        "绑定: normalize 保留 embedding 绑定",
+        emb_entry is not None
+        and emb_entry["models"] == [{"provider": "e1", "model": "emb-1"}],
+        str(emb_entry),
     )
     chain = modelbind.build_model_chain(cands, "sequential", {}, "planner")
     check("策略: sequential 链按列表顺序", [c["model"] for c in chain] == ["m1", "m2"])
@@ -2236,6 +2274,51 @@ def test_learning():
         learning.learning_flags(cfgp, "expression_learning_list", "qq", "u2", False)
         == (True, True),
     )
+
+    # v6.20.3：learn_from_chat 贯通 is_group（此前 learn 侧漏传恒按 group 匹配，
+    # 私聊 learn=False 规则失效、照样发起学习请求烧 token）
+    class _LearnNoCallProv:
+        async def text_chat(self, **kw):
+            raise AssertionError("learn=False 不应发起学习请求")
+
+    def _run_private_learn():
+        cfg_lp = {
+            "bot_name": "麦麦",
+            "expression_learning_list": [
+                {
+                    "platform": "qq",
+                    "item_id": "u1",
+                    "type": "private",
+                    "use": True,
+                    "learn": False,
+                }
+            ],
+            "jargon_learning_list": [
+                {
+                    "platform": "qq",
+                    "item_id": "u1",
+                    "type": "private",
+                    "use": True,
+                    "learn": False,
+                }
+            ],
+        }
+        return asyncio.run(
+            learning.learn_from_chat(
+                _LearnNoCallProv(),
+                cfg_lp,
+                [{"name": "u", "sid": "u", "msg_id": "m", "text": "嗨", "ts": 1.0}],
+                "qq",
+                "u1",
+                store,
+                is_group=False,
+            )
+        )
+
+    check(
+        "学习: learn_from_chat 私聊 learn=False 短路",
+        _run_private_learn() == "学习未启用",
+    )
     cfgg = {
         "expression_groups": [
             {
@@ -2655,27 +2738,38 @@ def test_phase3_mechanisms():
 
     check("P-B: 会话状态自带情绪", hasattr(_GS(), "emotion"))
 
-    # P-D 发送队列降级
-    buf = [{"sid": "self", "msg_id": "", "text": "旧自发"}] + [
-        {"sid": f"u{i}", "msg_id": f"m{i}", "text": "x" * 30} for i in range(4)
+    # P-D 发送队列降级（v6.20.3 起基线改为时间戳口径：buffer 是 maxlen=200
+    # 的滚动 deque，按条数切片在满载滚动时索引漂移会漏计生成期新消息）
+    buf = [{"sid": "self", "msg_id": "", "text": "旧自发", "ts": 90.0}] + [
+        {"sid": f"u{i}", "msg_id": f"m{i}", "text": "x" * 30, "ts": 100.0 + i}
+        for i in range(4)
     ]
     check(
         "P-D: 超条数降级到最新",
-        demote_quote(buf, {"send_queue_demotion": True}, 1) == ("m3", "m3"),
+        demote_quote(buf, {"send_queue_demotion": True}, 99.5) == ("m3", "m3"),
     )
     check(
-        "P-D: 未超不降", demote_quote(buf[:3], {"send_queue_demotion": True}, 1) is None
+        "P-D: 未超不降",
+        demote_quote(buf[:3], {"send_queue_demotion": True}, 99.5) is None,
     )
     check(
         "P-D: 超字数降级",
         demote_quote(
-            [{"sid": "u1", "msg_id": "m1", "text": "x" * 250}],
+            [{"sid": "u1", "msg_id": "m1", "text": "x" * 250, "ts": 101.0}],
             {"send_queue_demotion": True},
-            0,
+            100.5,
         )
         == ("m1", "m1"),
     )
-    check("P-D: 开关关不降", demote_quote(buf, {}, 1) is None)
+    check("P-D: 开关关不降", demote_quote(buf, {}, 99.5) is None)
+    rolled = [
+        {"sid": f"n{i}", "msg_id": f"n{i}", "text": "y" * 40, "ts": 200.0 + i}
+        for i in range(4)
+    ]
+    check(
+        "P-D: 时间戳基线不受 deque 滚动影响",
+        demote_quote(rolled, {"send_queue_demotion": True}, 199.5) == ("n3", "n3"),
+    )
 
 
 def test_taskregistry():
@@ -3202,6 +3296,39 @@ def test_planner():
     ctx2 = [{"role": "user", "content": "只有一组"}]
     P.fold_old_turns(ctx2, 0)
     check("折叠: 未超限不动", ctx2 == [{"role": "user", "content": "只有一组"}])
+
+    # v6.20.3：折叠边界不得拆散 assistant(tool_calls)/tool 配对——按条数切
+    # 边界落在 tool 回执上时，保留区开头是孤儿 tool 轮（配对 assistant 已被
+    # 折进摘要），OpenAI 类 Provider 协议校验会拒收整轮请求
+    ctx3 = [{"role": "user", "content": "历史0"}, {"role": "user", "content": "历史1"}]
+    start3 = len(ctx3)
+    for r3i in range(4):
+        ctx3.append(
+            {"role": "assistant", "content": "", "tool_calls": [{"id": f"t{r3i}"}]}
+        )
+        ctx3.append(
+            {"role": "tool", "tool_call_id": f"t{r3i}", "content": f"结果{r3i}"}
+        )
+    ctx3.append({"role": "user", "content": "新消息1"})
+    ctx3.append({"role": "user", "content": "新消息2"})
+    ctx3.append({"role": "user", "content": "新消息3"})
+    P.fold_old_turns(ctx3, start3)
+    kept3 = ctx3[start3:]
+    check(
+        "折叠: 边界不拆散 tool 配对",
+        kept3 and kept3[0].get("role") != "tool" and len(kept3) <= 8,
+        str([m.get("role") for m in kept3]),
+    )
+    _pair_ids = {
+        tc["id"] for m in kept3 if m.get("tool_calls") for tc in m["tool_calls"]
+    }
+    check(
+        "折叠: 保留区无孤儿 tool 轮",
+        all(
+            m.get("tool_call_id") in _pair_ids for m in kept3 if m.get("role") == "tool"
+        ),
+        str([m.get("tool_call_id") for m in kept3 if m.get("role") == "tool"]),
+    )
 
     # v6.13.4/5：历史分析跨轮回灌 + 部署版消息格式（对齐 MaiBot 会话历史——
     # planner 输出写入 _chat_history 后续作为 assistant 轮回灌；聊天消息含自发

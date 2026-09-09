@@ -212,7 +212,9 @@ def build_final_user_message(
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     bot_name = str(cfg.get("bot_name") or "麦麦")
     context_key = "max_context_size" if is_group else "max_private_context_size"
-    buf = list(st.buffer)[-int(cfg.get(context_key, 40 if is_group else 60)) :]
+    # 上限钳制（v6.20.3）：0/负数 → 空转写——旧写法 [-0:] 切片会误取全量
+    context_limit = max(0, int(cfg.get(context_key, 40 if is_group else 60)))
+    buf = list(st.buffer)[-context_limit:] if context_limit else []
     if cfg.get("enable_context_optimization", True):
         from .learning import ASSISTANT_OPTIMIZATION_KEEP_COUNT
 

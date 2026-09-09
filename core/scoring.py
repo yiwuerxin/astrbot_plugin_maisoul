@@ -90,8 +90,14 @@ def opinion_reason(text: str, is_direct: bool, bot_names: list[str]) -> str:
     hits = [t for t in OPINION_TERMS if t in text]
     if hits:
         return "/".join(hits)
-    if re.search(r"(?:你|麦麦).{0,6}怎么看|怎么看.{0,6}(?:你|麦麦)", text):
-        return "怎么看"
+    # 「怎么看」句式随 bot_name/aliases 动态构造（v6.20.3：旧正则硬编码
+    # "麦麦"，改名后"XX怎么看"不加分；默认名下与 MaiBot 原文字面等价，
+    # 别名入式与提及档收口同口径）
+    names = [re.escape(str(n).strip()) for n in (bot_names or []) if str(n).strip()]
+    if names:
+        alt = "|".join(names)
+        if re.search(rf"(?:你|{alt}).{{0,6}}怎么看|怎么看.{{0,6}}(?:你|{alt})", text):
+            return "怎么看"
     return ""
 
 

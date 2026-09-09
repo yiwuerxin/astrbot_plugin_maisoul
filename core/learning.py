@@ -666,20 +666,12 @@ def _weighted_sample(candidates: list[dict], n: int) -> list[dict]:
 
 
 def expression_habits_block(store: LearningStore, key: str, checked_only: bool) -> str:
-    """legacy 直接注入：库 ≥10 条才启用；高频(>1)抽 5 + 全库抽 5 去重，上限 5 条。"""
+    """legacy 直接注入：库 ≥10 条才启用；候选池与 select 路径共用
+    _sample_legacy_pool（高频>1 抽 5 + 全库抽 5 去重），上限 5 条。"""
     pool = [e for e in store.expressions(key) if not checked_only or e.get("checked")]
     if len(pool) < EXPRESSION_MIN_POOL:
         return ""
-    high = [e for e in pool if int(e.get("count", 1) or 1) > 1]
-    candidates, seen = [], set()
-    high_picks = _weighted_sample(high, min(len(high), 5)) if len(high) >= 10 else []
-    for item in [*high_picks, *_weighted_sample(pool, min(len(pool), 5))]:
-        token = (item.get("situation"), item.get("style"))
-        if token in seen:
-            continue
-        seen.add(token)
-        candidates.append(item)
-    candidates = candidates[:MAX_SELECTED_EXPRESSIONS]
+    candidates = _sample_legacy_pool(pool)[:MAX_SELECTED_EXPRESSIONS]
     if not candidates:
         return ""
     lines = [
@@ -823,15 +815,25 @@ async def learn_from_chat(
     chat_id: str,
     store: LearningStore,
     model: str | None = None,
+    is_group: bool = True,
 ) -> str:
     """发言后异步学习：表达 + 黑话。返回日志摘要。
 
     整体受 max_expression_learner 信号量约束（对齐 MaiBot 学习并发上限）。
     model：任务级模型绑定（learner 任务）时的按次覆盖。
+    is_group：学习规则按 group/private 匹配（v6.20.3 贯通——此前 learn 侧
+    漏传恒按 group 匹配，私聊 learn=False 规则失效照样发起学习请求）。
     """
     async with get_selection_semaphore(cfg):
         return await _learn_from_chat_inner(
-            provider, cfg, buffer, platform, chat_id, store, model=model
+            provider,
+            cfg,
+            buffer,
+            platform,
+            chat_id,
+            store,
+            model=model,
+            is_group=is_group,
         )
 
 
@@ -843,12 +845,17 @@ async def _learn_from_chat_inner(
     chat_id: str,
     store: LearningStore,
     model: str | None = None,
+    is_group: bool = True,
 ) -> str:
     bot_name = str(cfg.get("bot_name") or "麦麦")
     key = share_key(cfg, "expression_groups", platform, chat_id)
     jkey = share_key(cfg, "jargon_groups", platform, chat_id)
-    _, learn_expr = learning_flags(cfg, "expression_learning_list", platform, chat_id)
-    _, learn_jargon = learning_flags(cfg, "jargon_learning_list", platform, chat_id)
+    _, learn_expr = learning_flags(
+        cfg, "expression_learning_list", platform, chat_id, is_group
+    )
+    _, learn_jargon = learning_flags(
+        cfg, "jargon_learning_list", platform, chat_id, is_group
+    )
     if not learn_expr and not learn_jargon:
         return "学习未启用"
     chat_str = _build_chat_str(buffer, bot_name)
