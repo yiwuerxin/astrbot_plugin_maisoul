@@ -80,7 +80,9 @@ async def _generate_and_send(
     )
     if bool(eff_cfg.get("emotion_enable", False)):  # P-B：要求模型行首给情绪标签
         user_message += (
-            "\n\n【输出要求】请在正文最前面单独一行写 [情绪:愤怒/厌恶/恐惧/悲伤/平静/好奇/开心/兴奋/喜爱]，"
+            # v6.25.0 词表 9→12（N9 补齐委屈/期待/安心的增量定义，标签-驱动
+            # 闭环无死角；正则剥标签本就接受任意 1-6 字词，旧模型输出兼容）
+            "\n\n【输出要求】请在正文最前面单独一行写 [情绪:愤怒/厌恶/恐惧/悲伤/平静/好奇/开心/兴奋/喜爱/委屈/期待/安心]，"
             "然后换行写正文；这一行会被系统剥离，不会发出。"
         )
 
@@ -325,6 +327,10 @@ async def _deliver_reply(
         if m:
             answer = (answer or "")[m.end() :].lstrip("\n")
             st.emotion.apply(m.group(1), _time.time())
+            if bool(
+                eff_cfg.get("emotion_feedback_enable", False)
+            ):  # §6.6 同向情绪累积（关=不计数）
+                st.emotion_feedback.observe(m.group(1))
         typing_mult = st.emotion.typing_multiplier()
     sent = await sender.send_humanlike(send, answer, eff_cfg, typing_mult=typing_mult)
     if webchat_send is not None and buf:

@@ -45,6 +45,11 @@ class MaiSoulPlugin(Star):
         super().__init__(context)
         self.config = config
         self.states = StateManager()
+        # §6.6 情绪-关系耦合对外数值面：心弦探测 star_cls.api 调用
+        # （get_feedback/apply_emotion_event），只交换数值不渲染提示词
+        from .pipeline.emo_facade import EmotionFacade
+
+        self.api = EmotionFacade(self.states, lambda: self.config)
         data_dir = self._persistent_data_dir()
         self.learning_store = learning.LearningStore(
             path=data_dir / "data_learning.json"
