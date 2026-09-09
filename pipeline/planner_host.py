@@ -852,7 +852,9 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         eff_cfg.get("emotion_enable", False)
     ):  # P-B：要求行首情绪标签（发送前剥离）
         user_message += (
-            "\n\n【输出要求】请在正文最前面单独一行写 [情绪:愤怒/厌恶/恐惧/悲伤/平静/好奇/开心/兴奋/喜爱]，"
+            # 词表与 independent 路径（replyer.py）同源 12 词（N9 补齐后
+            # 9→12；Sourcery #27：此处漏改会让默认 planner 模式产不出三词）
+            "\n\n【输出要求】请在正文最前面单独一行写 [情绪:愤怒/厌恶/恐惧/悲伤/平静/好奇/开心/兴奋/喜爱/委屈/期待/安心]，"
             "然后换行写正文；这一行会被系统剥离，不会发出。"
         )
 

@@ -2866,6 +2866,18 @@ def test_emotion_favor_coupling():
         "§6.6: intensity=1 等价原行为",
         abs((e_full.v - 0.0) - 0.8) < 1e-9,
     )
+    # Sourcery #27 回归：跨插件边界的非数值强度不抛异常（按 0 处理）
+    e_bad = EmotionState()
+    e_bad.apply("兴奋", 7000.0, intensity=None)  # type: ignore[arg-type]
+    e_bad.apply("兴奋", 7000.0, intensity="高")  # type: ignore[arg-type]
+    check(
+        "§6.6: 非数值 intensity 不炸（零强度 no-op）",
+        (e_bad.v, e_bad.a) == (0.0, 0.0),
+    )
+    check(
+        "§6.6: facade 传非数值强度整体不炸",
+        asyncio.run(f_e.apply_emotion_event("12345", "开心", "x")) is True,
+    )
 
     # 4. N9：三锚点词补齐增量定义，12 锚点全覆盖（防回归）
     missing = [name for name, _v, _a in EMOTION_ANCHORS if name not in EMOTION_DELTAS]
@@ -2875,6 +2887,23 @@ def test_emotion_favor_coupling():
         before = (e9.v, e9.a)
         e9.apply(w, 8000.0)
         check(f"N9: {w} 不再是 no-op", (e9.v, e9.a) != before)
+    # Sourcery #27 回归：两条生成路径的情绪标签词表同源 12 词。
+    # 读源码文本比对（不 import planner_host——它连带 ecobridge 的
+    # astrbot.core.provider 导入，超出离线桩覆盖面）
+    from pathlib import Path as _Path
+
+    _root = _Path(__file__).resolve().parent.parent
+    _label_list = "/".join(EMOTION_DELTAS.keys())  # 提示词词表 = 词表插入序
+    _ph_txt = (_root / "pipeline" / "planner_host.py").read_text(encoding="utf-8")
+    _rp_txt = (_root / "pipeline" / "replyer.py").read_text(encoding="utf-8")
+    check(
+        "N9: planner 路径标签词表 = 12 词",
+        _label_list in _ph_txt,
+    )
+    check(
+        "N9: independent 路径标签词表 = 12 词",
+        _label_list in _rp_txt,
+    )
 
 
 def test_taskregistry():
