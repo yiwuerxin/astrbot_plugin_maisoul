@@ -2946,13 +2946,22 @@ def test_emotion_favor_coupling():
         "§6.6: intensity=1 等价原行为",
         abs((e_full.v - 0.0) - 0.8) < 1e-9,
     )
-    # Sourcery #27 回归：跨插件边界的非数值强度不抛异常（按 0 处理）
+    check(
+        "§6.6: intensity=0.5 半幅缩放（首情绪无动量）",
+        abs(e_half.v - 0.4) < 1e-9 and abs(e_half.a - 0.4) < 1e-9,
+    )
+    # Sourcery #27/#28 回归：跨插件边界的非数值强度不抛异常（零幅度），
+    # 且极性按未缩放符号保留——streak 记方向，动量口径不因强度丢失
     e_bad = EmotionState()
     e_bad.apply("兴奋", 7000.0, intensity=None)  # type: ignore[arg-type]
     e_bad.apply("兴奋", 7000.0, intensity="高")  # type: ignore[arg-type]
     check(
-        "§6.6: 非数值 intensity 不炸（零强度 no-op）",
+        "§6.6: 非数值 intensity 不炸（零幅度）",
         (e_bad.v, e_bad.a) == (0.0, 0.0),
+    )
+    check(
+        "§6.6: 零强度仍保留极性（streak 方向 +1）",
+        e_bad.streak_dir == 1 and e_bad.streak_n == 2,
     )
     check(
         "§6.6: facade 传非数值强度整体不炸",

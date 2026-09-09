@@ -95,14 +95,16 @@ class EmotionState:
         极性判定按未缩放符号；缺省 1 = P-B 标注驱动的原行为）。"""
         self._decay(now)
         dv, da = EMOTION_DELTAS.get(str(word or "").strip(), (0.0, 0.0))
+        # 极性按未缩放符号判定（Sourcery #28：缩放后再判会让 intensity=0
+        # 的事件丢失极性、动量 streak 不更新，违反本 docstring 的口径）
+        direction = (dv > 0) - (dv < 0)
         try:
             k = max(0.0, min(1.0, float(intensity)))
         except (TypeError, ValueError):
             # 跨插件边界可能传来非数值强度（Sourcery #27）：按 0 处理而非
-            # 抛异常——事件被接受但零强度（no-op），不炸调用方
+            # 抛异常——事件被接受但零幅度（极性仍入 streak，不炸调用方）
             k = 0.0
         dv, da = dv * k, da * k
-        direction = (dv > 0) - (dv < 0)
         # 先按旧 streak 判同/异向（Sourcery：换代后再比较会让异向也吃放大）
         same_direction = direction != 0 and self.streak_dir == direction
         first_emotion = direction != 0 and self.streak_dir == 0

@@ -319,6 +319,7 @@ async def _deliver_reply(
         _emit_sent(P, gid, text, msg_id, "reply", event)
 
     typing_mult = 1.0
+    emo_word = ""
     if bool(eff_cfg.get("emotion_enable", False)):  # P-B：剥标签/更新情绪/打字乘数
         import re as _re
         import time as _time
@@ -327,12 +328,13 @@ async def _deliver_reply(
         if m:
             answer = (answer or "")[m.end() :].lstrip("\n")
             st.emotion.apply(m.group(1), _time.time())
-            if bool(
-                eff_cfg.get("emotion_feedback_enable", False)
-            ):  # §6.6 同向情绪累积（关=不计数）
-                st.emotion_feedback.observe(m.group(1))
+            emo_word = m.group(1)
         typing_mult = st.emotion.typing_multiplier()
     sent = await sender.send_humanlike(send, answer, eff_cfg, typing_mult=typing_mult)
+    if emo_word and bool(
+        eff_cfg.get("emotion_feedback_enable", False)
+    ):  # §6.6 同向情绪累积：发送成功才计入——失败/取消的发言不算已表达的情绪
+        st.emotion_feedback.observe(emo_word)
     if webchat_send is not None and buf:
         await webchat_send("\n\n".join(buf))
         for seg_text in buf:
