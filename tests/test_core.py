@@ -1014,6 +1014,43 @@ def test_prompt():
     )
     check("识图: 部件类型为 image_url", all(p.type == "image_url" for p in parts))
 
+    # v6.21.0：replyer 识图门控——enabled 显式覆盖开关（能力判定走 modalities）
+    check(
+        "识图: enabled=True 覆盖关着的开关",
+        len(prompt.image_context_parts(st_img, {}, enabled=True)) == 3,
+    )
+    check(
+        "识图: enabled=False 压过开着的开关",
+        prompt.image_context_parts(st_img, cfg_img, enabled=False) == [],
+    )
+
+    class _FakeProv:  # 只带 provider_config 的假 provider（modalities 载体）
+        def __init__(self, modalities):
+            self.provider_config = {"modalities": modalities}
+
+    from astrbot_plugin_maisoul.core import modelbind
+
+    check(
+        "识图能力: modalities 勾了 image",
+        modelbind.provider_supports_image(_FakeProv(["text", "image", "tool_use"])),
+    )
+    check(
+        "识图能力: 未勾 image",
+        not modelbind.provider_supports_image(_FakeProv(["text", "tool_use"])),
+    )
+    check(
+        "识图能力: 空列表=不限制(迁移遗留)",
+        modelbind.provider_supports_image(_FakeProv([])),
+    )
+    check(
+        "识图能力: 缺失/非 list=不支持",
+        not modelbind.provider_supports_image(_FakeProv(None))
+        and not modelbind.provider_supports_image(_FakeProv("image")),
+    )
+    check(
+        "识图能力: None 实例(无 Provider)", not modelbind.provider_supports_image(None)
+    )
+
     st_dup = make_state([("u", "在吗", False)], pending=1)
     st_dup.record_self_reply("m0", ["第一句"], "麦麦")
     st_dup.buffer.append(

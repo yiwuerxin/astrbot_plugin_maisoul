@@ -17,7 +17,7 @@ from .ecobridge import (
     xinxian_profile_block as _xinxian_profile_block,
 )
 from .events_util import _emit_sent, _monitor_stage, _resp_text
-from .modelbind_host import _pick_task_model, _task_text_chat
+from .modelbind_host import _pick_task_model, _task_text_chat, replyer_image_capable
 from .replyer import _deliver_reply, _select_expr_block
 
 
@@ -926,7 +926,11 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     reply_started = time.time()
     replyer_used: dict[str, str] = {}  # 本次生成实际服务的模型（推理页回复器流程）
     try:
-        image_parts = prompt.image_context_parts(st, eff_cfg)
+        # 识图门控（v6.21.0）：replyer 不看 enable_image_context 开关，
+        # 读 AstrBot 模型条目 modalities「图像」勾选（勾了才附图）
+        image_parts = prompt.image_context_parts(
+            st, eff_cfg, enabled=replyer_image_capable(P, eff_cfg)
+        )
         resp = await _task_text_chat(
             P,
             "replyer",

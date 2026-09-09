@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.20.3：显示名「麦麦之魂」。全量代码审查修复批次（对照审查报告 maisoul_code_review_v6.20.2.md）：embedding 任务绑定不再被 normalize 剥掉（modelbind.TASKS 补第六任务，坑 62）、私聊学习规则前后端贯通（learn 侧 is_group 贯通 + 页面 rule_type/type 保留）、planner 折叠边界不拆散 tool 配对、过滤词命中补 stop_event、「怎么看」征询随 bot_name 动态构造、wait 续轮挂 running_task、WebUI 六处修复（黑话 count 不再清零/模式高亮/去重提前/jsq 收口/离开观察页拆通道/pe_nick 不进载荷）。此前能力基线见 v6.20.2 及更早记录：新增预设对话；planner 历史分析跨轮回灌（坑 52）+ 请求结构对齐部署版（坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议对齐与 reply 后续轮（坑 55）；表达方式 vector_intent 语义召回；推理过程整页复刻与交互修复（坑 57/58，v6.14.4-v6.15.0）。
+> 当前版本 v6.21.0：显示名「麦麦之魂」。Replyer 识图门控改读 AstrBot 模型条目 modalities 的「图像」勾选（`modelbind.provider_supports_image`，口径逐字对齐框架 `_provider_supports_modality`：空列表=不限制、缺失=不支持；绑定链全部候选勾选才算支持，防降级链落到盲模型带图失败）——`enable_image_context` 开关收窄为只管 Planner 决策轮，independent 模式 replyer 补齐附图（两轮同传）。此前能力基线见 v6.20.3 及更早记录：全量代码审查修复批次（embedding 任务绑定不被 normalize 剥掉/私聊学习规则贯通/planner 折叠边界/过滤词 stop_event/WebUI 六处修复）；v6.20.2 及更早：预设对话、planner 历史分析跨轮回灌（坑 52）+ 请求结构对齐部署版（坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
 
 ---
 
@@ -594,7 +594,7 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 35. 过滤词 ban_words/ban_msgs_regex：注册前整条丢弃（不进缓存不进门控），指令类（escape）不查（对齐 bot.py:801）。
 36. 回复引用机器人 = 提及档（不算 at；当前消息或未消费积压内任一 reply_bot 命中即算）。
 37. planner token 用量：`LLMResponse.usage`（input_other+input_cached=输入、output=输出）逐轮累计进 `planner.finalized` 的 planner 块。
-38. 识图：Image 引用随消息入 buffer（只存引用不落盘）；`text_chat(extra_user_content_parts=[ImageURLPart(image_url={"url": …})])`——**image_url 必须传 dict**（裸字符串 pydantic 拒绝，类 docstring 有误导）；默认关，需视觉模型。
+38. 识图：Image 引用随消息入 buffer（只存引用不落盘）；`text_chat(extra_user_content_parts=[ImageURLPart(image_url={"url": …})])`——**image_url 必须传 dict**（裸字符串 pydantic 拒绝，类 docstring 有误导）。**门控分岔（v6.21.0）**：Planner 决策轮看 `enable_image_context` 开关（默认关）；**replyer 生成轮（planner/independent 两模式）不看开关**，读 AstrBot 模型条目 `modalities` 的「图像」勾选——`modelbind.provider_supports_image`（口径逐字对齐框架 `astr_main_agent._provider_supports_modality`：**空列表=迁移遗留未配置=不限制=支持；缺失/非 list=不支持**），判定入口 `modelbind_host.replyer_image_capable`（replyer 绑定链**全部**候选都勾才算支持——`_task_text_chat` 降级链会依次试候选，任一盲模型接到带图请求即失败；无绑定=当前默认 Provider）。模型能力的**单一事实来源是 AstrBot 的勾选**，maisoul 不读 `sanitize_context_by_modalities`（那是原生 agent 的上下文清洗开关，与能力判定是两回事）。
 39. 任务级模型绑定（模型管理页）：配置 list 型 `task_models`，provider 填**源名**，`_resolve_bound_model` 按 `provider_source_id` 归源、精确 id 未命中取该源任一启用条目承载；三策略纯逻辑在 `core/modelbind.py`（sequential 顺序+异常降级链 / random / balance 轮转）；接入点五处：planner 轮、replyer×2、emoji 检索词、expression_use、learner。
 
 ### 8.6 工具桥/生态

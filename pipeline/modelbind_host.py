@@ -75,6 +75,25 @@ def _provider_model_label(inst, model: str) -> str:
     return str(model or inst.get_model() or "")
 
 
+def replyer_image_capable(P, cfg) -> bool:
+    """replyer 识图门控（v6.21.0）：读 AstrBot 模型条目 modalities 的「图像」
+    勾选，不看 enable_image_context 开关（开关只管 Planner 决策轮）。
+
+    口径：replyer 任务实际可能落到的模型条目（绑定候选逐个解析；无绑定 =
+    当前默认 Provider）**全部**勾了图像才算支持——_task_text_chat 的降级链
+    会依次试候选，任一条目不支持时带图请求落到它上面就会失败，宁可整轮
+    不附图；候选全部解析失败与无绑定同口径（回落默认 Provider）。
+    """
+    insts = []
+    for cand in modelbind.task_model_candidates(cfg, "replyer"):
+        resolved = _resolve_bound_model(P, cand)
+        if resolved is not None:
+            insts.append(resolved[0])
+    if not insts:
+        insts = [P.context.get_using_provider()]
+    return all(modelbind.provider_supports_image(inst) for inst in insts)
+
+
 async def _task_text_chat(P, task: str, cfg, used: dict | None = None, **kwargs):
     """按任务绑定调 text_chat：策略选主候选，异常时依次降级链上后续候选；
     无绑定走 AstrBot 当前默认 Provider。

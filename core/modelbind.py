@@ -98,3 +98,16 @@ def pick_model(candidates: list[dict], strategy: str, rr: dict, task: str):
     """只选主候选（小任务子调用用，无降级链）。"""
     chain = build_model_chain(candidates, strategy, rr, task)
     return chain[0] if chain else None
+
+
+def provider_supports_image(inst) -> bool:
+    """读 AstrBot 模型条目 modalities 的「图像」勾选（v6.21.0，replyer 识图门控）。
+
+    能力口径逐字对齐框架 astr_main_agent._provider_supports_modality：
+    空列表 = 迁移遗留的未配置，按不限制处理（视为支持）；缺失/非 list =
+    不支持；勾了 image = 支持。inst 为 None（无 Provider）同样不支持。
+    """
+    modalities = (getattr(inst, "provider_config", None) or {}).get("modalities", None)
+    if modalities == []:
+        return True
+    return isinstance(modalities, list) and "image" in modalities

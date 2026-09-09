@@ -23,7 +23,12 @@ from .ecobridge import (
     xinxian_profile_block as _xinxian_profile_block,
 )
 from .events_util import _emit_sent, _monitor_stage, _msg_id, _resp_text
-from .modelbind_host import _embedding_provider, _pick_task_model, _task_text_chat
+from .modelbind_host import (
+    _embedding_provider,
+    _pick_task_model,
+    _task_text_chat,
+    replyer_image_capable,
+)
 
 
 async def _generate_and_send(
@@ -99,6 +104,12 @@ async def _generate_and_send(
     if func_tool is not None:
         system_prompt += bridge.MAID_BRIDGE_PROMPT
 
+    # 识图门控（v6.21.0）：replyer 不看 enable_image_context 开关，读 AstrBot
+    # 模型条目 modalities「图像」勾选（勾了才附图）；两轮生成同传（坑 47 同款）
+    image_parts = prompt.image_context_parts(
+        st, eff_cfg, enabled=replyer_image_capable(P, eff_cfg)
+    )
+
     _monitor_stage(P, gid, monitor.STAGE_REPLYER, "生成可见回复", agent_state="running")
     try:
         resp = await _task_text_chat(
@@ -109,7 +120,7 @@ async def _generate_and_send(
             session_id=f"maisoul_{gid}",
             system_prompt=system_prompt,
             func_tool=func_tool,
-            extra_user_content_parts=eco_extras or None,
+            extra_user_content_parts=(eco_extras + image_parts) or None,
         )
     except Exception as e:
         P.monitor.emit_llm_error(
@@ -136,7 +147,7 @@ async def _generate_and_send(
             prompt=user_message,
             session_id=f"maisoul_{gid}",
             system_prompt=system_prompt,
-            extra_user_content_parts=eco_extras or None,
+            extra_user_content_parts=(eco_extras + image_parts) or None,
         )
 
     answer = _resp_text(resp)
