@@ -11,11 +11,7 @@ from astrbot.api.event import AstrMessageEvent
 from ..core import bridge, learning, monitor, personas, planner, prompt, trigger
 from ..core.constants import MESSAGE_DEBOUNCE_SECONDS
 
-from .ecobridge import (
-    _eco_inject_block,
-    _extra_part_text,
-    xinxian_profile_block as _xinxian_profile_block,
-)
+from .ecobridge import _eco_inject_block, _extra_part_text
 from .events_util import _emit_sent, _monitor_stage, _resp_text
 from .modelbind_host import _pick_task_model, _task_text_chat, replyer_image_capable
 from .replyer import _deliver_reply, _select_expr_block
@@ -800,12 +796,6 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         eff_cfg, chat_id=gid, platform=platform, is_group=deps.is_group
     )
     system_prompt += bridge.build_skills_block(eff_cfg)
-    _uid = ""
-    for m in reversed(list(st.buffer)):
-        if str(m.get("msg_id") or "") == msg_id:
-            _uid = str(m.get("sid") or "")
-            break
-    system_prompt += await _xinxian_profile_block(P, gid, _uid)
     import time as _time
 
     if bool(

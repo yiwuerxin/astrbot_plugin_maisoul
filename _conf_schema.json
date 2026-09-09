@@ -169,11 +169,6 @@
     "default": false,
     "description": "P-D 发送队列降级：生成期间新到消息 >3 条或新文本 >200 字时，回复自动改为引用最新一条消息（避免回应早已滚过去的话题）"
   },
-  "xinxian_link": {
-    "type": "bool",
-    "default": false,
-    "description": "P-H 心弦联动：好心弦插件 facade 取好感等级/印象/关系渲染进系统提示词（任一插件缺失自动静默降级）"
-  },
   "talk_value_rules": {
     "description": "动态发言频率规则；可让麦麦在某些群、私聊或时段更活跃或更安静。",
     "type": "list",

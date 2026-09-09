@@ -17,11 +17,7 @@ except ImportError:
     from astrbot.core.message.message_event_result import MessageChain
 from astrbot.api.message_components import Reply
 
-from .ecobridge import (
-    _eco_fire_response,
-    _eco_inject_block,
-    xinxian_profile_block as _xinxian_profile_block,
-)
+from .ecobridge import _eco_fire_response, _eco_inject_block
 from .events_util import _emit_sent, _monitor_stage, _msg_id, _resp_text
 from .modelbind_host import (
     _embedding_provider,
@@ -60,9 +56,6 @@ async def _generate_and_send(
         eff_cfg, chat_id=gid, platform=platform, is_group=is_group
     )
     system_prompt += bridge.build_skills_block(eff_cfg)
-    system_prompt += await _xinxian_profile_block(
-        P, gid, str(event.get_sender_id() or "")
-    )
     if bool(eff_cfg.get("emotion_enable", False)):  # P-B：情绪行注入
         system_prompt += "\n" + st.emotion.prompt_line(time.time())
     eco_block, eco_extras = await _eco_inject_block(P, event, trigger_text)
