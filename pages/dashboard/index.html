@@ -2655,7 +2655,7 @@ function collect(){
   const rxrHost=document.getElementById('rxrs');
   if(rxrHost)S.regex_rules=[...rxrHost.querySelectorAll('[data-rxr]')].map(r=>({keywords:[],regex:r.querySelector('.rxr-pattern').value.split('\n').map(s=>s.trim()).filter(Boolean),reaction:r.querySelector('.rxr-reaction').value.trim()})).filter(r=>r.reaction&&r.regex.length);
   const eco=document.getElementById('enable_context_optimization');if(eco)S.enable_context_optimization=eco.checked;
-  S.enable_image_context=bool('enable_image_context',false);
+  S.enable_image_context=bool('enable_image_context',S.enable_image_context??false);
   if(g('image_context_max_num')!==null)S.image_context_max_num=Math.min(10,Math.max(1,parseInt(g('image_context_max_num'))||3));
   const dp=document.getElementById('default_persona'); if(dp)S.default_persona=dp.value;
   const fps=document.getElementById('follow_persona_switch'); if(fps)S.follow_persona_switch=fps.checked;
