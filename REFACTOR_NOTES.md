@@ -1,3 +1,37 @@
+# REFACTOR_NOTES — v6.25.0（§6.6 情绪-关系耦合 + N9 补齐）
+
+MaiBot §6.6「情绪-关系耦合」移植为与心弦插件（astrbot_plugin_xinxian v1.31.0+）的
+**数值面**双向耦合。零数据迁移、零配置迁移（新键默认关）；升级：覆盖代码文件后重启即可
+（动了 `pipeline/*`，同步容器后需 docker restart，坑 59）。
+
+## 改动清单
+
+- **方向①（麦麦情绪 → 心弦好感增益）**：`core/emotion.py` 新增 `EmotionFeedback`
+  累积器（pfb∈[-7,7]，同向累积/异向回拉/零极性不计数，MaiBot positive_feedback
+  原参数）+ `FEEDBACK_GAIN` 增益表；replyer P-B 剥标签后按
+  `emotion_feedback_enable`（默认关）驱动计数。`pipeline/emo_facade.py` 挂
+  `star_cls.api`：`get_feedback(gid)`（emotion_enable+emotion_feedback_enable
+  双开且会话存在才返回 {"pfb","valence"}）/ `apply_emotion_event(gid,word,intensity)`
+  （方向②入口）。
+- **方向②（心弦等级跃迁 → 麦麦情绪事件）**：心弦侧探测本插件 facade 推送
+  开心/兴奋/悲伤/愤怒，`EmotionState.apply` 补 `intensity∈[0,1]` 线性缩放。
+- **与 P-H 的边界**：P-H 死于提示词面双重注入；本耦合只交换数值，任何一侧
+  数据不进任何 system_prompt（心弦好感数据唯一入口仍是生态注入桥）。
+- **N9 补齐**：委屈(-0.35,0.45)/期待(0.30,0.55)/安心(0.25,0.15) 三锚点原无
+  增量定义（apply 恒 no-op），补齐后 12 锚点全覆盖；情绪标签提示词词表 9→12。
+- `StateManager.peek()` 只读查询（跨插件读数不建态、不打扰 LRU）。
+
+## 生效链（三开关默认关，关=行为与 v6.24.0 一致）
+
+- 方向①：本插件 `emotion_enable` + `emotion_feedback_enable` + 心弦 `favor.mood_coupling` 三开；
+- 方向②：心弦 `favor.mood_push` + 本插件 `emotion_enable` 两开。
+
+## 验证
+
+- `python3 tests/test_core.py` 离线桩 457 项全绿（新增 test_emotion_favor_coupling
+  14 项，pytest/自执行双入口）；black 26.5.1 干净；红线 grep 干净。
+- N9 先红后绿实证：旧版 `apply("委屈"/"期待"/"安心")` 恒 (v=0, a=0)。
+
 # REFACTOR_NOTES — v6.20.3（全量代码审查修复批次）
 
 对 v6.20.2 全量审查（审查报告见仓库外 maisoul_code_review_v6.20.2.md）发现的缺陷集中修复。
