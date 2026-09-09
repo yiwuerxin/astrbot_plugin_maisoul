@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.24.0：显示名「麦麦之魂」。工具/技能选取弹窗加搜索框（按名称/描述/来源插件过滤，只重绘列表区输入焦点不丢）并修勾选闪动——原实现每次勾选整弹窗重建 DOM（列表滚动归零+闪），改为原位替换被点行+底栏计数（`tpRowHTML`/`toggleExpose`）；recall_long_term_memory 经 chat_tools 暴露即可进 deferred 池（插件工具过 `_builtin_tool_enabled` 的"规则缺失视为启用"分支）。此前 v6.23.0：P-H 心弦联动整体拆除（与生态注入桥双重注入同一份心弦数据、无效果增益）；v6.22.0：P-A 中期记忆整体拆除（fetch_chat_history 拉模式覆盖同一盲区且更精准）+ WebUI 补消息过滤/学习并发 + 对标口径放宽落 §5.7；v6.21.0：Replyer 识图门控改读 AstrBot modalities「图像」勾选，enable_image_context 收窄只管 Planner 决策轮。更早能力基线见 v6.20.x 记录：全量代码审查修复批次、预设对话、planner 历史分析跨轮回灌（坑 52）、请求结构对齐部署版（坑 53）、思考文本不回灌（坑 54）、工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
+> 当前版本 v6.25.0：显示名「麦麦之魂」。§6.6 情绪-关系耦合（数值面，`emotion_feedback_enable` 默认关）——连续同向情绪累积器 pfb(±7) 经 `star_cls.api`（pipeline/emo_facade）供心弦插件读取调制好感增益（方向①），等级跃迁情绪事件反向注入（方向②，EmotionState.apply 补 intensity 缩放）；顺手补齐 N9：委屈/期待/安心三锚点增量（12 锚点全覆盖，标签词表 9→12）。与已拆除的 P-H 不同：只交换数值不渲染提示词。此前 v6.24.0：工具/技能选取弹窗加搜索框（按名称/描述/来源插件过滤，只重绘列表区输入焦点不丢）并修勾选闪动——原实现每次勾选整弹窗重建 DOM（列表滚动归零+闪），改为原位替换被点行+底栏计数（`tpRowHTML`/`toggleExpose`）；recall_long_term_memory 经 chat_tools 暴露即可进 deferred 池（插件工具过 `_builtin_tool_enabled` 的"规则缺失视为启用"分支）。此前 v6.23.0：P-H 心弦联动整体拆除（与生态注入桥双重注入同一份心弦数据、无效果增益）；v6.22.0：P-A 中期记忆整体拆除（fetch_chat_history 拉模式覆盖同一盲区且更精准）+ WebUI 补消息过滤/学习并发 + 对标口径放宽落 §5.7；v6.21.0：Replyer 识图门控改读 AstrBot modalities「图像」勾选，enable_image_context 收窄只管 Planner 决策轮。更早能力基线见 v6.20.x 记录：全量代码审查修复批次、预设对话、planner 历史分析跨轮回灌（坑 52）、请求结构对齐部署版（坑 53）、思考文本不回灌（坑 54）、工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
 
 ---
 
@@ -315,7 +315,7 @@ WebUI「学习」页可视化管理，学习 API：GET/POST /astrbot_plugin_mais
 | Planner agent 循环（wait/中断/focus/注意力漂移） | **待完全复刻**（规格见 §7.1），当前以规则评分门控近似 | 用户已确认要求完全对标；近似版只是过渡 |
 | 关键词反应规则（keyword_reaction） | **已复刻**（v6.5 core/learning.py） | keyword_rules/regex_rules + 命名捕获组替换 + 【关键词反应】注入 |
 | 富回复（attach_pic/attach_at/引用回复） | 未复刻（引用回复原语 AstrBot 侧具备但未接） | 后续可接 MessageChain Reply 组件 |
-| 世界书/好感度 | 无对应 | **AstrBot 的 worldbook/xinxian 做得更好**，经生态注入桥全模式生效（v6.11.0）。曾并存的 P-H xinxian_link（直读心弦 facade 渲染同款档案）v6.23.0 拆除——与桥双重注入同一数据、无效果增益；心弦数据唯一入口=生态注入桥 |
+| 世界书/好感度 | 无对应 | **AstrBot 的 worldbook/xinxian 做得更好**，经生态注入桥全模式生效（v6.11.0）。曾并存的 P-H xinxian_link（直读心弦 facade 渲染同款档案）v6.23.0 拆除——与桥双重注入同一数据、无效果增益；心弦数据唯一入口=生态注入桥（v6.25.0 起另有 §6.6 数值面耦合：情绪↔好感增益双向调制，只交换数值不渲染提示词，`emotion_feedback_enable` 默认关——与 P-H 的提示词面注入无关） |
 
 ### 7.1 已实现：Planner 决策层（v6.6，完全对标 maisaka，mode=planner 默认）
 
