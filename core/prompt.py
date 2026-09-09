@@ -148,15 +148,21 @@ REPLY_STYLE_INSTRUCTIONS = {
 }
 
 
-def image_context_parts(st: "GroupState", cfg, max_num: int | None = None) -> list:
-    """识图进上下文（v6.9.9，MaiBot [visual] 的精简等价）：
+def image_context_parts(
+    st: "GroupState", cfg, max_num: int | None = None, enabled: bool | None = None
+) -> list:
+    """识图进上下文（v6.9.9，MaiBot [visual] 的精简等价；v6.21.0 门控分岔）：
 
     取最近 max_num 张聊天图片引用 → ImageURLPart 列表（旧→新），经 text_chat 的
     extra_user_content_parts 附给模型（openai 实现序列化为标准 image_url 段）。
-    总开关 enable_image_context 默认关（需视觉模型）；MaiBot 的识图等待/大图
-    压缩/图片缓存属其自有基建，不在此范围。
+    enabled=None 时读总开关 enable_image_context（Planner 决策轮的口径，默认关，
+    需视觉模型）；replyer 生成轮显式传能力判定结果（读 AstrBot 模型条目
+    modalities 的「图像」勾选，modelbind.provider_supports_image——不再看开关）。
+    MaiBot 的识图等待/大图压缩/图片缓存属其自有基建，不在此范围。
     """
-    if not cfg.get("enable_image_context", False):
+    if enabled is None:
+        enabled = bool(cfg.get("enable_image_context", False))
+    if not enabled:
         return []
     limit = (
         max_num

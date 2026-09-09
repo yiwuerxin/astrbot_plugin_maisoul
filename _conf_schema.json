@@ -230,12 +230,12 @@
     "description": "P-F 反注入：清洗引用前缀/合并转发占位后再进门控；「@其他AI名」开头不计为点名自己；系统提示词附两句防注入声明"
   },
   "enable_image_context": {
-    "description": "识图上下文：把最近几张聊天图片直接附给模型理解（需视觉/多模态模型）",
+    "description": "识图上下文（Planner 决策轮）：开启后把最近几张聊天图片附给 Planner 模型理解（需视觉/多模态模型）。回复生成（Replyer）不看此开关，自动跟随 AstrBot 模型配置「模型能力」里是否勾选图像",
     "type": "bool",
     "default": false
   },
   "image_context_max_num": {
-    "description": "识图上下文一次最多附带的图片张数",
+    "description": "识图上下文一次最多附带的图片张数（Planner 决策轮与回复生成共用）",
     "type": "int",
     "default": 3
   },
