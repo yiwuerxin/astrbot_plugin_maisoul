@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.21.0：显示名「麦麦之魂」。Replyer 识图门控改读 AstrBot 模型条目 modalities 的「图像」勾选（`modelbind.provider_supports_image`，口径逐字对齐框架 `_provider_supports_modality`：空列表=不限制、缺失=不支持；绑定链全部候选勾选才算支持，防降级链落到盲模型带图失败）——`enable_image_context` 开关收窄为只管 Planner 决策轮，independent 模式 replyer 补齐附图（两轮同传）。此前能力基线见 v6.20.3 及更早记录：全量代码审查修复批次（embedding 任务绑定不被 normalize 剥掉/私聊学习规则贯通/planner 折叠边界/过滤词 stop_event/WebUI 六处修复）；v6.20.2 及更早：预设对话、planner 历史分析跨轮回灌（坑 52）+ 请求结构对齐部署版（坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
+> 当前版本 v6.22.0：显示名「麦麦之魂」。P-A 中期记忆整体拆除（memstore/接线/schema 两键/测试全清，理由与盲区归属见 §7.2 条目 6——fetch_chat_history 拉模式覆盖同一盲区且更精准）；WebUI 补齐消息过滤分区（ban_words/ban_msgs_regex）与表达学习并发（max_expression_learner）。此前 v6.21.0：Replyer 识图门控改读 AstrBot 模型条目 modalities 的「图像」勾选（`modelbind.provider_supports_image`，口径逐字对齐框架 `_provider_supports_modality`：空列表=不限制、缺失=不支持；绑定链全部候选勾选才算支持），`enable_image_context` 开关收窄为只管 Planner 决策轮，independent 模式 replyer 补齐附图，识图两键上页面。更早能力基线见 v6.20.3 及之前记录：全量代码审查修复批次、预设对话、planner 历史分析跨轮回灌（坑 52）、请求结构对齐部署版（坑 53）、思考文本不回灌（坑 54）、工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
 
 ---
 
@@ -535,7 +535,12 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 5. **maisoul 独有扩展（MaiBot 之外的加项）**：预设对话（preset_dialogues，v6.13.0——示例对话 {user, reply} 注入【预设对话】块作风格参考，人格库条目可覆盖）、多人格、管家桥（call_maid 桥+单轮回填）、
    independent/native 模式、逃生舱（v6.10.0 起默认关闭=全面接管，escape_at_wake 可开）、总开关、native 三件套注入。
 6. **用户明示同意的取舍**：A_memorix→livingmemory、偷表情→stealer、行为/高频词
-   学习、mid_term_memory、世界书/好感度。
+   学习、mid_term_memory、世界书/好感度。mid_term_memory 曾于 v6.20.x 期绕回实现过
+   轻量近似（P-A 中期记忆：窗口外消息后台摘要 + 词集 Jaccard 召回），
+   **v6.22.0 已整体拆除**——与 fetch_chat_history 覆盖同一盲区（同一 200 条
+   buffer、同为重启即失），拉模式按需取原文更精准且零后台成本，推模式的
+   词面近似召回只会注入噪声；拆除后该盲区唯一入口是 planner 的
+   fetch_chat_history 工具（坑 30b）。
 7. **工程差异（行为一致）**：错字引擎 jieba 词典进程内缓存；学习器为发言后异步任务
    （受 max_expression_learner 信号量约束）而非逐消息队列。
 
