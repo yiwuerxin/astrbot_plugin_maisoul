@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.20.2：显示名「麦麦之魂」。新增预设对话（示例对话风格参考）；含 麦麦观察/模型管理/管家桥/任务级模型绑定/聊天全面接管（@与唤醒也进麦麦管线，escape_at_wake 默认关）；planner 历史分析跨轮回灌（坑 52）+ planner 请求结构对齐部署版（消息前缀/角色/尾部/时间消息/fetch_history 移除，坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议结构对齐与 reply 后续轮（坑 55，v4f 无需换模型即收敛中文结构化正文）；表达方式 vector_intent 语义召回（嵌入任务槽 + 向量缓存 + 回落）；推理过程整页复刻 + 交互修复 + 麦麦观察全屏 + 推理页全控件接真（坑 57/58，v6.14.4-v6.15.0）。
+> 当前版本 v6.20.3：显示名「麦麦之魂」。全量代码审查修复批次（对照审查报告 maisoul_code_review_v6.20.2.md）：embedding 任务绑定不再被 normalize 剥掉（modelbind.TASKS 补第六任务，坑 62）、私聊学习规则前后端贯通（learn 侧 is_group 贯通 + 页面 rule_type/type 保留）、planner 折叠边界不拆散 tool 配对、过滤词命中补 stop_event、「怎么看」征询随 bot_name 动态构造、wait 续轮挂 running_task、WebUI 六处修复（黑话 count 不再清零/模式高亮/去重提前/jsq 收口/离开观察页拆通道/pe_nick 不进载荷）。此前能力基线见 v6.20.2 及更早记录：新增预设对话；planner 历史分析跨轮回灌（坑 52）+ 请求结构对齐部署版（坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议对齐与 reply 后续轮（坑 55）；表达方式 vector_intent 语义召回；推理过程整页复刻与交互修复（坑 57/58，v6.14.4-v6.15.0）。
 
 ---
 
@@ -641,6 +641,8 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 60. **推理过程页的思考素材链路（v6.17.0，客户报"推理过程详情看不到 reasoning"）**：思考只在「推理过程」独立页呈现（owner 指令，不上麦麦观察时间线——planner.response/replier.response 时间线事件已删并有回归用例锁死）。链路：`_planner_cycle` 把每轮 reasoning 记 `reasoning_by_idx`（仅监控序列化副本附到 request.messages[].reasoning，**回灌 contexts 永不带思考**，坑 54 不破）→ `finalize` 汇入 planner.finalized（replyer 思考走 `planner.reasoning`）；前端 rrReasonArticle 渲染 ReasoningItem（部署版预留的 indigo 样式位）。详情按部署版 fe 分区组件拆「请求 Items / 输出结果」（工具轮输出=该轮 assistant 产物消息；收尾轮=planner 思考+回复）。「完整 Item JSON」开合态类组（z-40 提层/加宽）由 rrToggle 切换——同 z 值下 DOM 靠后者胜出，相邻短条目的按钮会盖住展开面板。
 
 61. **waking_check 剥唤醒前缀改写 message_str——插件侧文本必须从消息链全接收（v6.18.1，owner 实报"麦麦你胖了在麦麦观察里只剩你胖了，丢说明对象让 AI 理解偏差"）**：AstrBot 的 WakingCheckStage 命中 wake_prefix 后**原地改写** `event.message_str = message_str[len(prefix):].strip()`（剥前缀发生在所有插件 handler 之前），maisoul 若照读 message_str，唤醒词在门控文本/观察页 message.ingested/planner 上下文/提及检测里全部丢失（门控不受影响——is_at_or_wake_command 标志独立保留）。这也是与 MaiBot 的偏差：MaiBot 自有适配器收全量文本。修法=`core/sanitize.full_plain_text(event.get_messages(), event.message_str)`（gating._process_chat 唯一文本入口）：从消息链 Plain 文本段拼全量原文（aiocqhttp 的 message_str 本就是纯文本段拼接，等价可恢复），**鸭子类型识别文本段（非空 .text），core 不 import astrbot 组件**；链上无文本（纯图/表情）回落 message_str。**明确不读 wake_prefix 配置**——owner 决定：各部署唤醒词任意多个（如 ["麦麦","/"]），同步配置必漏，直接全接收。admin.py 的 `raw = event.message_str` **保持不动**：那是 /maisoul 命令解析口径（CommandFilter 给的是剥后文本，坑 56 注释同源）。附带收益：群聊「唤醒词+指令」与私聊裸指令的 startswith("/") 逃生识别现在看到的是原始全文，判定更准。
+
+62. **任务清单三处同源，改一处必查另两处（v6.20.3，全量审查发现）**：任务槽真相有三个载体——`_conf_schema.json` 的 task_models 默认值（页面渲染与 WebUI 保存的来源）、`core/modelbind.TASKS`（normalize 的白名单）、模型管理页 MD_TASKS。schema 有 embedding 任务而 TASKS 只列五个 → initialize 的 normalize 每次加载把用户的嵌入绑定从内存剥掉，`_pick_task_model(P,"embedding")` 恒 None 恒回落第一个嵌入实例——只有一个嵌入 Provider 时行为恰好等价，缺陷完全隐形；多嵌入部署下重载即失效。**通用教训：normalize 类"清洗器"的白名单与 schema 默认值必须同源（或直接从 schema 推导），否则等于每次启动静默丢用户配置**。同批修复的同族问题：调用侧出现了任务名（"summarizer"）不在任何清单里——死绑定永远走默认 Provider，属"看起来可配实际不可配"，写调用点前先核任务清单。
 
 ## 9. 打包与发布
 

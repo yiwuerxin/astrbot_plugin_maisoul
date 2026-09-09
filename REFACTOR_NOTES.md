@@ -1,3 +1,56 @@
+# REFACTOR_NOTES — v6.20.3（全量代码审查修复批次）
+
+对 v6.20.2 全量审查（审查报告见仓库外 maisoul_code_review_v6.20.2.md）发现的缺陷集中修复。
+版本顺延 v6.20.3，**零数据迁移、零配置迁移**。升级：覆盖代码文件后重启即可（含 pipeline/ 改动，
+reload 不级联，坑 59）。
+
+## 修复清单
+
+- **embedding 任务绑定不再跨重载丢失（高）**：`core/modelbind.TASKS` 补第六任务
+  "embedding"——schema 默认值与模型管理页本就提供该任务槽，但 normalize 白名单漏列，
+  每次加载/重载把用户的嵌入绑定从内存剥掉、静默回落第一个嵌入实例（多嵌入部署下
+  重载即失效；单嵌入时行为恰好等价故不可见）。教训入坑 62：normalize 白名单必须
+  与 schema 默认值同源。
+- **私聊学习规则前后端贯通（高）**：后端 `_schedule_learning`/`learn_from_chat`
+  此前调 `learning_flags` 漏传 `is_group`（恒按 group 匹配，私聊 learn=False 规则
+  失效照样发起学习请求）；前端 collect() 硬编码 `rule_type:'group'`/`type:'group'`
+  （手工配置的 private 规则一旦保存即被改写）。现 learn 侧 is_group 全链贯通，
+  页面行模板携带 data-rt/data-lt 原值、collect 按行保留（新行默认 group）。
+- **WebUI 保存学习库不再清零黑话 count（高）**：collectLibEdits 对 jargons 硬编码
+  `count:1`——点一次保存把全部黑话学习次数重置（抽样加权与排序依据全丢）。现读
+  行内 .lj-cnt 存量值。
+- **planner 折叠边界不拆散 tool 配对（中）**：fold_old_turns 按条数切边界，落在
+  tool 回执上时保留区开头出现孤儿 tool 轮（配对 assistant 已折进摘要）——OpenAI
+  类 Provider 协议校验拒收整轮请求。现终点回退到配对 assistant 之前整对保留。
+- **过滤词命中补 stop_event（中）**：命中 ban_words/ban_msgs_regex 只 return 不拦
+  传播，@机器人的违禁消息被原生 LLM 照常回复——"整条丢弃"语义名存实亡。现补
+  stop_event（escape 分支保持不拦截）。
+- **「怎么看」征询随 bot_name 动态构造（中）**：scoring.opinion_reason 正则硬编码
+  "麦麦"，改名后"XX怎么看"不加分。现由 bot_names 动态构造（默认名下与 MaiBot
+  原文字面等价，别名入式与提及档收口同口径）。
+- **wait 续轮挂 running_task（中）**：续轮内联 await 不更新 pl.running_task，
+  planner_interrupt 的 cancel 打在已完成的旧任务上（no-op）——打断机制对 wait
+  续轮静默失效。现续轮挂 asyncio.current_task()。
+- **WebUI 五处（中/低）**：发言模式按钮高亮反转修正（按 planner/independent/native
+  索引映射）；moIngest 的 event_id 去重提前（重复 session.start 不再重置会话 count）；
+  moCollapsible/rrSel 的 key 进 onclick JS 字符串统一走 jsq（esc 不转义单引号）；
+  离开麦麦观察页拆数据通道（moTeardown：停轮询/退 SSE，此前打到页面卸载）；
+  pe_nick UI 临时键不再进保存载荷。
+- **杂项（低）**：modelbind_host `_task_model_rr` 重复定义删除；summarizer 死绑定
+  删除（恒走默认 Provider，行为不变）；`expression_habits_block` 收敛复用
+  `_sample_legacy_pool`（生产路径死代码去重）；_evict_idle 不再为淘汰检查实例化
+  PlannerState；发送队列降级基线改时间戳口径（deque 滚动不漂移）；上下文上限
+  0 → 空转写（旧 `[-0:]` 误取全量）；ecobridge 两个钩子循环 BaseException→Exception
+  （CancelledError 放行，卸载不被拖到超时）；monitor 会话集封顶 4096；ruff F401/
+  F841/F541 清零；麦麦设置子页切换前 collect（未保存编辑不丢）。
+
+## 验证
+
+- 新增 35 项断言（normalize 保留 embedding / 私聊 learn 短路 / 折叠无孤儿 tool 轮 /
+  时间戳基线抗滚动 / 上下文 0 空转写 / 怎么看动态名），全部先在旧代码上跑红、
+  修复后转绿；自跑模式 447 项检查零失败（v6.20.2 基线 412 项），pytest 24 组全绿。
+- black 26.5.1 全仓 `--check` 通过；页面 JS 经 node --check 语法校验。
+
 # REFACTOR_NOTES — v6.18.3（艾特/提及误判修复批次）
 
 群聊实际使用反馈的触发误判修复。版本顺延 v6.18.3，聚焦「被点名」判定的精确性，

@@ -1,4 +1,4 @@
-"""astrbot_plugin_maisoul v6.20.2 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
+"""astrbot_plugin_maisoul v6.20.3 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
 
 main.py 只做注册/生命周期/钩子薄壳（M7 拆分）；管线逻辑在 pipeline/ 包：
 - pipeline/gating        门控：逃生舱/过滤词/双模式分发/空窗补偿
@@ -38,7 +38,7 @@ _RUNTIME_DATA_FILES = (
 
 
 @register(
-    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.20.2"
+    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.20.3"
 )
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -85,13 +85,14 @@ class MaiSoulPlugin(Star):
 
     async def initialize(self):
         self._migrate_legacy_nicknames()
-        # Phase4：task_models 规范器接线（历史任意形态 → 五任务齐全，内存态；
-        # 不写回配置文件——清洗结果只影响本次运行的候选链）
+        # Phase4：task_models 规范器接线（历史任意形态 → 全任务齐全，内存态；
+        # 不写回配置文件——清洗结果只影响本次运行的候选链。v6.20.3 任务清单
+        # 补入 embedding，嵌入绑定不再被每次加载剥掉）
         self.config["task_models"] = modelbind.normalize_task_models(
             self.config.get("task_models")
         )
         logger.info(
-            f"maisoul v6.20.2 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.20.3 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -212,4 +213,4 @@ class MaiSoulPlugin(Star):
         await self._registry.cancel_and_wait_all(timeout=5.0)
         await self.monitor.stop_writer()  # M10：冲刷残余事件后再关连接池
         self.monitor.close()
-        logger.info("maisoul v6.20.2 已卸载")
+        logger.info("maisoul v6.20.3 已卸载")
