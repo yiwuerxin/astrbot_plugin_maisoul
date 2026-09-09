@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.23.0：显示名「麦麦之魂」。P-H 心弦联动（xinxian_link）整体拆除——与生态注入桥双重注入同一份心弦数据、无效果增益（§7 取舍表"世界书/好感度"行），心弦数据唯一入口回归生态桥；全面功能重复审计同期完成（P-E 经裁定保留：绝对条数速率限制与 5min 占比存在感惩罚互补，见 REFACTOR_NOTES）。此前 v6.22.0：P-A 中期记忆整体拆除（memstore/接线/schema 两键/测试全清，理由与盲区归属见 §7.2 条目 6——fetch_chat_history 拉模式覆盖同一盲区且更精准）；WebUI 补齐消息过滤分区（ban_words/ban_msgs_regex）与表达学习并发（max_expression_learner）。更早 v6.21.0：Replyer 识图门控改读 AstrBot 模型条目 modalities 的「图像」勾选，enable_image_context 开关收窄为只管 Planner 决策轮，识图两键上页面。再早能力基线见 v6.20.x 记录：全量代码审查修复批次、预设对话、planner 历史分析跨轮回灌（坑 52）、请求结构对齐部署版（坑 53）、思考文本不回灌（坑 54）、工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
+> 当前版本 v6.24.0：显示名「麦麦之魂」。工具/技能选取弹窗加搜索框（按名称/描述/来源插件过滤，只重绘列表区输入焦点不丢）并修勾选闪动——原实现每次勾选整弹窗重建 DOM（列表滚动归零+闪），改为原位替换被点行+底栏计数（`tpRowHTML`/`toggleExpose`）；recall_long_term_memory 经 chat_tools 暴露即可进 deferred 池（插件工具过 `_builtin_tool_enabled` 的"规则缺失视为启用"分支）。此前 v6.23.0：P-H 心弦联动整体拆除（与生态注入桥双重注入同一份心弦数据、无效果增益）；v6.22.0：P-A 中期记忆整体拆除（fetch_chat_history 拉模式覆盖同一盲区且更精准）+ WebUI 补消息过滤/学习并发 + 对标口径放宽落 §5.7；v6.21.0：Replyer 识图门控改读 AstrBot modalities「图像」勾选，enable_image_context 收窄只管 Planner 决策轮。更早能力基线见 v6.20.x 记录：全量代码审查修复批次、预设对话、planner 历史分析跨轮回灌（坑 52）、请求结构对齐部署版（坑 53）、思考文本不回灌（坑 54）、工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
 
 ---
 
@@ -25,7 +25,7 @@
   目前映射：MaiBot `send_emoji`（发表情包）↔ `astrbot_plugin_stealer` 的 `send_meme`；MaiBot `fetch_history`（focus 专属，部署版未开）↔ maisoul 自有 `fetch_chat_history`（v6.20.0，buffer 数据源，见坑 30b）。
   维护位置：`core/bridge.py` 的 `MAIBOT_TOOL_EQUIVALENTS`（文档用）+ 配置项 `chat_tools`（实际生效）。
 - **AstrBot 技能（SKILL.md）** → 配置项 `chat_skills`，经 AstrBot 原生 `build_skills_prompt()` 注入聊天系统提示词（与 astr_main_agent 注入主 agent 同一机制）。
-- **工具/技能的选取入口**：WebUI「聊天工具暴露」卡的"从 AstrBot 选取"按钮 → 弹窗（顶部 TOOLS|SKILL 双标签，下方勾选列表）。数据来自 `GET /astrbot_plugin_maisoul/tools`，取数完全对齐官方：工具=`FunctionToolManager.func_list + iter_builtin_tools()`（序列化字段同 ToolsService.get_tool_list，含 origin/origin_name/active），技能=`SkillManager().list_skills()`。**禁止在前端编造工具清单**。弹窗里 `call_maid` 的勾选态映射「管家桥」开关（不在 chat_tools 数组，badge 标"管家桥·默认"），勾/取消即切 maid_bridge。
+- **工具/技能的选取入口**：WebUI「聊天工具暴露」卡的"从 AstrBot 选取"按钮 → 弹窗（顶部 TOOLS|SKILL 双标签 + 搜索框 + 勾选列表；v6.24.0 起搜索按名称/描述/来源插件过滤——只重绘列表区保输入焦点，勾选原位替换被点行+底栏计数，**禁止整弹窗重建**——滚动会归零且闪动）。数据来自 `GET /astrbot_plugin_maisoul/tools`，取数完全对齐官方：工具=`FunctionToolManager.func_list + iter_builtin_tools()`（序列化字段同 ToolsService.get_tool_list，含 origin/origin_name/active），技能=`SkillManager().list_skills()`。**禁止在前端编造工具清单**。弹窗里 `call_maid` 的勾选态映射「管家桥」开关（不在 chat_tools 数组，badge 标"管家桥·默认"），勾/取消即切 maid_bridge。
 - **工具执行路径**：聊天 LLM 发起的工具调用（含 call_maid/send_meme）一律走 `bridge.call_llm_tool()` → AstrBot 原生 `FunctionToolExecutor.execute()`（装饰器注册的 llm_tool 必须走 `_execute_local → call_local_llm_tool` 的 `handler(event, **kwargs)` 路径，**不能直接 `tool.call()`**，见 §8 坑10）。
 - **MaiBot 没有的能力**（如 query_favor 好感度查询等 AstrBot 生态工具）→ **对聊天模型隐藏**，只对 AstrBot 的 agent 模型显示（即走 `call_maid` 管家或原生唤醒路径）。
 - **不要为 MaiBot 已有功能重复造轮子**：偷表情/表情包管理已由 `astrbot_plugin_stealer`（本身就是 MaiBot 表情系统的移植+增强）覆盖，maisoul 不再实现。
