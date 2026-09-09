@@ -872,7 +872,9 @@ function render(p){
         switchRow('mentioned_bot_reply',S.mentioned_bot_reply??false,'提及必回复','只要消息提到麦麦名字就更容易回复（强制触发）')+
         field('群聊上下文（max_context_size）','群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型',`<input type="number" id="max_context_size" min="5" max="200" value="${S.max_context_size??40}">`)+
         field('私聊上下文（max_private_context_size）','私聊回复时参考的最近消息数量',`<input type="number" id="max_private_context_size" min="5" max="300" value="${S.max_private_context_size??60}">`)+
-        switchRow('enable_context_optimization',S.enable_context_optimization??true,'优化上下文','压缩部分上下文——自己的旧发言只保留最近 3 条；一般建议开启')
+        switchRow('enable_context_optimization',S.enable_context_optimization??true,'优化上下文','压缩部分上下文——自己的旧发言只保留最近 3 条；一般建议开启')+
+        switchRow('enable_image_context',S.enable_image_context??false,'识图上下文（Planner 决策轮）','开启后把最近几张聊天图片附给 Planner 模型理解；需 Planner 任务绑定的模型在 AstrBot「模型能力」里勾选图像。回复生成不看此开关——自动跟随其模型条目的图像勾选')+
+        field('识图张数上限（image_context_max_num）','识图上下文一次最多附带的图片张数（Planner 决策轮与回复生成共用）',`<input type="number" id="image_context_max_num" min="1" max="10" value="${S.image_context_max_num??3}">`)
       ),
       panel('rules','动态发言频率规则','按群或时段单独调整频率；精确匹配优先于通配，时段命中优先于留空。',
         switchRow('enable_talk_value_rules',S.enable_talk_value_rules??false,'启用动态发言频率规则','开启后按聊天/时间段调整发言频率')+
@@ -2653,6 +2655,8 @@ function collect(){
   const rxrHost=document.getElementById('rxrs');
   if(rxrHost)S.regex_rules=[...rxrHost.querySelectorAll('[data-rxr]')].map(r=>({keywords:[],regex:r.querySelector('.rxr-pattern').value.split('\n').map(s=>s.trim()).filter(Boolean),reaction:r.querySelector('.rxr-reaction').value.trim()})).filter(r=>r.reaction&&r.regex.length);
   const eco=document.getElementById('enable_context_optimization');if(eco)S.enable_context_optimization=eco.checked;
+  S.enable_image_context=bool('enable_image_context',false);
+  if(g('image_context_max_num')!==null)S.image_context_max_num=Math.min(10,Math.max(1,parseInt(g('image_context_max_num'))||3));
   const dp=document.getElementById('default_persona'); if(dp)S.default_persona=dp.value;
   const fps=document.getElementById('follow_persona_switch'); if(fps)S.follow_persona_switch=fps.checked;
 }
