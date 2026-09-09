@@ -66,9 +66,13 @@ class EmotionFacade:
         w = str(word or "").strip()
         if w not in EMOTION_DELTAS:
             return False
+        try:
+            k = max(0.0, min(1.0, float(intensity)))
+        except (TypeError, ValueError):
+            # 跨插件边界可能传来非数值强度：按 0 处理（事件接受但零强度），
+            # EmotionState.apply 内有同款兜底，这里归一化后再传并落日志
+            k = 0.0
         st = self._states.get(str(gid or ""))
-        st.emotion.apply(w, time.time(), intensity=intensity)
-        logger.debug(
-            f"maisoul: 情绪事件注入 gid={gid} word={w} intensity={intensity:.2f}"
-        )
+        st.emotion.apply(w, time.time(), intensity=k)
+        logger.debug(f"maisoul: 情绪事件注入 gid={gid} word={w} intensity={k:.2f}")
         return True
