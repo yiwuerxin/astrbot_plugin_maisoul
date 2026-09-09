@@ -288,7 +288,7 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                 {
                     "success": True,
                     "data": {
-                        "version": "6.20.2",
+                        "version": "6.20.3",
                         "mode": config.get("mode"),
                         "enable": config.get("enable"),
                         "maid_bridge": bool(config.get("maid_bridge", True)),

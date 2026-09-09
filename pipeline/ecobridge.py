@@ -75,7 +75,10 @@ async def _eco_inject_block(P, event: AstrMessageEvent, text: str):
             try:
                 await handler.handler(event, req)
                 fired += 1
-            except BaseException:
+            except Exception:
+                # 对齐 call_event_hook 的逐 handler 捕获；v6.20.3 收窄
+                # BaseException→Exception：CancelledError 必须放行，否则
+                # terminate 取消在飞任务时被吞、卸载被拖到超时
                 logger.error(
                     f"maisoul: 生态注入 {handler.handler_name} 异常", exc_info=True
                 )
@@ -108,7 +111,8 @@ async def _eco_fire_response(P, event: AstrMessageEvent, answer: str):
                 continue
             try:
                 await handler.handler(event, resp)
-            except BaseException:
+            except Exception:
+                # 同 _eco_inject_block：CancelledError 放行（v6.20.3）
                 logger.error(
                     f"maisoul: 生态回写 {handler.handler_name} 异常", exc_info=True
                 )

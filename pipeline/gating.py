@@ -88,11 +88,14 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
         return
 
     # 过滤词（对齐 [message_receive].ban_words/ban_msgs_regex：注册前整条丢弃，
-    # 不进缓存不进门控；指令类消息（escape）不检查，同 MaiBot 只查非命令候选）
+    # 不进缓存不进门控；指令类消息（escape）不检查，同 MaiBot 只查非命令候选。
+    # v6.20.3：补 stop_event——只 return 不拦传播时，@机器人的违禁消息会被
+    # 原生 LLM 阶段照常回复，"整条丢弃"语义名存实亡）
     if trigger.hit_ban_filter(
         text, P.config.get("ban_words"), P.config.get("ban_msgs_regex")
     ):
         logger.debug(f"maisoul: 消息命中过滤词，已丢弃: {text[:30]}")
+        event.stop_event()
         return
 
     if str(event.get_sender_id()) == str(event.get_self_id()):
@@ -106,6 +109,10 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
         P._group_sessions.add(gid)
     # 麦麦观察：会话首次进入管线时上报会话标识（对齐 runtime 启动时的 session.start）
     if gid not in P._monitor_sessions:
+        # M12 同族封顶：超限时清空重来（重发 session.start 无害——前端按
+        # session_id 覆盖会话卡），防大量私聊用户的长期部署内存无界增长
+        if len(P._monitor_sessions) > 4096:
+            P._monitor_sessions.clear()
         P._monitor_sessions.add(gid)
         P.monitor.emit_session_start(
             gid,

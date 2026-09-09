@@ -30,15 +30,12 @@
 行为表现情景分析子代理、query_memory（记忆由 livingmemory 承担，取舍见 AGENTS §7）。
 """
 
-import asyncio
 import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime as _dt
 from typing import Protocol
-
-from astrbot.api import logger
 
 MAX_INTERNAL_ROUNDS = 10  # runtime.MAX_INTERNAL_ROUNDS
 
@@ -170,11 +167,17 @@ def fold_old_turns(
     保留最近 3 组 user/assistant，更早的一次性折叠为「[已折叠的历史工具调用]」摘要。
     MaiBot 保留工具调用详情且超 1024 字符转 Complex 消息；maisoul 无该基建，
     精简为逐条摘要文本——防长循环 contexts 无限膨胀。单趟折叠（while 逐对重折
-    会在折叠块自身上 1 换 1 死循环）。"""
+    会在折叠块自身上 1 换 1 死循环）。
+    边界对齐配对（v6.20.3）：折叠区终点落在 tool 回执上时，其配对的
+    assistant(tool_calls) 已进折叠区，保留区开头会出现孤儿 tool 轮——OpenAI
+    类 Provider 的协议校验会拒收整轮请求。终点回退到配对 assistant 之前，
+    让整对一起保留（keep 是软上限，配对完整性优先）。"""
     excess = len(contexts) - turn_start - keep
     if excess <= 0:
         return
     fold_end = turn_start + excess
+    while fold_end > turn_start and contexts[fold_end].get("role") == "tool":
+        fold_end -= 1
     lines = [
         f"- {m.get('role')}: " + " ".join(str(m.get("content") or "").split())[:80]
         for m in contexts[turn_start:fold_end]

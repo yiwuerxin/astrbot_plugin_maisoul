@@ -184,12 +184,19 @@ class StateManager:
         """淘汰最久未访问的闲置状态（无在飞循环/生成/重查任务）。
 
         全部活跃时宁超限也不误杀——淘汰一个正在跑循环的状态会让
-        agent_state/planner 状态凭空消失（比内存超标严重得多）。"""
+        agent_state/planner 状态凭空消失（比内存超标严重得多）。
+        只读 st.planner 已有引用判活跃：不为淘汰检查实例化 PlannerState
+        （planner_state() 的惰性初始化被击穿会给从未进过决策层的会话
+        白造状态对象，v6.20.3）。"""
         for old_gid, st in self._groups.items():
             if old_gid == keep:
                 continue
-            pl = st.planner_state()
-            if pl.agent_state != "idle" or st.firing or st.defer_task is not None:
+            pl = st.planner
+            if (
+                (pl is not None and pl.agent_state != "idle")
+                or st.firing
+                or st.defer_task is not None
+            ):
                 continue
             del self._groups[old_gid]
             return
