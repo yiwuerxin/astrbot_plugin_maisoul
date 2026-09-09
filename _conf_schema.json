@@ -164,16 +164,6 @@
     "default": false,
     "description": "P-B 情绪 VA：9 情绪词驱动的心情值/激昂度（动量+每分钟衰减+12 锚点标签），情绪行注入提示词、正文剥离 [情绪:xx] 标签、打字节奏 ×1.5^激昂度；纯规则零 LLM 成本"
   },
-  "memory_enable": {
-    "type": "bool",
-    "default": false,
-    "description": "P-A 中期记忆：上下文窗口裁掉的旧消息后台摘要为一句总结+回忆线索，后续按线索词召回（≤3 条/900 字，标注内部参考不逐字引用）注入 replyer"
-  },
-  "memory_recall_threshold": {
-    "type": "float",
-    "default": 0.18,
-    "description": "中期记忆召回的词集 Jaccard 阈值（0~1，越高越严）"
-  },
   "send_queue_demotion": {
     "type": "bool",
     "default": false,

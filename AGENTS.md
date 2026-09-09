@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.21.0：显示名「麦麦之魂」。Replyer 识图门控改读 AstrBot 模型条目 modalities 的「图像」勾选（`modelbind.provider_supports_image`，口径逐字对齐框架 `_provider_supports_modality`：空列表=不限制、缺失=不支持；绑定链全部候选勾选才算支持，防降级链落到盲模型带图失败）——`enable_image_context` 开关收窄为只管 Planner 决策轮，independent 模式 replyer 补齐附图（两轮同传）。此前能力基线见 v6.20.3 及更早记录：全量代码审查修复批次（embedding 任务绑定不被 normalize 剥掉/私聊学习规则贯通/planner 折叠边界/过滤词 stop_event/WebUI 六处修复）；v6.20.2 及更早：预设对话、planner 历史分析跨轮回灌（坑 52）+ 请求结构对齐部署版（坑 53）+ 思考文本不回灌（坑 54）+ 工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
+> 当前版本 v6.22.0：显示名「麦麦之魂」。P-A 中期记忆整体拆除（memstore/接线/schema 两键/测试全清，理由与盲区归属见 §7.2 条目 6——fetch_chat_history 拉模式覆盖同一盲区且更精准）；WebUI 补齐消息过滤分区（ban_words/ban_msgs_regex）与表达学习并发（max_expression_learner）。此前 v6.21.0：Replyer 识图门控改读 AstrBot 模型条目 modalities 的「图像」勾选（`modelbind.provider_supports_image`，口径逐字对齐框架 `_provider_supports_modality`：空列表=不限制、缺失=不支持；绑定链全部候选勾选才算支持），`enable_image_context` 开关收窄为只管 Planner 决策轮，independent 模式 replyer 补齐附图，识图两键上页面。更早能力基线见 v6.20.3 及之前记录：全量代码审查修复批次、预设对话、planner 历史分析跨轮回灌（坑 52）、请求结构对齐部署版（坑 53）、思考文本不回灌（坑 54）、工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
 
 ---
 
@@ -233,6 +233,7 @@ threshold、frequency、cooldown、context_size、seg_min_delay、seg_max_delay�
 5. 版本号八处同步（坑 12 全清单，按字面量逐条枚举——按文件归并计数会漏）：metadata.yaml、main.py `@register`、main.py 模块 docstring、main.py 已加载日志、main.py 已卸载日志、PAGE_VERSION、status API、pipeline/admin.py 的 `/maisoul` 状态行。
 6. 复刻保真原则：凡标"对齐 MaiBot xxx"的常量/公式，改动前先对照 MaiBot 官方仓库源码（github.com/Mai-with-u/MaiBot）的对应文件。
 7. **需求铁律（项目首要政策）**：任何功能需求，**默认含义是"完全对标 MaiBot，功能要完全一样"**——行为、配置字段、提示词结构、参数默认值都按 MaiBot 源码来，不许自作主张做"近似/简化版"。**实现写法也要照抄 MaiBot**（MaiBot 用 SQL 表就用 SQL 表，不许以"插件侧更轻"为由换成 JSON 等变体）；**WebUI 仿照对象 = MaiBot 部署实例的构建产物**（`:dashboard端口` 的 pip 包 `maibot_dashboard` dist），不是容器里的前端源码 dump——样式、颜色、字号、圆角、图标（lucide SVG，不用 emoji）、文案必须**一模一样**：部署版有的一个不能少，部署版没有的（如暂停按钮、自造徽章）**不许自己加**；比对方法 = 抓部署 chunk 里的中文字符串与 CSS 变量/组件类。只有两种情况可以偏离：① MaiBot 没有该功能（此时按 AstrBot 生态最优实现，自己写）；② **相对 MaiBot 本身的写法确实有更好的替代**——必须先在 Issue/PR 中说明并获维护者同意才能用，不许默认采用。拿不准就先查源码再动手，不要凭记忆或直觉实现。
+   **owner 口径放宽（2026-09-10）**：功能机制层面**不要求完完全全对齐**——确实能带来更好效果的偏离/自创机制**可以保留**，无须逐项审批；但必须在文档（AGENTS.md/REFACTOR_NOTES）标注与 MaiBot 的差异及保留理由，且"更好效果"要有可陈述的机制依据（如 P-E 频率反馈与存在感惩罚互补：绝对条数速率限制 vs 5min 占比惩罚）。**功能重复且无效果增益的实现不在此列**——同职能已有等价或更优路径时应拆（如 P-A 中期记忆之于 fetch_chat_history、P-H 直读心弦之于生态注入桥）。WebUI 像素对标口径不变。
 8. **代码规范（v6.10.0 移植自 MaiBot AGENTS.md：<https://github.com/Mai-with-u/MaiBot/blob/main/AGENTS.md>，已按插件形态适配，2026-09-02 复核上游全文补入提交卫生/UI 叠层排查/实验目录三条；不适配项：uv/pyproject、npm build、A_memorix、插件提交仓库流程、data-dashboard-style 主题与 Radix/motion 组件（本插件单文件零依赖页无此设施）、prompt 多语言模板（maisoul 提示词仅中文、直取 MaiBot 中文原文））**：
    - **import 顺序**：`from X import Y` 在前、`import X` 在后，两组各自按字母序；标准库/第三方在前、本地模块在后，块间空行分隔。core/ 内相对导入；astrbot 框架对象统一 `from astrbot...` 绝对导入（bridge.py 是唯一运行时边界）。
    - **注释**：重构时原注释可修正不可删；新增的长/复杂逻辑块必须写注释。一律简体中文。
@@ -535,7 +536,12 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 5. **maisoul 独有扩展（MaiBot 之外的加项）**：预设对话（preset_dialogues，v6.13.0——示例对话 {user, reply} 注入【预设对话】块作风格参考，人格库条目可覆盖）、多人格、管家桥（call_maid 桥+单轮回填）、
    independent/native 模式、逃生舱（v6.10.0 起默认关闭=全面接管，escape_at_wake 可开）、总开关、native 三件套注入。
 6. **用户明示同意的取舍**：A_memorix→livingmemory、偷表情→stealer、行为/高频词
-   学习、mid_term_memory、世界书/好感度。
+   学习、mid_term_memory、世界书/好感度。mid_term_memory 曾于 v6.20.x 期绕回实现过
+   轻量近似（P-A 中期记忆：窗口外消息后台摘要 + 词集 Jaccard 召回），
+   **v6.22.0 已整体拆除**——与 fetch_chat_history 覆盖同一盲区（同一 200 条
+   buffer、同为重启即失），拉模式按需取原文更精准且零后台成本，推模式的
+   词面近似召回只会注入噪声；拆除后该盲区唯一入口是 planner 的
+   fetch_chat_history 工具（坑 30b）。
 7. **工程差异（行为一致）**：错字引擎 jieba 词典进程内缓存；学习器为发言后异步任务
    （受 max_expression_learner 信号量约束）而非逐消息队列。
 

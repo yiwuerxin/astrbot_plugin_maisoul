@@ -613,7 +613,7 @@ let FB = null;
 let maisoulTab = 'core';
 function setMsTab(t){collect();maisoulTab=t;render('maisoul')}
 const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理',exprv:'表达审核'};
-const PAGE_VERSION = 'v6.21.0';
+const PAGE_VERSION = 'v6.22.0';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -872,7 +872,13 @@ function render(p){
         switchRow('mentioned_bot_reply',S.mentioned_bot_reply??false,'提及必回复','只要消息提到麦麦名字就更容易回复（强制触发）')+
         field('群聊上下文（max_context_size）','群聊回复时参考的最近消息数量；越大越懂上下文，也更耗模型',`<input type="number" id="max_context_size" min="5" max="200" value="${S.max_context_size??40}">`)+
         field('私聊上下文（max_private_context_size）','私聊回复时参考的最近消息数量',`<input type="number" id="max_private_context_size" min="5" max="300" value="${S.max_private_context_size??60}">`)+
-        switchRow('enable_context_optimization',S.enable_context_optimization??true,'优化上下文','压缩部分上下文——自己的旧发言只保留最近 3 条；一般建议开启')
+        switchRow('enable_context_optimization',S.enable_context_optimization??true,'优化上下文','压缩部分上下文——自己的旧发言只保留最近 3 条；一般建议开启')+
+        switchRow('enable_image_context',S.enable_image_context??false,'识图上下文（Planner 决策轮）','开启后把最近几张聊天图片附给 Planner 模型理解；需 Planner 任务绑定的模型在 AstrBot「模型能力」里勾选图像。回复生成不看此开关——自动跟随其模型条目的图像勾选')+
+        field('识图张数上限（image_context_max_num）','识图上下文一次最多附带的图片张数（Planner 决策轮与回复生成共用）',`<input type="number" id="image_context_max_num" min="1" max="10" value="${S.image_context_max_num??3}">`)
+      ),
+      panel('filter','消息过滤','命中的消息整条丢弃——不进缓存、不进门控、不触发回复；指令类消息不受影响。',
+        field('过滤词（ban_words）','包含这些词的消息直接丢弃，一行一个',textarea('ban_words',(S.ban_words||[]).join('\n'),'一行一个过滤词'),'',true)+
+        field('正则过滤（ban_msgs_regex）','逐行一条正则表达式，命中即丢弃；适合更复杂的过滤规则',textarea('ban_msgs_regex',(S.ban_msgs_regex||[]).join('\n'),'一行一条正则'),'',true)
       ),
       panel('rules','动态发言频率规则','按群或时段单独调整频率；精确匹配优先于通配，时段命中优先于留空。',
         switchRow('enable_talk_value_rules',S.enable_talk_value_rules??false,'启用动态发言频率规则','开启后按聊天/时间段调整发言频率')+
@@ -930,6 +936,8 @@ function render(p){
             `<select id="expression_selection_mode">${['legacy','vector_intent'].map(m=>`<option value="${m}" ${S.expression_selection_mode===m?'selected':''}>${m==='legacy'?'随手':'超级精细'}</option>`).join('')}</select>`)+
           field('向量候选上限（expression_vector_candidate_pool_size）','超级精细模式下每次召回进入精选的候选条数上限（1~50）',
             `<input id="expression_vector_candidate_pool_size" type="number" min="1" max="50" value="${S.expression_vector_candidate_pool_size??50}" class="ui-input">`)+
+          field('学习并发上限（max_expression_learner）','同时运行的表达学习任务数量；太高可能占用更多资源',
+            `<input type="number" id="max_expression_learner" min="1" max="10" value="${S.max_expression_learner??3}">`)+
           field('学习配置（expression_learning_list）','哪些聊天使用/学习表达方式；平台与群号都留空表示全局默认',
             `<div id="elrs">${elRows}</div>${smBtn('outline','plus','添加规则','onclick="addLrRow(\'elrs\')"')}`,null,true)+
           field('表达共享组（expression_groups）','组内聊天共享学到的表达方式',
@@ -2653,6 +2661,11 @@ function collect(){
   const rxrHost=document.getElementById('rxrs');
   if(rxrHost)S.regex_rules=[...rxrHost.querySelectorAll('[data-rxr]')].map(r=>({keywords:[],regex:r.querySelector('.rxr-pattern').value.split('\n').map(s=>s.trim()).filter(Boolean),reaction:r.querySelector('.rxr-reaction').value.trim()})).filter(r=>r.reaction&&r.regex.length);
   const eco=document.getElementById('enable_context_optimization');if(eco)S.enable_context_optimization=eco.checked;
+  S.enable_image_context=bool('enable_image_context',S.enable_image_context??false);
+  if(g('image_context_max_num')!==null)S.image_context_max_num=Math.min(10,Math.max(1,parseInt(g('image_context_max_num'))||3));
+  if(g('ban_words')!==null)S.ban_words=g('ban_words').split('\n').map(s=>s.trim()).filter(Boolean);
+  if(g('ban_msgs_regex')!==null)S.ban_msgs_regex=g('ban_msgs_regex').split('\n').map(s=>s.trim()).filter(Boolean);
+  if(g('max_expression_learner')!==null)S.max_expression_learner=Math.min(10,Math.max(1,parseInt(g('max_expression_learner'))||3));
   const dp=document.getElementById('default_persona'); if(dp)S.default_persona=dp.value;
   const fps=document.getElementById('follow_persona_switch'); if(fps)S.follow_persona_switch=fps.checked;
 }
