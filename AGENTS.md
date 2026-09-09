@@ -2,7 +2,7 @@
 
 > 本文档面向后续接手的 AI/人类开发者，目标是**零阅读源码即可开始开发**。
 > 所有设计决策、数据流、配置字段、测试方法、取舍清单都在这里。
-> 当前版本 v6.22.0：显示名「麦麦之魂」。P-A 中期记忆整体拆除（memstore/接线/schema 两键/测试全清，理由与盲区归属见 §7.2 条目 6——fetch_chat_history 拉模式覆盖同一盲区且更精准）；WebUI 补齐消息过滤分区（ban_words/ban_msgs_regex）与表达学习并发（max_expression_learner）。此前 v6.21.0：Replyer 识图门控改读 AstrBot 模型条目 modalities 的「图像」勾选（`modelbind.provider_supports_image`，口径逐字对齐框架 `_provider_supports_modality`：空列表=不限制、缺失=不支持；绑定链全部候选勾选才算支持），`enable_image_context` 开关收窄为只管 Planner 决策轮，independent 模式 replyer 补齐附图，识图两键上页面。更早能力基线见 v6.20.3 及之前记录：全量代码审查修复批次、预设对话、planner 历史分析跨轮回灌（坑 52）、请求结构对齐部署版（坑 53）、思考文本不回灌（坑 54）、工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
+> 当前版本 v6.23.0：显示名「麦麦之魂」。P-H 心弦联动（xinxian_link）整体拆除——与生态注入桥双重注入同一份心弦数据、无效果增益（§7 取舍表"世界书/好感度"行），心弦数据唯一入口回归生态桥；全面功能重复审计同期完成（P-E 经裁定保留：绝对条数速率限制与 5min 占比存在感惩罚互补，见 REFACTOR_NOTES）。此前 v6.22.0：P-A 中期记忆整体拆除（memstore/接线/schema 两键/测试全清，理由与盲区归属见 §7.2 条目 6——fetch_chat_history 拉模式覆盖同一盲区且更精准）；WebUI 补齐消息过滤分区（ban_words/ban_msgs_regex）与表达学习并发（max_expression_learner）。更早 v6.21.0：Replyer 识图门控改读 AstrBot 模型条目 modalities 的「图像」勾选，enable_image_context 开关收窄为只管 Planner 决策轮，识图两键上页面。再早能力基线见 v6.20.x 记录：全量代码审查修复批次、预设对话、planner 历史分析跨轮回灌（坑 52）、请求结构对齐部署版（坑 53）、思考文本不回灌（坑 54）、工具轮协议对齐与 reply 后续轮（坑 55）、表达方式 vector_intent 语义召回、推理过程整页复刻与交互修复（坑 57/58）。
 
 ---
 
@@ -315,7 +315,7 @@ WebUI「学习」页可视化管理，学习 API：GET/POST /astrbot_plugin_mais
 | Planner agent 循环（wait/中断/focus/注意力漂移） | **待完全复刻**（规格见 §7.1），当前以规则评分门控近似 | 用户已确认要求完全对标；近似版只是过渡 |
 | 关键词反应规则（keyword_reaction） | **已复刻**（v6.5 core/learning.py） | keyword_rules/regex_rules + 命名捕获组替换 + 【关键词反应】注入 |
 | 富回复（attach_pic/attach_at/引用回复） | 未复刻（引用回复原语 AstrBot 侧具备但未接） | 后续可接 MessageChain Reply 组件 |
-| 世界书/好感度 | 无对应 | **AstrBot 的 worldbook/xinxian 做得更好**，经生态注入桥全模式生效（v6.11.0） |
+| 世界书/好感度 | 无对应 | **AstrBot 的 worldbook/xinxian 做得更好**，经生态注入桥全模式生效（v6.11.0）。曾并存的 P-H xinxian_link（直读心弦 facade 渲染同款档案）v6.23.0 拆除——与桥双重注入同一数据、无效果增益；心弦数据唯一入口=生态注入桥 |
 
 ### 7.1 已实现：Planner 决策层（v6.6，完全对标 maisaka，mode=planner 默认）
 

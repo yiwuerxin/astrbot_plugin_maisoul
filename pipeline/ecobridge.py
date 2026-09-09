@@ -118,34 +118,3 @@ async def _eco_fire_response(P, event: AstrMessageEvent, answer: str):
                 )
     except Exception:
         logger.error("maisoul: 生态回写失败", exc_info=True)
-
-
-async def xinxian_profile_block(P, gid: str, uid: str) -> str:
-    """P-H 跨插件联动：好心弦 facade 取好感画像渲染进系统提示词。
-
-    任一插件缺失/旧版无方法/任何异常一律返回空串静默降级（联动是增强，
-    不是依赖）；开关 xinxian_link 默认关。"""
-    if not bool(P.config.get("xinxian_link", False)) or not uid:
-        return ""
-    try:
-        star = P.context.get_registered_star("astrbot_plugin_xinxian")
-        api = getattr(getattr(star, "star_cls", None), "api", None) if star else None
-        if api is None:
-            return ""
-        prof = await api.get_profile(gid, uid)
-        if not prof:
-            return ""
-        lines = [
-            "\n\n【好感档案（来自心弦插件）】",
-            f"你与对方的好感度：{prof.get('favor')}（等级：{prof.get('level')}）",
-            f"态度参考：{prof.get('guidance')}",
-        ]
-        if prof.get("impression"):
-            tag = f"（{'、'.join(prof.get('tags') or [])}）" if prof.get("tags") else ""
-            lines.append(f"你对 TA 的印象：{prof['impression']}{tag}")
-        if prof.get("relationship"):
-            lines.append(f"你们的关系：{prof['relationship']}")
-        return "\n".join(lines)
-    except Exception:
-        logger.debug("maisoul: 心弦联动降级（插件缺失或版本过旧）", exc_info=True)
-        return ""
