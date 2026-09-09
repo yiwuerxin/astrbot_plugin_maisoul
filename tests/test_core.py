@@ -2856,6 +2856,107 @@ def test_phase3_mechanisms():
     )
 
 
+def test_emotion_favor_coupling():
+    print("[§6.6 情绪-关系耦合 maisoul 侧（累积器/facade/N9）]")
+    import asyncio
+
+    from astrbot_plugin_maisoul.core.emotion import (
+        EMOTION_ANCHORS,
+        EMOTION_DELTAS,
+        FEEDBACK_GAIN,
+        EmotionFeedback,
+        EmotionState,
+    )
+    from astrbot_plugin_maisoul.core.states import StateManager
+    from astrbot_plugin_maisoul.pipeline.emo_facade import EmotionFacade
+
+    # 1. pfb：同向累积钳 ±7、异向向 0 收、零极性不计数
+    fb = EmotionFeedback()
+    for _ in range(9):
+        fb.observe("开心")
+    check("§6.6: 同向累积钳制 +7", fb.pfb == 7)
+    fb.observe("愤怒")  # 异向：向 0 收一步（7 → 6）
+    check("§6.6: 异向向 0 收一步", fb.pfb == 6)
+    fb3 = EmotionFeedback()
+    for _ in range(9):
+        fb3.observe("悲伤")
+    check("§6.6: 负向累积钳制 -7", fb3.pfb == -7)
+    check("§6.6: 增益表与 |pfb| 对齐", fb3.gain() == FEEDBACK_GAIN[7] == 2.0)
+    fb3.observe("开心")
+    check("§6.6: 负侧异向向 0 收（-7 → -6）", fb3.pfb == -6)
+    fb2 = EmotionFeedback()
+    fb2.observe("平静")  # 零极性（valence 增量 0）不计数
+    check("§6.6: 零极性词不计数", fb2.pfb == 0)
+
+    # 2. facade get_feedback：开关链与读数（用真实时间戳——facade 内部按
+    #    time.time() 惰性结算衰减，假小时间戳会被衰减清零）
+    now = time.time()
+    states = StateManager()
+    states.get("12345").emotion.apply("开心", now)
+    states.get("12345").emotion_feedback.observe("开心")
+    cfg_off = {"emotion_enable": False, "emotion_feedback_enable": True}
+    check(
+        "§6.6: emotion_enable 关 → None",
+        asyncio.run(EmotionFacade(states, cfg_off).get_feedback("12345")) is None,
+    )
+    cfg_nofb = {"emotion_enable": True, "emotion_feedback_enable": False}
+    check(
+        "§6.6: emotion_feedback_enable 关 → None",
+        asyncio.run(EmotionFacade(states, cfg_nofb).get_feedback("12345")) is None,
+    )
+    f_on = EmotionFacade(
+        states, {"emotion_enable": True, "emotion_feedback_enable": True}
+    )
+    fb_data = asyncio.run(f_on.get_feedback("12345"))
+    check(
+        "§6.6: 开三开返回 {pfb, valence}",
+        isinstance(fb_data, dict) and fb_data["pfb"] == 1 and fb_data["valence"] > 0.5,
+    )
+    check(
+        "§6.6: 会话不存在 → None",
+        asyncio.run(f_on.get_feedback("no-such-group")) is None,
+    )
+
+    # 3. facade apply_emotion_event：注入生效 / 未知词 / 开关
+    check(
+        "§6.6: emotion_enable 关注入返回 False",
+        asyncio.run(
+            EmotionFacade(states, cfg_off).apply_emotion_event("12345", "兴奋", 0.8)
+        )
+        is False,
+    )
+    f_e = EmotionFacade(states, {"emotion_enable": True})
+    check(
+        "§6.6: 未知词返回 False",
+        asyncio.run(f_e.apply_emotion_event("12345", "狂喜", 0.8)) is False,
+    )
+    st = states.get("12345")
+    v0, a0 = st.emotion.v, st.emotion.a
+    ok = asyncio.run(f_e.apply_emotion_event("12345", "兴奋", 0.5))
+    v1, a1 = st.emotion.v, st.emotion.a
+    check(
+        "§6.6: 注入后 valence/arousal 上升（intensity=0.5 缩放）",
+        ok and v1 > v0 and a1 > a0 and 0.3 < (v1 - v0) < 0.5,
+    )
+    e_full = EmotionState()
+    e_full.apply("兴奋", 7000.0)
+    e_half = EmotionState()
+    e_half.apply("兴奋", 7000.0, intensity=0.5)
+    check(
+        "§6.6: intensity=1 等价原行为",
+        abs((e_full.v - 0.0) - 0.8) < 1e-9,
+    )
+
+    # 4. N9：三锚点词补齐增量定义，12 锚点全覆盖（防回归）
+    missing = [name for name, _v, _a in EMOTION_ANCHORS if name not in EMOTION_DELTAS]
+    check("N9: 12 锚点词全部有增量定义", not missing, f"缺 {missing}")
+    for w in ("委屈", "期待", "安心"):
+        e9 = EmotionState()
+        before = (e9.v, e9.a)
+        e9.apply(w, 8000.0)
+        check(f"N9: {w} 不再是 no-op", (e9.v, e9.a) != before)
+
+
 def test_taskregistry():
     print("[任务注册表 M6]")
     import asyncio as _aio
@@ -4120,6 +4221,7 @@ if __name__ == "__main__":
     test_mention()
     test_history_tool()
     test_phase3_mechanisms()
+    test_emotion_favor_coupling()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
     sys.exit(1 if FAIL else 0)
