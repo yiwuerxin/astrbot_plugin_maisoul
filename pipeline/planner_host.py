@@ -271,14 +271,6 @@ async def _planner_cycle(
             is_group,
         )
         history_count = len(history_msgs)
-        # P-A 中期记忆：窗口裁掉的旧消息后台摘要为 {summary, cues} 存会话
-        # 记忆（memory_enable 默认关；任务经注册表，失败静默）
-        if bool(eff_cfg.get("memory_enable", False)):
-            _fold_memory(
-                P,
-                st,
-                history_buf[: max(0, len(all_buf) - context_limit)],
-            )
         # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
         # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
         use_jargon, _ = learning.learning_flags(
@@ -742,46 +734,6 @@ async def _planner_cycle(
         pl.set_idle_if_current(gen)
 
 
-async def _summarize_folding_task(P, st, chat_log: str, ts: float) -> None:
-    from ..core import memstore as _ms
-
-    try:
-        # v6.20.3：删掉 _pick_task_model(P, "summarizer") 死绑定——"summarizer"
-        # 不在任务清单也不在 schema，恒 None；摘要固定走默认 Provider
-        resp = await _task_text_chat(
-            P,
-            "summarizer",
-            P.config,
-            prompt=_ms.SUMMARIZE_PROMPT.format(chat_log=chat_log[:2000]),
-        )
-        parsed = _ms.parse_summary(_resp_text(resp))
-        if parsed:
-            st.memory.add(parsed[0], parsed[1], ts)
-    except Exception:
-        logger.debug("maisoul: 中期记忆摘要失败（静默）", exc_info=True)
-
-
-def _fold_memory(P, st, dropped: list) -> None:
-    """窗口外旧消息 ≥4 条且距上次折叠 ≥5 分钟 → 后台摘要一轮。"""
-    import time as _time
-
-    now = _time.time()
-    msgs = [
-        m
-        for m in (dropped or [])
-        if str(m.get("sid") or "") != "self" and str(m.get("text") or "").strip()
-    ]
-    if len(msgs) < 4 or now - getattr(st.memory, "last_fold_ts", 0.0) < 300:
-        return
-    st.memory.last_fold_ts = now
-    newest_ts = max(float(m.get("ts") or 0) for m in msgs)
-    chat_log = "\n".join(f"{m.get('name')}: {m.get('text')}" for m in msgs[-30:])
-    P._spawn(
-        _summarize_folding_task(P, st, chat_log, newest_ts),
-        name=f"memory_fold:{getattr(st, 'gid', '')}",
-    )
-
-
 def _schedule_wait_resume(P, st, cfg, gid: str, seconds: int):
     """wait 到期：必续一轮并注入完成回执（对齐 timeout 触发 + _build_wait_completed_message）。
 
@@ -860,15 +812,6 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         eff_cfg.get("emotion_enable", False)
     ):  # P-B：情绪行（与 independent 同口径）
         system_prompt += "\n" + st.emotion.prompt_line(_time.time())
-    if bool(eff_cfg.get("memory_enable", False)):  # P-A：中期记忆召回注入
-        from ..core.memstore import SessionMemory as _SM
-
-        recent_texts = [str(m.get("text") or "") for m in list(st.buffer)[-8:]]
-        recalled = st.memory.recall(
-            recent_texts,
-            threshold=float(eff_cfg.get("memory_recall_threshold", 0.18) or 0.18),
-        )
-        system_prompt += _SM.render(recalled)
     # v6.9.7 管家迁位（对齐 MaiBot 分工）：replyer 是纯生成器，不带任何工具——
     # 查资料/跑任务全部在 planner 侧经 tool_search 发现 deferred 工具完成，
     # 工作成果由 planner 写进 reply_reference 传入。管家桥仅 independent/native 模式保留。
