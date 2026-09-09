@@ -1484,7 +1484,8 @@ function tpMatch(it){
   if(!q)return true;
   return str(it.name).toLowerCase().includes(q)
     ||str(it.description||'').toLowerCase().includes(q)
-    ||str(it.origin_name).toLowerCase().includes(q);
+    ||str(it.origin_name).toLowerCase().includes(q)   // 工具的来源（插件/MCP 源名）
+    ||str(it.plugin_name).toLowerCase().includes(q);  // 技能的来源插件字段名不同
 }
 function tpRowHTML(it,selKey){
   const sel=new Set(S[selKey]||[]);
@@ -1529,7 +1530,7 @@ function renderToolPicker(){
         </div>
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
           <span style="color:hsl(var(--muted-foreground));display:inline-flex;flex:none">${moIcon('search',14)}</span>
-          <input id="tp_search" class="ui-input" style="flex:1" placeholder="搜索${isTool?'工具':'技能'}：名称 / 描述${isTool?' / 来源插件':''}" value="${esc(tpQuery)}" oninput="tpQuery=this.value;tpFilterList()">
+          <input id="tp_search" class="ui-input" style="flex:1" placeholder="搜索${isTool?'工具':'技能'}：名称 / 描述 / 来源插件" value="${esc(tpQuery)}" oninput="tpQuery=this.value;tpFilterList()">
         </div>
         <div class="tp-list" id="tp_list">${tpListHTML()}</div>
       </div>
