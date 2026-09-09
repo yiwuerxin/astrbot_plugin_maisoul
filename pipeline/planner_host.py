@@ -18,7 +18,7 @@ from .ecobridge import (
 )
 from .events_util import _emit_sent, _monitor_stage, _resp_text
 from .modelbind_host import _pick_task_model, _task_text_chat
-from .replyer import _deliver_reply, _schedule_learning, _select_expr_block
+from .replyer import _deliver_reply, _select_expr_block
 
 
 def _schedule_planner(
@@ -172,7 +172,7 @@ async def _planner_cycle(
         {}
     )  # assistant 轮 index→该轮模型（仅监控副本，与 reasoning 同机制）
     pl.eco_injection = ""
-    end_reason, end_detail = "", ""
+    end_reason = ""
     interrupted = False
 
     system_prompt = ""  # no_provider 提前 finalize 时未构建（Sourcery：未定义读取）
@@ -713,7 +713,7 @@ async def _planner_cycle(
                     {
                         "role": "tool",
                         "tool_call_id": f"{cycle_id}-{round_index}-{i}",
-                        "content": f"未知工具（若是 deferred 工具，请先调用 tool_search 发现它）",
+                        "content": "未知工具（若是 deferred 工具，请先调用 tool_search 发现它）",
                     }
                 )
         pl.set_idle_if_current(gen)
@@ -746,10 +746,8 @@ async def _summarize_folding_task(P, st, chat_log: str, ts: float) -> None:
     from ..core import memstore as _ms
 
     try:
-        bind = _pick_task_model(P, "summarizer", P.config)
-        provider = bind[0] if bind else P.context.get_using_provider()
-        if provider is None:
-            return
+        # v6.20.3：删掉 _pick_task_model(P, "summarizer") 死绑定——"summarizer"
+        # 不在任务清单也不在 schema，恒 None；摘要固定走默认 Provider
         resp = await _task_text_chat(
             P,
             "summarizer",
@@ -803,6 +801,12 @@ def _schedule_wait_resume(P, st, cfg, gid: str, seconds: int):
             receipt = planner.build_wait_completed_message(elapsed, seconds, has_new)
             gen = pl.begin_cycle()  # M3：续轮换代，旧代退出不得回写
             pl.agent_state = "running"
+            # v6.20.3：续轮循环挂上 running_task——内联 await 会让
+            # planner_interrupt 的 cancel 打在已完成的旧任务上（no-op），
+            # 打断机制对 wait 续轮静默失效
+            running = asyncio.current_task()
+            if running is not None:
+                pl.running_task = running
             await _planner_cycle(
                 P,
                 getattr(pl, "umo", ""),
@@ -824,7 +828,8 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     """reply 工具执行：replyer 生成 + 后处理发送（reply_style/set_quote 参数生效）。"""
     st, eff_cfg = deps.st, deps.cfg
     umo, platform, gid = deps.umo, deps.platform, deps.gid
-    reply_baseline = len(st.buffer)  # P-D：reply 开始时的缓冲基线（发送前比对）
+    # P-D：reply 开始时刻（时间戳基线，v6.20.3——条数基线在 buffer 满载滚动时漂移）
+    reply_baseline = time.time()
     _monitor_stage(P, gid, monitor.STAGE_REPLYER, "生成可见回复")
     provider = P.context.get_using_provider()
     if provider is None:
@@ -978,6 +983,7 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         webchat_send=deps.send_fn,
         eco_event=eco_event,
         gen_baseline=reply_baseline,
+        is_group=deps.is_group,
     )
     return f"已发送 {len(sent)} 段" + ("（引用回复）" if quote_id else "")
 

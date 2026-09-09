@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.core.provider.entities import LLMResponse
 
 from ..core import personas, prompt
 from ..core.constants import OUTPUT_INSTRUCTION

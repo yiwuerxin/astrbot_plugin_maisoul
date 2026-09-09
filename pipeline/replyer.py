@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 from astrbot.api import logger
@@ -40,7 +39,9 @@ async def _generate_and_send(
     if provider is None:
         logger.warning("maisoul: 未配置可用的模型 Provider，本次跳过发言")
         return
-    gen_baseline = len(st.buffer)  # P-D：生成期基线（发送前判断话题是否滚过去）
+    # P-D：生成开始时刻（时间戳基线，v6.20.3——buffer 是 maxlen=200 的滚动
+    # deque，条数基线在满载滚动时索引漂移会漏计生成期新消息）
+    gen_baseline = time.time()
 
     # 会话键与 _process_chat/on_llm_* 回声钩子同式（群=group_id，私聊=sender_id，
     # 均空才回退 umo——坑 23：私聊漏掉 sender_id 会让观察账本落错会话、
@@ -170,6 +171,7 @@ async def _generate_and_send(
         quote_id=quote_id,
         webchat_send=_webchat_send if webchat else None,
         gen_baseline=gen_baseline,
+        is_group=is_group,
     )
     logger.info(f"maisoul[{gid}] 已发言 {len(sent)} 段（人格={pname}）")
 
@@ -188,14 +190,19 @@ def _webchat_sender(P, event: AstrMessageEvent):
     return _send
 
 
-def _schedule_learning(P, provider, eff_cfg, st, platform: str, gid: str):
-    """发言后异步学习表达/黑话（对齐 MaiBot 学习器：失败不影响发言）。"""
+def _schedule_learning(
+    P, provider, eff_cfg, st, platform: str, gid: str, is_group: bool = True
+):
+    """发言后异步学习表达/黑话（对齐 MaiBot 学习器：失败不影响发言）。
+
+    is_group：学习规则按 group/private 匹配（v6.20.3 贯通——此前漏传恒按
+    group 匹配，私聊 learn=False 规则失效）。"""
     try:
         _, learn_expr = learning.learning_flags(
-            eff_cfg, "expression_learning_list", platform, gid
+            eff_cfg, "expression_learning_list", platform, gid, is_group
         )
         _, learn_jargon = learning.learning_flags(
-            eff_cfg, "jargon_learning_list", platform, gid
+            eff_cfg, "jargon_learning_list", platform, gid, is_group
         )
         if not (learn_expr or learn_jargon):
             return
@@ -213,6 +220,7 @@ def _schedule_learning(P, provider, eff_cfg, st, platform: str, gid: str):
                     gid,
                     P.learning_store,
                     model=learn_bind[1] if learn_bind else None,
+                    is_group=is_group,
                 )
                 if summary and summary != "学习未启用":
                     logger.info(f"maisoul[{gid}] 学习: {summary}")
@@ -282,12 +290,14 @@ async def _deliver_reply(
     quote_id: str,
     webchat_send=None,
     eco_event=None,
-    gen_baseline: int | None = None,
+    gen_baseline: float | None = None,
+    is_group: bool = True,
 ) -> list[str]:
     """拟人发送 + 记账 + 学习调度（M8 公共段，两条生成路径的收尾）。
 
     webchat_send 非 None（WebUI 单气泡）：攒段合并一次发；否则逐段
     context.send_message，首段挂 Reply(quote_id)。返回实际发送的段。
+    gen_baseline 为生成开始时刻（时间戳口径）；is_group 供学习规则匹配。
     """
     # P-D 发送队列降级：生成期间新到消息 >3 条或新文本 >200 字时，回复改为
     # 引用最新一条消息（默认关 send_queue_demotion；群聊非 webchat 才有意义）
@@ -335,7 +345,7 @@ async def _deliver_reply(
     await _eco_fire_response(
         P, eco_event if eco_event is not None else event, "\n".join(sent)
     )
-    _schedule_learning(P, provider, eff_cfg, st, platform, gid)
+    _schedule_learning(P, provider, eff_cfg, st, platform, gid, is_group)
     return sent
 
 

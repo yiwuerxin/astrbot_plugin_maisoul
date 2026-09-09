@@ -10,7 +10,8 @@ from astrbot.api import logger
 
 from ..core import modelbind
 
-# balance 策略轮转计数器（原插件类属性，跨实例共享语义保持）
+# balance 策略轮转计数器（原插件类属性，跨实例共享语义保持；
+# v6.20.3 删掉 M7 拆分残留的第二处重复定义）
 _task_model_rr: dict[str, int] = {}
 
 
@@ -36,9 +37,6 @@ def _resolve_bound_model(P, cand: dict):
     if inst is None:
         return None
     return inst, str(cand.get("model"))
-
-
-_task_model_rr: dict[str, int] = {}  # balance 轮转计数器
 
 
 def _pick_task_model(P, task: str, cfg):
