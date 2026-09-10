@@ -2168,7 +2168,7 @@ def test_learning():
     blk = learning.jargon_reference_block(store, "global", ["这波太yyds了", "哈哈"])
     check(
         "黑话块: 命中注入",
-        blk.startswith("以下黑话来自当前上下文") and "1. yyds：永远的神" in blk,
+        blk.startswith("以下是聊天中可能出现的黑话") and "1. yyds：永远的神" in blk,
         blk,
     )
     check(
@@ -2458,12 +2458,12 @@ def test_learning():
         "原因",
         "",
         expression_habits='【表达习惯参考，请视情况自然的使用】\n- 当"X"时，可以用"Y"来表达。',
-        jargon_reference="以下黑话来自当前上下文……\n1. yyds：永远的神",
+        jargon_reference="以下是聊天中可能出现的黑话……\n1. yyds：永远的神",
         keyword_reaction="【关键词反应】\n最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n- 热情打招呼\n",
     )
     idx_rec = fm.find("【最近群聊记录】")
     idx_expr = fm.find("【表达习惯参考")
-    idx_jar = fm.find("以下黑话来自")
+    idx_jar = fm.find("以下是聊天中可能出现的黑话")
     idx_ref = fm.find("【回复信息参考】")
     idx_kwr = fm.find("【关键词反应】")
     idx_end = fm.find(prompt.REPLY_INSTRUCTION)
