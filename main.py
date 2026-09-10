@@ -59,11 +59,14 @@ class MaiSoulPlugin(Star):
         async def _replyer_provider():
             from .pipeline.modelbind_host import _pick_task_model
 
-            prov = _pick_task_model(self, "replyer", self.config)
-            if prov is None:
-                prov = self.context.get_using_provider()
-                if inspect.isawaitable(prov):
-                    prov = await prov
+            picked = _pick_task_model(self, "replyer", self.config)
+            if picked is not None:
+                # _resolve_bound_model 返回 (provider, model) 元组——只取实例
+                # （Sourcery #31：整元组透传会让调用方拿 tuple 当 provider）
+                return picked[0]
+            prov = self.context.get_using_provider()
+            if inspect.isawaitable(prov):
+                prov = await prov
             return prov
 
         self.api.bind_replyer_picker(_replyer_provider)
