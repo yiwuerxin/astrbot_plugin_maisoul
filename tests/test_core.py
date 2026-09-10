@@ -1799,6 +1799,36 @@ def test_monitor():
     tmp = pathlib.Path(tempfile.mkdtemp()) / "m.db"
     store = M.MonitorStore(path=tmp)
     mon = M.Monitor(store)
+
+    # 表污染回归(2026-09-11 生产库实锤:data_monitor.db 里混进了 18 张
+    # AstrBot 核心空表)——共享 metadata 里注册的无关模型不得建进观察库。
+    # 先注册探针表,再建新库:旧实现全量 create_all 会把它也建出来。
+    from sqlmodel import SQLModel as _SM
+    from sqlalchemy import Column, Integer, Table as _SATable
+
+    _SATable(
+        "probe_should_not_exist",
+        _SM.metadata,
+        Column("id", Integer, primary_key=True),
+    )
+    _probe_db = pathlib.Path(tempfile.mkdtemp()) / "probe.db"
+    M.MonitorStore(path=_probe_db)  # 建表发生在构造时
+    import sqlite3 as _sq
+
+    _conn = _sq.connect(str(_probe_db))
+    _tables = {
+        r[0]
+        for r in _conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    _conn.close()
+    _SM.metadata.remove(_SM.metadata.tables["probe_should_not_exist"])
+    check(
+        "建表收窄: 共享 metadata 的无关表不进观察库",
+        "maisaka_monitor_events" in _tables
+        and "probe_should_not_exist" not in _tables,
+        f"tables={sorted(_tables)}",
+    )
+
     check(
         "常量: 保留策略对齐 MaiBot event_store",
         (

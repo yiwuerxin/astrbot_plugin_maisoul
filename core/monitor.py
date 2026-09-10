@@ -111,7 +111,13 @@ class MonitorStore:
         self.engine = create_engine(
             f"sqlite:///{self.path}", connect_args={"check_same_thread": False}
         )
-        SQLModel.metadata.create_all(self.engine)
+        # 只建本插件的表：共享 metadata 里还挂着 AstrBot 核心模型
+        # （2026-09-11 生产库实锤：data_monitor.db 里混进了 18 张核心空表），
+        # 全量 create_all 既污染库文件，核心模型 schema 变化时还可能连累
+        # 插件建表失败
+        SQLModel.metadata.create_all(
+            self.engine, tables=[MaisakaMonitorEventRecord.__table__]
+        )
         self._session_factory = sessionmaker(
             bind=self.engine, class_=Session, expire_on_commit=False
         )
