@@ -168,6 +168,11 @@ async def _planner_cycle(
         {}
     )  # assistant 轮 index→该轮模型（仅监控副本，与 reasoning 同机制）
     pl.eco_injection = ""
+    # 回复器素材是单轮消费：开轮清空，防止上一轮 reply 的 trace 被本轮
+    # finalize 复读（用户实报：推理过程页回复器流程循环#N/N+1/…内容全同
+    # ——首条 reply 之后 no_action/wait 轮都复读同一份过期块）
+    pl.replyer_trace = None
+    pl.replyer_reasoning = ""
     end_reason = ""
     interrupted = False
 
@@ -749,6 +754,19 @@ def _schedule_wait_resume(P, st, cfg, gid: str, seconds: int):
             receipt = planner.build_wait_completed_message(elapsed, seconds, has_new)
             gen = pl.begin_cycle()  # M3：续轮换代，旧代退出不得回写
             pl.agent_state = "running"
+            # wait 续轮也是新循环：自增计数器并上报阶段（对齐 _schedule_planner
+            # 的 79-87 行）——此前续轮直呼 _planner_cycle 不自增，与原循环共用
+            # cycle_id，推理过程页出现两个"循环#N"（用户实报：两个循环1）
+            cycle_id = P._cycle_counter.get(gid, 0) + 1
+            P._cycle_counter[gid] = cycle_id
+            logger.info(f"maisoul[{gid}] planner: wait 续轮启动决策循环 {cycle_id}")
+            _monitor_stage(
+                P,
+                gid,
+                monitor.STAGE_LOOP_START,
+                f"循环 {cycle_id}",
+                agent_state=pl.agent_state,
+            )
             # v6.20.3：续轮循环挂上 running_task——内联 await 会让
             # planner_interrupt 的 cancel 打在已完成的旧任务上（no-op），
             # 打断机制对 wait 续轮静默失效
