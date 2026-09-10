@@ -26,6 +26,7 @@ from .constants import (
     SELF_RATIO_FULL,
     SHORT_REACTIONS,
     WEAK_REQUEST_TERMS,
+    necessity_threshold,
 )
 from .states import GroupState
 
@@ -161,11 +162,10 @@ def freq_factor(frequency: float) -> float:
 
 
 def msg_trigger_threshold(frequency: float) -> int:
-    """对齐 runtime._get_message_trigger_threshold：必要性模式下 ceil(1/f²)。"""
-    f = max(0.0, min(1.0, frequency))
-    if f <= 0:
-        return 0
-    return max(1, ceil(1.0 / (f * f)))
+    """对齐 runtime._get_message_trigger_threshold：必要性模式下 ceil(1/f²)。
+
+    实现在 constants.necessity_threshold（单一真相，2026-09-11 下沉）。"""
+    return necessity_threshold(frequency)
 
 
 def evaluate(

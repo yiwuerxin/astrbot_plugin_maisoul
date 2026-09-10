@@ -1,8 +1,7 @@
 """评分词典与常量 —— 逐条对齐 MaiBot src/maisaka/reply_necessity.py"""
 
 import re
-
-TRIGGER_SCORE = 80
+from math import ceil
 PRESSURE_STANDARD, PRESSURE_MAX, PRESSURE_FULL_RATIO = 50, 100, 5.0
 IDLE_PRESSURE_BONUS = 15
 SELF_RATIO_FREE, SELF_RATIO_FULL, SELF_PENALTY_MAX = 0.25, 0.60, 25
@@ -46,3 +45,12 @@ MESSAGE_DEBOUNCE_SECONDS = 1.0  # _message_debounce_seconds：开轮前等消息
 EXTERNAL_SAMPLE_WINDOW_SECONDS = 1800.0  # 外部消息间隔样本窗（30 分钟）
 EXTERNAL_BURST_INTERVAL_SECONDS = 5.0  # 连发抖动：间隔 <5s 不采样
 EXTERNAL_MIN_AVERAGE_INTERVAL_SECONDS = 30.0  # 平均间隔下限（空窗补偿不被连发拉低）
+
+
+def necessity_threshold(frequency: float) -> int:
+    """必要性模式触发阈值 ceil(1/f²)（runtime._get_message_trigger_threshold）。
+
+    单一真相（2026-09-11 下沉）：原 trigger.py 与 scoring.py 各持一份
+    副本，参数钳制(0..1)与下限 1 必须永远一致，分叉即门控口径漂移。"""
+    f = min(1.0, max(0.0, frequency))
+    return 0 if f <= 0 else max(1, ceil(1.0 / (f * f)))
