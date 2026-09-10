@@ -103,6 +103,16 @@ async def _task_text_chat(P, task: str, cfg, used: dict | None = None, **kwargs)
     """
     provider = P.context.get_using_provider()
     candidates = modelbind.task_model_candidates(cfg, task)
+
+    def _note_replyer_used(inst) -> None:
+        # §6.6 模型联动：replyer 成功调用后把实际服务的 provider 实例回填
+        # facade——get_replyer_provider 优先返回它（必然可用；绑定链抽签
+        # 可能落在已失效候选上）。非 replyer 任务不记录。
+        if task == "replyer":
+            api = getattr(P, "api", None)
+            if api is not None and hasattr(api, "note_replyer_used"):
+                api.note_replyer_used(inst)
+
     if not candidates:
         if used is not None:
             # 先写再调（v6.18.2）：失败时 used 已带本次尝试的默认 provider
@@ -111,7 +121,9 @@ async def _task_text_chat(P, task: str, cfg, used: dict | None = None, **kwargs)
             used["provider"] = str(
                 getattr(provider, "provider_config", {}).get("id", "") or ""
             )
-        return await provider.text_chat(**kwargs)
+        resp = await provider.text_chat(**kwargs)
+        _note_replyer_used(provider)
+        return resp
     strategy = modelbind.task_model_strategy(cfg, task)
     chain = modelbind.build_model_chain(candidates, strategy, _task_model_rr, task)
     last_err: Exception | None = None
@@ -133,6 +145,7 @@ async def _task_text_chat(P, task: str, cfg, used: dict | None = None, **kwargs)
             )
         try:
             resp = await inst.text_chat(model=model, **kwargs)
+            _note_replyer_used(inst)
             return resp
         except Exception as e:
             last_err = e

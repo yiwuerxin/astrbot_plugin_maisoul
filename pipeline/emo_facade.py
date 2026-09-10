@@ -34,21 +34,32 @@ class EmotionFacade:
         # replyer 模型取值器（async () -> provider 实例 | None），main 装配时
         # bind——facade 不 import P/modelbind，保持纯边界可单测
         self._replyer_picker: object | None = None
+        # replyer 最近一次成功调用实际服务的 provider 实例（modelbind_host
+        # 成功路径回填）——"当前 reply 触发的模型"，且必然可用（刚成功过）；
+        # 绑定链抽签（balance）可能落在已失效候选上，故只作冷启动回落
+        self._last_replyer: object | None = None
 
     def bind_replyer_picker(self, picker) -> None:
         """装配期注入 replyer provider 取值器（main.py 接 modelbind 任务链）。"""
         self._replyer_picker = picker
 
-    async def get_replyer_provider(self) -> object | None:
-        """replyer 当前绑定的 LLM provider 实例（跨插件模型联动，v6.26.0）。
+    def note_replyer_used(self, prov) -> None:
+        """记录 replyer 本次成功调用的 provider（modelbind_host 成功路径回填）。"""
+        if prov is not None:
+            self._last_replyer = prov
 
-        解析链与 replyer 实际生成一致：modelbind 任务 "replyer" 绑定 →
-        无绑定时 AstrBot 默认 provider（_pick_task_model 的 None 语义）。
-        心弦评审据此跟随"麦麦用什么模型说话就用什么模型打分"（人格口径
-        一致，也避免评审侧独立配置指向失效模型）。random/balance 策略下
-        每次调用独立轮转，与某一次 reply 实际服务的模型可能不同。
-        未绑定 picker / 解析失败 / 无可用 provider 返回 None（调用方降级）。
+    async def get_replyer_provider(self) -> object | None:
+        """replyer 当前使用的 LLM provider 实例（跨插件模型联动，v6.26.0）。
+
+        优先返回最近一次 reply 实际成功服务的 provider（字面意义的"当前
+        reply 触发的模型"，且必然可用）；冷启动（重启后尚无 reply）回落
+        绑定链解析——modelbind 任务 "replyer" 按策略抽主候选 → 无绑定
+        AstrBot 默认 provider。心弦评审据此跟随"麦麦用什么模型说话就用
+        什么模型打分"（人格口径一致，也避免评审侧独立配置指向失效模型）。
+        无可用 provider / 解析失败返回 None（调用方降级自己的链）。
         """
+        if self._last_replyer is not None:
+            return self._last_replyer
         picker = self._replyer_picker
         if picker is None:
             return None

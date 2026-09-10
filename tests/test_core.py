@@ -3002,6 +3002,20 @@ def test_emotion_favor_coupling():
         "模型联动: picker 异常静默降级 None（联动是增强不是依赖）",
         asyncio.run(f_p.get_replyer_provider()) is None,
     )
+    # replyer 实际成功服务的 provider 优先于绑定链抽签（balance 可能落在
+    # 已失效候选上；last-used 必然可用）
+    used_prov = object()
+    f_p.note_replyer_used(used_prov)
+    check(
+        "模型联动: note 过的 last-used 优先（压过会炸的 picker）",
+        asyncio.run(f_p.get_replyer_provider()) is used_prov,
+    )
+    f_p2 = EmotionFacade(states, {"emotion_enable": True})
+    f_p2.note_replyer_used(None)
+    check(
+        "模型联动: note(None) 防御性忽略",
+        asyncio.run(f_p2.get_replyer_provider()) is None,
+    )
 
     # 4. N9：三锚点词补齐增量定义，12 锚点全覆盖（防回归）
     missing = [name for name, _v, _a in EMOTION_ANCHORS if name not in EMOTION_DELTAS]
