@@ -6,6 +6,7 @@
     api = star.star_cls.api          # 即本类的实例
     fb = await api.get_feedback(group_id)      # 方向①：{"pfb", "valence"} | None
     ok = await api.apply_emotion_event(...)    # 方向②：外部情绪事件注入
+    prov = await api.get_replyer_provider()    # 模型联动：replyer 绑定的 provider 实例 | None
 
 只交换数值，不渲染任何提示词（P-H 教训：好感数据的唯一入口是生态注入桥，
 拆 xinxian_link 的双重注入结论对情绪面同样适用）。开关关闭/会话不存在
@@ -23,13 +24,52 @@ from ..core.states import StateManager
 
 
 class EmotionFacade:
-    """麦麦情绪对外数值 API（读反馈 + 事件注入）。"""
+    """麦麦对外跨插件 API（情绪数值面 + replyer 模型联动）。"""
 
     def __init__(self, states: StateManager, config) -> None:
         self._states = states
         # config 传 AstrBotConfig 本体或 () -> config 的取值器；延迟读取，
         # 面板/配置文件热改开关即时生效，无需重启
         self._config = config
+        # replyer 模型取值器（async () -> provider 实例 | None），main 装配时
+        # bind——facade 不 import P/modelbind，保持纯边界可单测
+        self._replyer_picker: object | None = None
+        # replyer 最近一次成功调用实际服务的 provider 实例（modelbind_host
+        # 成功路径回填）——"当前 reply 触发的模型"，且必然可用（刚成功过）；
+        # 绑定链抽签（balance）可能落在已失效候选上，故只作冷启动回落
+        self._last_replyer: object | None = None
+
+    def bind_replyer_picker(self, picker) -> None:
+        """装配期注入 replyer provider 取值器（main.py 接 modelbind 任务链）。"""
+        self._replyer_picker = picker
+
+    def note_replyer_used(self, prov) -> None:
+        """记录 replyer 本次成功调用的 provider（modelbind_host 成功路径回填）。"""
+        if prov is not None:
+            self._last_replyer = prov
+
+    async def get_replyer_provider(self) -> object | None:
+        """replyer 当前使用的 LLM provider 实例（跨插件模型联动，v6.26.0）。
+
+        优先返回最近一次 reply 实际成功服务的 provider（字面意义的"当前
+        reply 触发的模型"，且必然可用）；冷启动（重启后尚无 reply）回落
+        绑定链解析——modelbind 任务 "replyer" 按策略抽主候选 → 无绑定
+        AstrBot 默认 provider。心弦评审据此跟随"麦麦用什么模型说话就用
+        什么模型打分"（人格口径一致，也避免评审侧独立配置指向失效模型）。
+        无可用 provider / 解析失败返回 None（调用方降级自己的链）。
+        """
+        if self._last_replyer is not None:
+            return self._last_replyer
+        picker = self._replyer_picker
+        if picker is None:
+            return None
+        try:
+            prov = await picker()
+            return prov if prov is not None else None
+        except Exception:
+            # 联动是增强不是依赖：解析失败静默降级，调用方走自己的链
+            logger.debug("maisoul: get_replyer_provider 解析失败", exc_info=True)
+            return None
 
     def _cfg(self) -> dict:
         try:
