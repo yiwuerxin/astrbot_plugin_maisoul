@@ -2946,6 +2946,18 @@ def test_reply_intent_repair():
         "<system-reminder>" in planner.REPAIR_NO_TOOL_CALL
         and "reply" in planner.REPAIR_NO_TOOL_CALL,
     )
+    # 死信回归（生产实报 2026-09-11 二刷）：补问注入后 continue 重进轮首，
+    # 安静群无新消息直接 break 收轮——补问 user 轮零 LLM 调用零效果。
+    # 与 N9 同款源码文本比对（planner_host 连带 ecobridge 导入，离线不可 import）
+    from pathlib import Path as _Path
+
+    _ph = (
+        _Path(__file__).resolve().parent.parent / "pipeline" / "planner_host.py"
+    ).read_text(encoding="utf-8")
+    check(
+        "意图: 补问轮豁免无新消息收轮（repair_pending 在 break 条件内）",
+        "and not repair_pending" in _ph and "repair_pending = True" in _ph,
+    )
 
     # --- 修复② has_at_to_self：@bot 廉价开关 ---
     check(

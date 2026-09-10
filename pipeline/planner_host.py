@@ -177,6 +177,10 @@ async def _planner_cycle(
     interrupted = False
     # 叙述性回复意图补问只允许一次（防模型反复叙述不调用造成循环放大）
     repair_used = False
+    # 补问已注入 contexts 但尚未被 LLM 消费——轮首"无新消息即收轮"检查
+    # 必须放行补问轮（生产实报 2026-09-11 二刷：补问注入后 continue 重进
+    # 轮首，安静群无新消息直接 break，补问 user 轮死信、零 LLM 调用零效果）
+    repair_pending = False
 
     system_prompt = ""  # no_provider 提前 finalize 时未构建（Sourcery：未定义读取）
 
@@ -298,9 +302,13 @@ async def _planner_cycle(
                 and round_index > 0
                 and not tool_feedback
                 and not tail_is_tool
+                and not repair_pending
             ):
                 end_reason = "no_new_message"
                 break  # 无新消息且无待回填的工具结果 → 本轮结束
+            if repair_pending:
+                # 补问轮放行即消费：本轮 LLM 调用携带已注入的补问 user 轮
+                repair_pending = False
             if pending:
                 _monitor_stage(
                     P,
@@ -520,6 +528,7 @@ async def _planner_cycle(
                     and planner.narrated_reply_intent(analysis)
                 ):
                     repair_used = True
+                    repair_pending = True
                     contexts.append(
                         {"role": "user", "content": planner.REPAIR_NO_TOOL_CALL}
                     )
