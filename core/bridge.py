@@ -46,6 +46,32 @@ def complete_tool_deps(names: list) -> list:
     return out
 
 
+
+
+def planner_tool_classes():
+    """(ToolSet, FunctionTool) 类型对——astrbot.core.agent.tool 的收口入口。
+
+    planner.py 原地直查该路径（2026-09-11 审查：core 层深 import、无
+    回退），与内部 API 收口约束冲突；所有对 agent.tool 符号的需求统一
+    经本函数（含 build_chat_toolset 的 ToolSet），失败让调用方降级。"""
+    from astrbot.core.agent.tool import FunctionTool, ToolSet
+
+    return ToolSet, FunctionTool
+
+
+def make_image_url_parts(urls: list) -> list:
+    """构造 ImageURLPart 列表（astrbot.core.agent.message 收口）。
+
+    image_url 字段要 dict/ImageURL 实例（裸字符串会被 pydantic 拒绝，
+    docstring 示例有误导）。导入失败返回 []——图片上下文是增值能力，
+    缺席时上下文纯文本降级。"""
+    try:
+        from astrbot.core.agent.message import ImageURLPart
+    except ImportError:
+        logger.debug("maisoul: ImageURLPart 不可用，图片上下文降级为空", exc_info=True)
+        return []
+    return [ImageURLPart(image_url={"url": r}) for r in urls]
+
 def build_chat_toolset(context, cfg):
     """构建聊天 LLM 可见的工具集：chat_tools 等价物（含前置依赖补全）+ call_maid（若开）。"""
     try:

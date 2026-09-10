@@ -611,7 +611,9 @@ def build_planner_toolset(deps) -> "object":
     工具由调用方追加进 ToolSet。deps 需提供：on_reply / on_wait /
     on_send_emoji / on_tool_search。
     """
-    from astrbot.core.agent.tool import FunctionTool, ToolSet
+    from . import bridge
+
+    ToolSet, FunctionTool = bridge.planner_tool_classes()
 
     async def _reply(**kwargs):
         return await deps.on_reply(kwargs)

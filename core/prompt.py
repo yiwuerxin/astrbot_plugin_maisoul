@@ -180,12 +180,11 @@ def image_context_parts(
             break
     if not refs:
         return []
-    try:
-        from astrbot.core.agent.message import ImageURLPart
-    except ImportError:
-        return []
-    # image_url 字段要 dict/ImageURL 实例（裸字符串会被 pydantic 拒绝，docstring 示例有误导）
-    return [ImageURLPart(image_url={"url": r}) for r in reversed(refs[:limit])]
+    from . import bridge
+
+    # ImageURLPart 构造收口在 bridge（core 不直查 astrbot.core.*；
+    # 导入失败由 bridge 降级为空列表——纯文本上下文）
+    return bridge.make_image_url_parts(list(reversed(refs[:limit])))
 
 
 def _optimize_transcript(buf: list[dict], bot_name: str, keep: int = 3) -> list[dict]:
