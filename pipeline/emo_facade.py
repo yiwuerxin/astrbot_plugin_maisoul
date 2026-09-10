@@ -90,13 +90,8 @@ class EmotionFacade:
             return None
         st = self._states.peek(str(gid or ""))
         if st is None:
-            logger.info(f"maisoul[obs] 情绪读数 gid={gid}: 会话不存在 -> None")
             return None
         v, _a = st.emotion.read(time.time())
-        logger.info(
-            f"maisoul[obs] 情绪读数 gid={gid}: pfb={st.emotion_feedback.pfb} "
-            f"valence={v:+.2f} label={st.emotion.label(time.time())}"
-        )
         return {"pfb": int(st.emotion_feedback.pfb), "valence": float(v)}
 
     async def apply_emotion_event(
@@ -119,8 +114,5 @@ class EmotionFacade:
             k = 0.0
         st = self._states.get(str(gid or ""))
         st.emotion.apply(w, time.time(), intensity=k)
-        logger.info(
-            f"maisoul[obs] 情绪事件注入 gid={gid} word={w} intensity={k:.2f} "
-            f"-> 情绪态={st.emotion.label(time.time())}"
-        )
+        logger.debug(f"maisoul: 情绪事件注入 gid={gid} word={w} intensity={k:.2f}")
         return True
