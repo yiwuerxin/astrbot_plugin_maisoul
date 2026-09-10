@@ -339,6 +339,9 @@ class MonitorBus:
                 except Exception:
                     pass  # 降级：丢旧重放也失败（订阅刚被移除）则放弃本条
             except Exception:
+                # 异常队列（如已关闭）：移出订阅集防每条 publish 都重演——
+                # 正常 unsubscribe 走不到这,留痕供 WebUI 断连排查
+                logger.debug("maisoul: 观察订阅者异常,已移出广播集", exc_info=True)
                 self._subscribers.discard(q)
 
 

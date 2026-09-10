@@ -262,7 +262,7 @@ async def exec_tool_calls(context, event, resp) -> str:
             except Exception as e:
                 out.append(f"{name}: 执行失败 {e}")
     except Exception as e:
-        logger.warning(f"maisoul 工具桥异常: {e}")
+        logger.warning(f"maisoul 工具桥异常: {e}", exc_info=True)
     return "\n".join(out)
 
 

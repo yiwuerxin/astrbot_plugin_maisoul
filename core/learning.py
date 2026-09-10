@@ -918,6 +918,8 @@ async def _learn_from_chat_inner(
                     added += 1
             summary.append(f"表达 +{added}")
     except Exception:
+        # 终败：摘要回给发送链路提示，堆栈留这里（调用方只打 info 摘要）
+        logger.warning("maisoul: 表达学习终败（本轮跳过）", exc_info=True)
         summary.append("表达学习失败")
 
     try:
@@ -966,6 +968,8 @@ async def _learn_from_chat_inner(
                     added += 1
             summary.append(f"黑话 +{added}")
     except Exception:
+        # 终败：摘要回给发送链路提示，堆栈留这里（调用方只打 info 摘要）
+        logger.warning("maisoul: 黑话学习终败（本轮跳过）", exc_info=True)
         summary.append("黑话学习失败")
 
     return "、".join(summary) or "无新增"

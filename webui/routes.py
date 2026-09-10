@@ -112,16 +112,20 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                 logger.error("maisoul: 读取 Provider 模型列表失败", exc_info=True)
             return jsonify({"success": True, "data": {"providers": providers}})
 
-        async def post_config():
-            # silent=True：无 body/坏 JSON 返回 None 再回落空对象；解析出的
-            # falsey 原值（[]/false/0/""）必须原样进校验——`or {}` 会把它们洗成
-            # 合法空对象绕过类型检查（Sourcery 审查）
+        async def _json_body():
+            """请求 JSON body；坏/无 body 回落空对象，falsey 原值原样透传。
+
+            只对 None 回落——[]/false/0 等原值必须进校验层拒绝，`or {}`
+            会把它们洗成合法空对象绕过类型检查（Sourcery 审查）。直取
+            字段的调用方自加 isinstance(payload, dict) 守卫。"""
             try:
                 payload = await request.get_json(silent=True)
             except Exception:
                 payload = None
-            if payload is None:
-                payload = {}
+            return {} if payload is None else payload
+
+        async def post_config():
+            payload = await _json_body()
             # 类型校验（core/apivalid.py，按 config.schema 逐键把关）：
             # 错误类型直接拒绝——写入会让门控/后处理的 float()/int() 逐次抛异常
             from ..core.apivalid import validate_config_payload
@@ -150,15 +154,8 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                     jsonify({"success": False, "error": "learning store 未初始化"}),
                     500,
                 )
-            # 同 post_config：falsey 原值直接进校验。`or {}` 会把空列表洗成合法
-            # 空对象，整个学习库被静默清空还返回 200（Sourcery 审查）；空对象 {}
-            # 本身仍是合法载荷（WebUI 学习页清空全部条目后保存的语义）
-            try:
-                payload = await request.get_json(silent=True)
-            except Exception:
-                payload = None
-            if payload is None:
-                payload = {}
+            # 空对象 {} 本身仍是合法载荷（WebUI 学习页清空全部条目后保存的语义）
+            payload = await _json_body()
             # 结构校验（core/apivalid.py）：非 dict/分库非对象/列表字段错型/体积
             # 超限整体拒绝——坏形态落盘后注入路径会逐轮抛异常
             from ..core.apivalid import validate_learning_payload
@@ -201,9 +198,8 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                     jsonify({"success": False, "error": "learning store 未初始化"}),
                     500,
                 )
-            try:
-                payload = await request.get_json(silent=True) or {}
-            except Exception:
+            payload = await _json_body()
+            if not isinstance(payload, dict):
                 payload = {}
             action = str(payload.get("action") or "")
             if action not in ("approve", "unapprove", "reject"):
@@ -228,9 +224,8 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
                     jsonify({"success": False, "error": "learning store 未初始化"}),
                     500,
                 )
-            try:
-                payload = await request.get_json(silent=True) or {}
-            except Exception:
+            payload = await _json_body()
+            if not isinstance(payload, dict):
                 payload = {}
             situation = str(payload.get("situation") or "").strip()
             style = str(payload.get("style") or "").strip()

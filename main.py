@@ -209,6 +209,7 @@ class MaiSoulPlugin(Star):
         try:
             is_group = bool(event.get_group_id())
         except Exception:
+            # 私聊事件部分适配器无 group_id 访问器：按私聊口径取默认窗口
             is_group = False
         base = int(
             self.config.get(

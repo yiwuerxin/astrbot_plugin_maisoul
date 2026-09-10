@@ -693,6 +693,11 @@ async def _planner_cycle(
                             P.context, ev, deferred_item["tool"], args
                         )
                     except Exception as e:
+                        # 文本回执给模型继续对话；堆栈留日志供排障
+                        logger.debug(
+                            f"maisoul: 延迟工具执行失败 {deferred_item['tool']}",
+                            exc_info=True,
+                        )
                         result = f"执行失败 {e}"
                     tool_records.append(
                         {
@@ -1063,6 +1068,7 @@ async def _planner_send_emoji(P, deps) -> str:
         _emit_sent(P, deps.gid, f"[表情包] {query}", "", "emoji", deps.event)
         return f"已发送表情包（检索词：{query}｜{how} #{pick}）"
     except Exception as e:
+        logger.debug("maisoul: 表情包链路终败（回退文本回执）", exc_info=True)
         return f"表情包发送失败: {e}"
 
 
