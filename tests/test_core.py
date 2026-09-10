@@ -3500,6 +3500,42 @@ def test_taskregistry():
         f"size={_size_after}",
     )
 
+    # M-P1(2026-09-11 审查实锤):terminate 顺序是先 cancel_and_wait_all
+    # (writer 在注册表里,先被取消)再 stop_writer——旧实现的 wait_for 对
+    # 已取消任务必把 CancelledError 抛回 terminate,close() 永不执行、
+    # 残余排水被跳过、每次卸载/热重载都向框架抛异常。
+    async def _cancelled_writer_scenario():
+        s6 = _MS(pathlib.Path(tempfile.mkdtemp()) / "cx.db")
+        m6 = _M(s6)
+        reg6 = _TR()
+        m6.start_writer(reg6)
+        await reg6.cancel_and_wait_all(timeout=5.0)  # terminate 第一步
+        # writer 已死但队列仍在:后续事件进队等排水(确定性残余)
+        m6.emit_message_sent(
+            "g1", "麦麦", "r0", "i0", time.time(), "reply", platform="qq"
+        )
+        await m6.stop_writer()  # 旧实现:此处抛 CancelledError
+        return s6
+
+    _cx_err = None
+    try:
+        s6 = _aio2.run(_cancelled_writer_scenario())
+    except BaseException as e:  # noqa: BLE001
+        _cx_err = e
+    check(
+        "writer 取消: terminate 顺序下 stop_writer 不抛 CancelledError",
+        _cx_err is None,
+        f"raised={_cx_err!r}",
+    )
+    if _cx_err is None:
+        with s6._session_factory() as sess:
+            n6 = len(sess.query(_Rec).all())
+        check(
+            "writer 取消: 残余队列同步落库(close 必达前提)",
+            n6 == 1,
+            f"rows={n6}",
+        )
+
     # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
     from astrbot_plugin_maisoul.core.states import StateManager as _SM
 

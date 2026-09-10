@@ -420,17 +420,29 @@ class Monitor:
         """优雅冲刷并停止（terminate 用）。
 
         哨兵让 writer 处理完队列再退出（Sourcery：直接 cancel 会把正在
-        to_thread 落库的当前批一起丢掉）；超时才 cancel，残余同步落库。"""
+        to_thread 落库的当前批一起丢掉）；超时才 cancel，残余同步落库。
+        terminate 先 cancel_and_wait_all 再到这里时 writer 已被注册表
+        取消（M-P1 修复，2026-09-11 审查实锤：原 wait_for 对已取消任务
+        必把 CancelledError 抛回 terminate——close() 永不执行、残余排水
+        被跳过、卸载向框架抛异常）。wait() 只观察不传染，已取消/异常
+        退出都直接进残余排水，保证 close() 必达。"""
         writer, q = self._writer, self._queue
         self._writer, self._queue = None, None
         if writer is None:
             return
         try:
             q.put_nowait(self._SENTINEL)
-            await asyncio.wait_for(writer, timeout=timeout)
-        except (asyncio.TimeoutError, asyncio.QueueFull):
+        except asyncio.QueueFull:
+            pass  # 队列满：哨兵进不去，走下方取消路径
+        await asyncio.wait([writer], timeout=timeout)
+        if not writer.done():
             writer.cancel()
             await asyncio.wait([writer], timeout=1.0)
+        elif not writer.cancelled() and writer.exception() is not None:
+            logger.debug(
+                "maisoul: 监控 writer 异常退出（残余事件将同步落库）",
+                exc_info=writer.exception(),
+            )
         if q is not None:
             while not q.empty():
                 item = q.get_nowait()
