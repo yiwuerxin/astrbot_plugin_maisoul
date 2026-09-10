@@ -225,9 +225,9 @@ def build_final_user_message(
         from .learning import ASSISTANT_OPTIMIZATION_KEEP_COUNT
 
         buf = _optimize_transcript(buf, bot_name, ASSISTANT_OPTIMIZATION_KEEP_COUNT)
-    transcript = "\n".join(
-        f"{m['name']}{'(@了我)' if m['at_bot'] else ''}: {m['text']}" for m in buf
-    )
+    # 转录行不再加 "(@了我)" 标记：At 已文本化进 text（"@麦麦 你胖了"，
+    # 对齐 MaiBot processed_plain_text），重复标注无增益
+    transcript = "\n".join(f"{m['name']}: {m['text']}" for m in buf)
 
     reference = reference_override.strip() or (
         f"当前思考：\n{reason}" if reason else ""
