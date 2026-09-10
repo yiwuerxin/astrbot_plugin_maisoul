@@ -44,6 +44,12 @@
 | `astrbot_plugin_persona_switch` | `/persona` 切换人格与本插件多人格库联动 |
 | `astrbot_plugin_livingmemory` / `astrbot_plugin_xinxian` / `astrbot_plugin_worldbook` | 记忆/好感度/世界书：**全模式生效**（生态注入桥在麦麦管线内收集注入、发言后触发记忆沉淀；v6.11.0+） |
 
+心弦（v1.31.0+）另有 **§6.6 情绪-关系耦合**（数值面，默认关）：连续同向情绪累积
+`pfb(±7)` 经 `star_cls.api` 供心弦查增益表调制好感增量（方向①），心弦好感等级跃迁
+反向推送情绪事件（方向②）；只交换数值，不渲染提示词。生效链：方向① =
+`emotion_enable`+`emotion_feedback_enable`+心弦 `favor.mood_coupling` 三开；方向② =
+心弦 `favor.mood_push`+`emotion_enable` 两开。
+
 ## 安装
 
 **方式一：WebUI 插件市场**（上架后可用）

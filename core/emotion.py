@@ -2,14 +2,18 @@
 
 机制（对齐 MaiBot emotion 语义；研究文档缺失，锚点数值为本项目口径，
 公式按 GOAL 规格实现）：
-- 9 情绪词 → (valence ±, arousal 0~1) 增量表；回复后由 replyer 的情绪
+- 12 情绪词 → (valence ±, arousal 0~1) 增量表；回复后由 replyer 的情绪
   标注驱动更新（标签在发送前剥离，聊天内容不含机器痕迹）；
 - 动量：连续同向增益 ×1.01^n、异向 ×0.99^n（n=连续次数）；
 - 每分钟向基线 (0,0) 做 exp 衰减（读时惰性结算）；
 - (v,a) 按 12 锚点最近距离转情绪文本注入 prompt；
 - 打字延迟 ×1.5^arousal（激昂度越高，段间停顿越长）。
 
-全部内存态、纯函数（EmotionState 为纯数据 + 方法），可单测。
+§6.6 情绪-关系耦合（v6.25.0）：EmotionFeedback 连续同向情绪累积器 +
+FEEDBACK_GAIN 增益表，经 pipeline/emo_facade 向心弦插件提供数值读数；
+反向的情绪事件注入走 EmotionState.apply(intensity=)。
+
+全部内存态、纯函数（EmotionState/EmotionFeedback 为纯数据 + 方法），可单测。
 """
 
 from __future__ import annotations
@@ -17,7 +21,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-# 9 情绪词 → (valence delta, arousal delta)
+# 12 情绪词 → (valence delta, arousal delta)
+# 委屈/期待/安心三词 v6.25.0 补齐（N9：12 锚点中原先只有 9 个有增量定义，
+# 这三词被 apply 恒视为平静 no-op，标签-驱动闭环存在死角）
 EMOTION_DELTAS: dict[str, tuple[float, float]] = {
     "愤怒": (-0.60, 0.80),
     "厌恶": (-0.50, 0.40),
@@ -28,6 +34,9 @@ EMOTION_DELTAS: dict[str, tuple[float, float]] = {
     "开心": (0.60, 0.50),
     "兴奋": (0.80, 0.80),
     "喜爱": (0.70, 0.30),
+    "委屈": (-0.35, 0.45),
+    "期待": (0.30, 0.55),
+    "安心": (0.25, 0.15),
 }
 
 # 12 锚点：(情绪词, v, a)——标签映射取最近欧氏距离
@@ -49,6 +58,10 @@ EMOTION_ANCHORS: list[tuple[str, float, float]] = [
 _DECAY_PER_MINUTE = 0.10  # 每分钟 exp 衰减率（半衰期 ≈ 7 分钟）
 _MOMENTUM_UP = 1.01
 _MOMENTUM_DOWN = 0.99
+
+# §6.6 情绪-关系耦合增益表（MaiBot positive_feedback 原参数），索引 |pfb|：
+# 连续同向情绪事件越多，心弦侧同向好感增量放大/异向缩小的系数越大
+FEEDBACK_GAIN: tuple[float, ...] = (1.0, 1.0, 1.1, 1.2, 1.4, 1.7, 1.9, 2.0)
 
 
 @dataclass
@@ -73,11 +86,25 @@ class EmotionState:
         self.a *= factor
         self.last_ts = now
 
-    def apply(self, word: str, now: float) -> tuple[float, float]:
-        """按情绪词更新（含动量）；返回更新后的 (v, a)。未知词视为平静。"""
+    def apply(
+        self, word: str, now: float, intensity: float = 1.0
+    ) -> tuple[float, float]:
+        """按情绪词更新（含动量）；返回更新后的 (v, a)。未知词视为平静。
+
+        intensity ∈ [0,1] 线性缩放本次增量（§6.6 方向②外部事件注入用，
+        极性判定按未缩放符号；缺省 1 = P-B 标注驱动的原行为）。"""
         self._decay(now)
         dv, da = EMOTION_DELTAS.get(str(word or "").strip(), (0.0, 0.0))
+        # 极性按未缩放符号判定（Sourcery #28：缩放后再判会让 intensity=0
+        # 的事件丢失极性、动量 streak 不更新，违反本 docstring 的口径）
         direction = (dv > 0) - (dv < 0)
+        try:
+            k = max(0.0, min(1.0, float(intensity)))
+        except (TypeError, ValueError):
+            # 跨插件边界可能传来非数值强度（Sourcery #27）：按 0 处理而非
+            # 抛异常——事件被接受但零幅度（极性仍入 streak，不炸调用方）
+            k = 0.0
+        dv, da = dv * k, da * k
         # 先按旧 streak 判同/异向（Sourcery：换代后再比较会让异向也吃放大）
         same_direction = direction != 0 and self.streak_dir == direction
         first_emotion = direction != 0 and self.streak_dir == 0
@@ -99,6 +126,11 @@ class EmotionState:
         del self.history[:-12]
         return self.v, self.a
 
+    def read(self, now: float) -> tuple[float, float]:
+        """结算衰减后的当前 (v, a)——跨插件读数的统一入口（不动 streak/历史）。"""
+        self._decay(now)
+        return self.v, self.a
+
     def label(self, now: float) -> str:
         """最近锚点情绪词（读时结算衰减）。"""
         self._decay(now)
@@ -116,3 +148,31 @@ class EmotionState:
     def typing_multiplier(self, now: float | None = None) -> float:
         """打字延迟乘数 1.5^arousal。"""
         return 1.5**self.a
+
+
+@dataclass
+class EmotionFeedback:
+    """连续同向情绪累积器（§6.6 positive_feedback 移植）。
+
+    每次带极性的情绪事件把 pfb 向事件极性推一步：同向事件越推越远
+    （累积），异向事件往回拉（缩小），统一为 pfb += sign，钳制 ±7；
+    零极性词（平静等 valence 增量为 0）不计数。心弦侧按
+    FEEDBACK_GAIN[|pfb|] 查表对同向好感增量做放大/异向缩小调制。
+    挂 GroupState 随会话生命周期（内存态，不落盘）；无时间衰减——
+    靠异向事件回拉 + valence 自身分钟级衰减兜底。
+    """
+
+    pfb: int = 0
+
+    def observe(self, word: str) -> int:
+        """记一次情绪事件（replyer 剥出的情绪标注）；返回更新后的 pfb。"""
+        dv = EMOTION_DELTAS.get(str(word or "").strip(), (0.0, 0.0))[0]
+        sign = (dv > 0) - (dv < 0)
+        if sign == 0:
+            return self.pfb
+        self.pfb = max(-7, min(7, self.pfb + sign))
+        return self.pfb
+
+    def gain(self) -> float:
+        """当前增益系数（FEEDBACK_GAIN[|pfb|]，调试/状态展示用）。"""
+        return FEEDBACK_GAIN[min(abs(self.pfb), 7)]

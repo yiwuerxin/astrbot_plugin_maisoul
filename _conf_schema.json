@@ -162,7 +162,12 @@
   "emotion_enable": {
     "type": "bool",
     "default": false,
-    "description": "P-B 情绪 VA：9 情绪词驱动的心情值/激昂度（动量+每分钟衰减+12 锚点标签），情绪行注入提示词、正文剥离 [情绪:xx] 标签、打字节奏 ×1.5^激昂度；纯规则零 LLM 成本"
+    "description": "P-B 情绪 VA：12 情绪词驱动的心情值/激昂度（动量+每分钟衰减+12 锚点标签），情绪行注入提示词、正文剥离 [情绪:xx] 标签、打字节奏 ×1.5^激昂度；纯规则零 LLM 成本"
+  },
+  "emotion_feedback_enable": {
+    "type": "bool",
+    "default": false,
+    "description": "§6.6 情绪-关系耦合（方向①）：连续同向情绪累积 pfb(±7)，经 star_cls.api 供心弦插件「favor.mood_coupling」读取，按 MaiBot 增益表 [1.0..2.0] 放大同向/缩小异向好感增量。生效需 emotion_enable+本开关+心弦侧开关三开；两插件互不依赖，任一缺失自动静默。只交换数值，不渲染提示词"
   },
   "send_queue_demotion": {
     "type": "bool",

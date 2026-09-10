@@ -4,7 +4,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from .emotion import EmotionState
+from .emotion import EmotionFeedback, EmotionState
 from .constants import (
     EXTERNAL_BURST_INTERVAL_SECONDS,
     EXTERNAL_MIN_AVERAGE_INTERVAL_SECONDS,
@@ -19,6 +19,9 @@ class GroupState:
     buffer: deque = field(default_factory=lambda: deque(maxlen=200))
     recent_self: deque = field(default_factory=lambda: deque(maxlen=50))  # 自发时间戳
     emotion: EmotionState = field(default_factory=EmotionState)  # P-B 情绪 VA（内存态）
+    emotion_feedback: EmotionFeedback = field(
+        default_factory=EmotionFeedback
+    )  # §6.6 连续同向情绪累积器（内存态，随情绪生命周期）
     last_replies: deque = field(
         default_factory=lambda: deque(maxlen=20)
     )  # 近期发言文本
@@ -177,6 +180,11 @@ class StateManager:
         if len(self._groups) > self._MAX_SESSIONS:
             self._evict_idle(keep=gid)
         return st
+
+    def peek(self, gid: str) -> GroupState | None:
+        """只读查询（不创建、不重排 LRU）——跨插件 facade 读数用：
+        没说过话的会话不该因一次读数被造出空状态顶替 LRU。"""
+        return self._groups.get(gid)
 
     def _evict_idle(self, keep: str) -> None:
         """淘汰最久未访问的闲置状态（无在飞循环/生成/重查任务）。
