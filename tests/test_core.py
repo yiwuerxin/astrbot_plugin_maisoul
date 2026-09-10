@@ -1817,15 +1817,13 @@ def test_monitor():
 
     _conn = _sq.connect(str(_probe_db))
     _tables = {
-        r[0]
-        for r in _conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        r[0] for r in _conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     _conn.close()
     _SM.metadata.remove(_SM.metadata.tables["probe_should_not_exist"])
     check(
         "建表收窄: 共享 metadata 的无关表不进观察库",
-        "maisaka_monitor_events" in _tables
-        and "probe_should_not_exist" not in _tables,
+        "maisaka_monitor_events" in _tables and "probe_should_not_exist" not in _tables,
         f"tables={sorted(_tables)}",
     )
 

@@ -46,8 +46,6 @@ def complete_tool_deps(names: list) -> list:
     return out
 
 
-
-
 def planner_tool_classes():
     """(ToolSet, FunctionTool) 类型对——astrbot.core.agent.tool 的收口入口。
 
@@ -71,6 +69,7 @@ def make_image_url_parts(urls: list) -> list:
         logger.debug("maisoul: ImageURLPart 不可用，图片上下文降级为空", exc_info=True)
         return []
     return [ImageURLPart(image_url={"url": r}) for r in urls]
+
 
 def build_chat_toolset(context, cfg):
     """构建聊天 LLM 可见的工具集：chat_tools 等价物（含前置依赖补全）+ call_maid（若开）。"""
