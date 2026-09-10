@@ -2151,8 +2151,10 @@ function rrRowsHTML(list,pi){
 function rrEcoSection(eco){
   /* 生态注入区（maisoul 扩展）：final_state.eco_injection = replyer 收集的
      注入全文（心弦好感/记忆/世界书）。v6.11.6 引入、v6.14.3 推理页复刻
-     部署版时被带丢（部署版页面无此区）、v6.20.0 在 master-detail 详情恢复；
-     v6.24.1 起**仅回复器流程详情渲染**——内容本就来自 replyer（planner
+     部署版时被带丢（部署版页面无此区）、v6.18.2 在 master-detail 详情恢复
+     （曾误记 v6.20.0——fetch_chat_history 改写注释时带入的笔误；恢复提交
+     b0d3ab0 时点版本 v6.18.3，其注释与 AGENTS.md 均记 6.18.2）；
+     v6.24.2 起**仅回复器流程详情渲染**——内容本就来自 replyer（planner
      决策轮零注入，坑 47），v6.19.0 独立回复器流程上线后 planner 流程侧
      同区属纯冗余（owner 决定删除）。
      折叠用原生 details——srcdoc 在 sandbox iframe 里，自定义控件回路只有
