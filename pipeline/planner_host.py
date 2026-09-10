@@ -175,6 +175,8 @@ async def _planner_cycle(
     pl.replyer_reasoning = ""
     end_reason = ""
     interrupted = False
+    # 叙述性回复意图补问只允许一次（防模型反复叙述不调用造成循环放大）
+    repair_used = False
 
     system_prompt = ""  # no_provider 提前 finalize 时未构建（Sourcery：未定义读取）
 
@@ -509,6 +511,22 @@ async def _planner_cycle(
                 if round_model:
                     model_by_idx[len(contexts) - 1] = round_model  # 推理过程页素材
             if not names:
+                # 叙述性回复意图补问（生产实报 2026-09-11）：模型分析写明
+                # "决定/让我回复"却没发工具调用——补一轮 <system-reminder>
+                # 纠正，每循环至多一次；重问后仍空动作则按原逻辑收轮。
+                if (
+                    not repair_used
+                    and round_index < planner.MAX_INTERNAL_ROUNDS - 1
+                    and planner.narrated_reply_intent(analysis)
+                ):
+                    repair_used = True
+                    contexts.append(
+                        {"role": "user", "content": planner.REPAIR_NO_TOOL_CALL}
+                    )
+                    logger.info(
+                        f"maisoul[{gid}] planner: 分析含回复意图但未发工具调用，注入补问轮"
+                    )
+                    continue
                 if is_group:
                     pl.record_idle_cycle(eff_cfg)
                 logger.info(

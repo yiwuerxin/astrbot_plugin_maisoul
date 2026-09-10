@@ -62,6 +62,21 @@ def strip_leading_ai_mention(text: str, bot_name: str, aliases: list[str]) -> st
     return _AT_LEAD_RE.sub("", text or "", count=1).strip()
 
 
+def has_at_to_self(segments, self_id: str) -> bool:
+    """链上是否有指向 bot 的 At 组件（按 QQ 号判定，鸭子类型，与名字无关）。
+
+    At 文本化取生效人格名前的开关：多数消息没有 @bot，先做这次廉价扫描，
+    避免每条消息都去解析人格（2026-09-11 缝隙修复配套）。"""
+    sid = str(self_id or "").strip()
+    if not sid:
+        return False
+    for seg in segments or []:
+        raw = getattr(seg, "qq", None)
+        if raw is not None and str(raw).strip() == sid:
+            return True
+    return False
+
+
 def full_plain_text(
     segments,
     fallback: str = "",

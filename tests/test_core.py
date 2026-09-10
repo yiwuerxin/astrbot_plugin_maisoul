@@ -2909,6 +2909,129 @@ def test_phase3_mechanisms():
     )
 
 
+def test_reply_intent_repair():
+    print("[2026-09-11 修复批次：叙述性回复意图补问/生效人格名 At/@名释义]")
+    import asyncio
+    from types import SimpleNamespace as _NS
+
+    from astrbot_plugin_maisoul.core import planner, personas, sanitize
+
+    # --- 修复① narrated_reply_intent：先剥否定式再匹配 ---
+    check(
+        "意图: 生产实报文本命中（决定+让我用身份回复）",
+        planner.narrated_reply_intent(
+            "**决策：**\n黎璃在认真等小千回应她的问题，我应该让小千回复黎璃这个问题。"
+            "让我用小千的身份回复黎璃。"
+        ),
+    )
+    check(
+        "意图: 需要回应 命中",
+        planner.narrated_reply_intent("这个问题需要回应她一下"),
+    )
+    check(
+        "意图: 否定式不命中（不需要回复）",
+        not planner.narrated_reply_intent("这是系统消息，不需要回复"),
+    )
+    check(
+        "意图: 否定式不命中（决定不回复）",
+        not planner.narrated_reply_intent("权衡后我决定不回复她"),
+    )
+    check(
+        "意图: 陈述已回复不命中",
+        not planner.narrated_reply_intent("小千已在上一轮回复过该问题"),
+    )
+    check("意图: 空文本不命中", not planner.narrated_reply_intent(""))
+    check(
+        "意图: 补问文案为 system-reminder 形态",
+        "<system-reminder>" in planner.REPAIR_NO_TOOL_CALL
+        and "reply" in planner.REPAIR_NO_TOOL_CALL,
+    )
+
+    # --- 修复② has_at_to_self：@bot 廉价开关 ---
+    check(
+        "At开关: @bot 命中",
+        sanitize.has_at_to_self([_NS(qq="10000"), _NS(text="嗨")], "10000"),
+    )
+    check(
+        "At开关: @他人不命中",
+        not sanitize.has_at_to_self([_NS(qq="123")], "10000"),
+    )
+    check(
+        "At开关: self_id 空不命中",
+        not sanitize.has_at_to_self([_NS(qq="10000")], ""),
+    )
+
+    # --- 修复② effective_bot_name：群绑定人格名 + TTL 缓存行为 ---
+    class _NoConv:
+        conversation_manager = None
+
+    cfg = {
+        "bot_name": "麦麦",
+        "personas": [{"name": "好人", "bot_name": "好人", "personality": "p"}],
+        "group_persona": [{"chat": "777", "name": "好人"}],
+        "default_persona": "",
+        "follow_persona_switch": False,
+    }
+    personas._BOT_NAME_CACHE.clear()
+    check(
+        "人格名: 群绑定人格名生效",
+        asyncio.run(personas.effective_bot_name(_NoConv(), cfg, "777", "u")) == "好人",
+    )
+    check(
+        "人格名: 无绑定回退主配置",
+        asyncio.run(personas.effective_bot_name(_NoConv(), cfg, "888", "u")) == "麦麦",
+    )
+
+    cfg2 = {
+        "bot_name": "麦麦",
+        "personas": [
+            {"name": "傲娇", "bot_name": "傲娇", "personality": "p"},
+            {"name": "温柔", "bot_name": "温柔", "personality": "p"},
+        ],
+        "group_persona": [],
+        "default_persona": "",
+        "follow_persona_switch": True,
+    }
+
+    class _SwitchConv:
+        def __init__(self):
+            self.persona_id = "傲娇"
+
+    class _SwitchMgr:
+        def __init__(self):
+            self.conv = _SwitchConv()
+
+        async def get_curr_conversation_id(self, umo):
+            return "c1"
+
+        async def get_conversation(self, umo, cid):
+            return self.conv
+
+    class _SwitchCtx:
+        def __init__(self):
+            self.conversation_manager = _SwitchMgr()
+
+    ctx2 = _SwitchCtx()
+    personas._BOT_NAME_CACHE.clear()
+    a = asyncio.run(personas.effective_bot_name(ctx2, cfg2, "555", "u"))
+    ctx2.conversation_manager.conv.persona_id = "温柔"  # 模拟切换人格
+    b = asyncio.run(personas.effective_bot_name(ctx2, cfg2, "555", "u"))
+    check(
+        "人格名: TTL 内切换不生效（缓存命中）",
+        a == "傲娇" and b == "傲娇",
+    )
+    personas._BOT_NAME_CACHE.clear()
+    c = asyncio.run(personas.effective_bot_name(ctx2, cfg2, "555", "u"))
+    check("人格名: 缓存过期后读到新人格名", c == "温柔")
+
+    # --- 修复③ 系统提示词 @名释义行 ---
+    tpl = planner.PLANNER_SYSTEM_TEMPLATE
+    check(
+        "提示词: @名释义行存在且指向 bot_name 本人",
+        "@名字" in tpl and "点名{bot_name}本人" in tpl,
+    )
+
+
 def test_emotion_favor_coupling():
     print("[§6.6 情绪-关系耦合 maisoul 侧（累积器/facade/N9）]")
     import asyncio
@@ -4361,6 +4484,7 @@ if __name__ == "__main__":
     test_mention()
     test_history_tool()
     test_phase3_mechanisms()
+    test_reply_intent_repair()
     test_emotion_favor_coupling()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）
