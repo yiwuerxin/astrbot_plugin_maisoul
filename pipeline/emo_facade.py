@@ -6,6 +6,7 @@
     api = star.star_cls.api          # 即本类的实例
     fb = await api.get_feedback(group_id)      # 方向①：{"pfb", "valence"} | None
     ok = await api.apply_emotion_event(...)    # 方向②：外部情绪事件注入
+    prov = await api.get_replyer_provider()    # 模型联动：replyer 绑定的 provider 实例 | None
 
 只交换数值，不渲染任何提示词（P-H 教训：好感数据的唯一入口是生态注入桥，
 拆 xinxian_link 的双重注入结论对情绪面同样适用）。开关关闭/会话不存在
@@ -23,13 +24,41 @@ from ..core.states import StateManager
 
 
 class EmotionFacade:
-    """麦麦情绪对外数值 API（读反馈 + 事件注入）。"""
+    """麦麦对外跨插件 API（情绪数值面 + replyer 模型联动）。"""
 
     def __init__(self, states: StateManager, config) -> None:
         self._states = states
         # config 传 AstrBotConfig 本体或 () -> config 的取值器；延迟读取，
         # 面板/配置文件热改开关即时生效，无需重启
         self._config = config
+        # replyer 模型取值器（async () -> provider 实例 | None），main 装配时
+        # bind——facade 不 import P/modelbind，保持纯边界可单测
+        self._replyer_picker: object | None = None
+
+    def bind_replyer_picker(self, picker) -> None:
+        """装配期注入 replyer provider 取值器（main.py 接 modelbind 任务链）。"""
+        self._replyer_picker = picker
+
+    async def get_replyer_provider(self) -> object | None:
+        """replyer 当前绑定的 LLM provider 实例（跨插件模型联动，v6.26.0）。
+
+        解析链与 replyer 实际生成一致：modelbind 任务 "replyer" 绑定 →
+        无绑定时 AstrBot 默认 provider（_pick_task_model 的 None 语义）。
+        心弦评审据此跟随"麦麦用什么模型说话就用什么模型打分"（人格口径
+        一致，也避免评审侧独立配置指向失效模型）。random/balance 策略下
+        每次调用独立轮转，与某一次 reply 实际服务的模型可能不同。
+        未绑定 picker / 解析失败 / 无可用 provider 返回 None（调用方降级）。
+        """
+        picker = self._replyer_picker
+        if picker is None:
+            return None
+        try:
+            prov = await picker()
+            return prov if prov is not None else None
+        except Exception:
+            # 联动是增强不是依赖：解析失败静默降级，调用方走自己的链
+            logger.debug("maisoul: get_replyer_provider 解析失败", exc_info=True)
+            return None
 
     def _cfg(self) -> dict:
         try:

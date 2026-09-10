@@ -2968,6 +2968,41 @@ def test_emotion_favor_coupling():
         asyncio.run(f_e.apply_emotion_event("12345", "开心", "x")) is True,
     )
 
+    # 5. 模型联动（v6.26.0）：get_replyer_provider 透传 picker，异常/未绑降级
+    f_p = EmotionFacade(states, {"emotion_enable": True})
+    check(
+        "模型联动: 未绑 picker 返回 None",
+        asyncio.run(f_p.get_replyer_provider()) is None,
+    )
+    sentinel = object()
+
+    async def _pick_ok():
+        return sentinel
+
+    f_p.bind_replyer_picker(_pick_ok)
+    check(
+        "模型联动: picker 命中透传实例",
+        asyncio.run(f_p.get_replyer_provider()) is sentinel,
+    )
+
+    async def _pick_none():
+        return None
+
+    f_p.bind_replyer_picker(_pick_none)
+    check(
+        "模型联动: picker 返回 None 透传 None",
+        asyncio.run(f_p.get_replyer_provider()) is None,
+    )
+
+    async def _pick_boom():
+        raise RuntimeError("provider 解析挂了")
+
+    f_p.bind_replyer_picker(_pick_boom)
+    check(
+        "模型联动: picker 异常静默降级 None（联动是增强不是依赖）",
+        asyncio.run(f_p.get_replyer_provider()) is None,
+    )
+
     # 4. N9：三锚点词补齐增量定义，12 锚点全覆盖（防回归）
     missing = [name for name, _v, _a in EMOTION_ANCHORS if name not in EMOTION_DELTAS]
     check("N9: 12 锚点词全部有增量定义", not missing, f"缺 {missing}")
