@@ -1,3 +1,34 @@
+# REFACTOR_NOTES — v6.26.1（卸载生命周期 + 观察库治理 + 收口批次，2026-09-11 全库审查修复）
+
+零数据迁移、零配置迁移、零行为变化（除下述缺陷本身）。升级注意事项：无。
+
+- **stop_writer 卸载必挂修复**：terminate 先 `cancel_and_wait_all`（writer 在注册表内，
+  先被取消）再 `stop_writer`——原 `asyncio.wait_for(writer)` 对已取消任务必把
+  CancelledError 抛回 terminate：观察库连接池不关闭（Windows 热重载累积句柄）、
+  残余观察事件全丢、terminate 向框架抛异常。改 `asyncio.wait`（观察不传染），
+  已取消/超时/异常退出统一进残余同步排水。回归用例先红后绿实证。
+- **观察库建表收窄**：`SQLModel.metadata.create_all` 全量建表把 18 张 AstrBot 核心
+  空表建进了生产 data_monitor.db（拉库实锤）；收窄为 `tables=[MaisakaMonitorEventRecord.__table__]`。
+  已存在的空表无害，不迁移不清理。
+- **单一真相清偿**：ceil(1/f²) 必要性阈值公式下沉 `constants.necessity_threshold`
+  （trigger/scoring 原各一份副本）；删零引用死常量 TRIGGER_SCORE。
+- **core 层深 import 收口**：planner 的 FunctionTool/ToolSet、prompt 的 ImageURLPart
+  改经 bridge 适配器（`planner_tool_classes`/`make_image_url_parts`），core 目录下
+  astrbot.core 引用仅剩 bridge 收口文件本体。
+- **静默降级补留痕**：表达/黑话学习终败 warning+exc_info、延迟工具/表情包链路/
+  订阅者移除 debug、工具桥告警带堆栈、WebUI 四处 JSON 解析下沉 `_json_body`
+  单一实现、`_BOT_NAME_CACHE` 补上界淘汰（4096，超限先清过期）。
+- **前置批次（同分支早前提交）**：叙述性回复意图补问、At 用生效人格名、转录
+  @名释义（见上方 v6.25.0 挂账批次）、补问轮死信修复、黑话学习闸门（自身名/
+  别名/指令永不入库）与黑话参考块防泄漏。
+
+## 验证
+
+- `python3 tests/test_core.py`：499 通过 0 失败（新增 3 项回归，其中 2 项先红后绿
+  实证：旧实现分别抛 CancelledError / 把探针表建进库）。
+- black 26.5.1 干净；`grep create_task` 注册表外零处；`grep time.sleep` 零处；
+  core 层 astrbot.core 引用仅 bridge 本体。
+
 # REFACTOR_NOTES — 2026-09-11 生产实报修复批次（挂 v6.25.0，未发版）
 
 部署 v6.24.1+v6.25.0 合并树后用户 QQ 实测 @bot 三次仅得一次回复，取证定位三个缺陷
