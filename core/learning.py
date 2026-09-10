@@ -80,6 +80,8 @@ LEARN_STYLE_PROMPT = """{chat_str}
 输出 JSON："""
 
 LEARN_JARGON_PROMPT = """{chat_str}
+提示：带 [SELF] 标记的发言是机器人自己说的话，{bot_name} 是它在这个群的名字。
+
 请从上面这段聊天内容中提取"可能是黑话"的候选项（黑话/俚语/网络缩写/口头禅）。
 
 提取规则：
@@ -87,6 +89,9 @@ LEARN_JARGON_PROMPT = """{chat_str}
 - 必须是你无法理解含义、或者需要当前聊天圈内语境才能理解的词语
 - 不要选择含义清晰的普通词语
 - 排除：人名、@、表情包/图片中的内容、纯标点、常规功能词（如的、了、呢、啊等）
+- 排除 [SELF] 发言——那是机器人自己的话，不是群友黑话
+- {bot_name}{alias_note}是这个机器人自己的名字，不是黑话，永远不要提取
+- 排除指令消息（以 / 开头或明显的机器人指令格式）
 - 每个词条长度建议 2-8 个字符（不强制），尽量短小
 - 请尽量提取所有可能的黑话，最多 30 个
 - 可以从不同来源中提取，但不要从表情包/图片内容中提取
@@ -809,6 +814,26 @@ def build_chat_info(buffer: list[dict], limit: int = 10) -> str:
     return "\n".join(lines)
 
 
+def _self_name_set(cfg) -> set[str]:
+    """机器人自身名字全集（黑话学习过滤用，单一真相）。
+
+    构成：生效 bot_name + 人格库里各人格名（含 bot_name 覆盖值——群绑人格后
+    群友可能用任一人格名称呼）+ aliases。QQ 昵称与人格名不同时由用户加入
+    aliases（提及判定同源受益），不做自动发现（owner 2026-09-11 定）。
+
+    生产实报背景：学习模型不认识 bot 自身名（提示词没人告诉它），把"小千"
+    当圈内黑话学了并幻觉出"360公司AI助手"的出身——机器过滤是提示词之外
+    的硬闸（坑：flash 模型对软指令的遵守率不可依赖，同晚叙述性失范实证）。"""
+    names = {str(cfg.get("bot_name") or "").strip()}
+    for p in cfg.get("personas") or []:
+        if isinstance(p, dict):
+            names.add(str(p.get("bot_name") or "").strip())
+            names.add(str(p.get("name") or "").strip())
+    names |= {str(a).strip() for a in (cfg.get("aliases") or [])}
+    names.discard("")
+    return names
+
+
 async def learn_from_chat(
     provider,
     cfg,
@@ -850,6 +875,7 @@ async def _learn_from_chat_inner(
     is_group: bool = True,
 ) -> str:
     bot_name = str(cfg.get("bot_name") or "麦麦")
+    self_names = _self_name_set(cfg)
     key = share_key(cfg, "expression_groups", platform, chat_id)
     jkey = share_key(cfg, "jargon_groups", platform, chat_id)
     _, learn_expr = learning_flags(
@@ -897,7 +923,17 @@ async def _learn_from_chat_inner(
     try:
         if learn_jargon:
             raw = await _llm(
-                provider, LEARN_JARGON_PROMPT.format(chat_str=chat_str), model=model
+                provider,
+                LEARN_JARGON_PROMPT.format(
+                    chat_str=chat_str,
+                    bot_name=bot_name,
+                    alias_note=(
+                        f"（及别名 {'、'.join(self_names - {bot_name})}）"
+                        if self_names - {bot_name}
+                        else ""
+                    ),
+                ),
+                model=model,
             )
             items = [x for x in _repair_json_array(raw) if isinstance(x, dict)]
             known = {j.get("content") for j in store.jargons(jkey)}
@@ -905,6 +941,10 @@ async def _learn_from_chat_inner(
             for item in items[:10]:
                 content = str(item.get("content") or "").strip()
                 if not content or content in known:
+                    continue
+                # 硬闸（提示词之外）：机器人自身名/别名与指令永不入库——
+                # 生产实证 flash 模型会把自己的名字当黑话提取并幻觉解释
+                if content.startswith("/") or content in self_names:
                     continue
                 infer_raw = await _llm(
                     provider,

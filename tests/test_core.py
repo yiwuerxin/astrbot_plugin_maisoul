@@ -3036,6 +3036,31 @@ def test_reply_intent_repair():
     c = asyncio.run(personas.effective_bot_name(ctx2, cfg2, "555", "u"))
     check("人格名: 缓存过期后读到新人格名", c == "温柔")
 
+    # --- 学习闸门（2026-09-11 二刷）：自身名/别名/指令不入库 ---
+    from astrbot_plugin_maisoul.core.learning import (
+        LEARN_JARGON_PROMPT as _LJP,
+        _self_name_set,
+    )
+
+    _cfgn = {
+        "bot_name": "小千",
+        "aliases": ["好人", "千咲"],
+        "personas": [{"name": "麦麦", "bot_name": "麦麦", "personality": "p"}],
+    }
+    _ns = _self_name_set(_cfgn)
+    check(
+        "学习闸门: 名字全集含主名/别名/人格名",
+        {"小千", "好人", "千咲", "麦麦"} <= _ns,
+    )
+    check(
+        "学习闸门: 空别名与空人格库不炸",
+        _self_name_set({"bot_name": "麦麦"}) == {"麦麦"},
+    )
+    check(
+        "学习闸门: 提取提示词含 SELF 排除与名字声明",
+        "排除 [SELF] 发言" in _LJP and "永远不要提取" in _LJP,
+    )
+
     # --- 修复③ 系统提示词 @名释义行 ---
     tpl = planner.PLANNER_SYSTEM_TEMPLATE
     check(
