@@ -2679,6 +2679,86 @@ def test_phase3_mechanisms():
         )
         == "你好",
     )
+    # At 文本化（对齐 MaiBot process_at_component）：@bot → @bot_name（配置
+    # 昵称，不看适配器抓到的名字——QQ 名可与 bot_name 不同）；@他人 →
+    # @适配器昵称（取不到按 QQ 号）；@全体 → @全体成员
+    check(
+        "At 文本化: @bot 用配置昵称（QQ 名与 bot_name 不同也按 bot_name）",
+        sanitize.full_plain_text(
+            [_NS(qq="10000", name="小小麦"), _NS(text=" 你胖了")],
+            "",
+            self_id="10000",
+            bot_name="麦麦",
+        )
+        == "@麦麦 你胖了",
+    )
+    check(
+        "At 文本化: @他人用适配器昵称",
+        sanitize.full_plain_text(
+            [_NS(qq="123", name="小明"), _NS(text="在吗")],
+            "",
+            self_id="10000",
+            bot_name="麦麦",
+        )
+        == "@小明 在吗",
+    )
+    check(
+        "At 文本化: 昵称抓取失败回落 QQ 号",
+        sanitize.full_plain_text(
+            [_NS(qq="123", name=""), _NS(text="在吗")],
+            "",
+            self_id="10000",
+            bot_name="麦麦",
+        )
+        == "@123 在吗",
+    )
+    check(
+        "At 文本化: @全体成员（name 缺省也归一文案）",
+        sanitize.full_plain_text(
+            [_NS(qq="all", name=""), _NS(text="开会")],
+            "",
+            self_id="10000",
+            bot_name="麦麦",
+        )
+        == "@全体成员 开会",
+    )
+    check(
+        "At 文本化: 纯 @bot 消息也有文本（不再落 [图片/表情] 占位）",
+        sanitize.full_plain_text(
+            [_NS(qq="10000", name="小小麦")],
+            "",
+            self_id="10000",
+            bot_name="麦麦",
+        )
+        == "@麦麦",
+    )
+    check(
+        "At 文本化: At 居中按链上原位插入（与相邻文本空白分隔）",
+        sanitize.full_plain_text(
+            [_NS(text="喂"), _NS(qq="10000"), _NS(text="看你")],
+            "",
+            self_id="10000",
+            bot_name="麦麦",
+        )
+        == "喂 @麦麦 看你",
+    )
+    check(
+        "At 文本化: self_id 传入但 bot_name 空，@bot 回落 QQ 号",
+        sanitize.full_plain_text(
+            [_NS(qq="10000"), _NS(text=" hi")],
+            "",
+            self_id="10000",
+            bot_name="",
+        )
+        == "@10000 hi",
+    )
+    check(
+        "At 文本化: 不传 self_id 保持旧行为（At 无文本贡献）",
+        sanitize.full_plain_text(
+            [_NS(qq="10000", name="小小麦"), _NS(text=" 你胖了")], "你胖了"
+        )
+        == "你胖了",
+    )
 
     # P-E 频率窗口反馈
     class _St:

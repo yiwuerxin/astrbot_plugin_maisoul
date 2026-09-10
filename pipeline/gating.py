@@ -32,8 +32,15 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     # 全接收（坑 61）：waking_check 命中唤醒前缀时会原地剥掉前缀改写
     # message_str（"麦麦你胖了"→"你胖了"），门控/观察页/planner 上下文全都
     # 丢失说明对象——从消息链拼全量原文，不读 wake_prefix 配置（各部署
-    # 唤醒词任意多个，同步配置必漏）；链上无文本回落 message_str
-    raw_text = sanitize.full_plain_text(event.get_messages(), event.message_str)
+    # 唤醒词任意多个，同步配置必漏）；链上无文本回落 message_str。
+    # 同时 At 文本化（对齐 MaiBot process_at_component）：适配器会把第一个
+    # @bot 从 message_str 剔除，不文本化则 planner/replyer 全程看不到点名。
+    raw_text = sanitize.full_plain_text(
+        event.get_messages(),
+        event.message_str,
+        self_id=str(event.get_self_id() or ""),
+        bot_name=str(P.config["bot_name"]),
+    )
     # P-F 反注入清洗：引用前缀/合并转发占位不冒充本人发言；提及判定前
     # 剥掉指向其他 AI 的开头 @呼名（At 组件的 at_bot 强判定不受影响）
     text = sanitize.sanitize_text(raw_text)
