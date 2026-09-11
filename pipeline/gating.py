@@ -10,7 +10,7 @@ import asyncio
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..core import mention, sanitize, trigger
+from ..core import mention, personas, sanitize, trigger
 from ..core.states import session_key
 from .events_util import (
     _has_at_all,
@@ -35,11 +35,25 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     # 唤醒词任意多个，同步配置必漏）；链上无文本回落 message_str。
     # 同时 At 文本化（对齐 MaiBot process_at_component）：适配器会把第一个
     # @bot 从 message_str 剔除，不文本化则 planner/replyer 全程看不到点名。
+    # @bot 渲染用「生效人格名」（2026-09-11 缝隙修复）：群绑定人格名与主
+    # 配置 bot_name 分叉时，按主配置名渲染会让身份提示词对不上号。仅链上
+    # 确有 @bot 才解析（TTL 缓存在 personas.effective_bot_name 内摊成本）。
+    self_id = str(event.get_self_id() or "")
+    at_bot_name = str(P.config["bot_name"])
+    if sanitize.has_at_to_self(event.get_messages(), self_id):
+        try:
+            at_bot_name = await personas.effective_bot_name(
+                P.context, P.config, session_key(event), event.unified_msg_origin
+            )
+        except Exception:
+            logger.debug(
+                "maisoul: 生效人格名获取失败，At 文本化用主配置名", exc_info=True
+            )
     raw_text = sanitize.full_plain_text(
         event.get_messages(),
         event.message_str,
-        self_id=str(event.get_self_id() or ""),
-        bot_name=str(P.config["bot_name"]),
+        self_id=self_id,
+        bot_name=at_bot_name,
     )
     # P-F 反注入清洗：引用前缀/合并转发占位不冒充本人发言；提及判定前
     # 剥掉指向其他 AI 的开头 @呼名（At 组件的 at_bot 强判定不受影响）

@@ -26,6 +26,7 @@ import asyncio
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -111,25 +112,51 @@ class MonitorStore:
         self.engine = create_engine(
             f"sqlite:///{self.path}", connect_args={"check_same_thread": False}
         )
-        SQLModel.metadata.create_all(self.engine)
+        # 只建本插件的表：共享 metadata 里还挂着 AstrBot 核心模型
+        # （2026-09-11 生产库实锤：data_monitor.db 里混进了 18 张核心空表），
+        # 全量 create_all 既污染库文件，核心模型 schema 变化时还可能连累
+        # 插件建表失败
+        SQLModel.metadata.create_all(
+            self.engine, tables=[MaisakaMonitorEventRecord.__table__]
+        )
         self._session_factory = sessionmaker(
             bind=self.engine, class_=Session, expire_on_commit=False
         )
         self._cleanup_lock = threading.Lock()
         self._records_since_cleanup = 0
         self._last_cleanup_at = 0.0
+        # 单线程落库执行器：既保事件顺序，也让 close 可 join 在途写
+        self._io_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="maisoul-mon"
+        )
         self._closed = False
         self._import_legacy_json()
 
     def close(self) -> None:
-        """释放连接池（插件卸载 terminate 时调用；幂等——热重载会重建）。"""
+        """释放连接池（插件卸载 terminate 时调用；幂等——热重载会重建）。
+
+        先 join 落库执行器再 dispose：writer 被 cancel 时在途的
+        store.record 线程无法中断（线程不可取消），直接关连接池会让
+        该线程在已释放的连接上写库（Sourcery #32：stop_writer 超时
+        取消路径与 close 的竞态）——shutdown(wait=True) 保证在途写
+        真正结束后才关池。"""
         if self._closed:
             return
         self._closed = True
         try:
+            self._io_executor.shutdown(wait=True)
+        except Exception:
+            logger.debug("maisoul: 监控落库执行器关闭失败", exc_info=True)
+        try:
             self.engine.dispose()
         except Exception:
             logger.debug("maisoul: 监控库连接池释放失败", exc_info=True)
+
+    @property
+    def io_executor(self):
+        """专用落库线程（max_workers=1，顺序写）；Monitor._flush_batch 经
+        run_in_executor 用它，close 才能可靠 join 在途写。"""
+        return self._io_executor
 
     def _import_legacy_json(self) -> None:
         """一次性迁移：v6.8 早期版本的 JSON 账本导入 SQL（有表数据则跳过）。"""
@@ -333,6 +360,9 @@ class MonitorBus:
                 except Exception:
                     pass  # 降级：丢旧重放也失败（订阅刚被移除）则放弃本条
             except Exception:
+                # 异常队列（如已关闭）：移出订阅集防每条 publish 都重演——
+                # 正常 unsubscribe 走不到这,留痕供 WebUI 断连排查
+                logger.debug("maisoul: 观察订阅者异常,已移出广播集", exc_info=True)
                 self._subscribers.discard(q)
 
 
@@ -390,7 +420,10 @@ class Monitor:
             try:
                 broadcast_data = d
                 if ev not in NON_PERSISTED_EVENTS:
-                    broadcast_data = await asyncio.to_thread(self.store.record, ev, d)
+                    # 专用单线程执行器（非默认线程池）：close 可 join 在途写
+                    broadcast_data = await asyncio.get_running_loop().run_in_executor(
+                        self.store.io_executor, self.store.record, ev, d
+                    )
                 self.bus.publish(ev, broadcast_data)
             except asyncio.CancelledError:
                 raise
@@ -420,17 +453,32 @@ class Monitor:
         """优雅冲刷并停止（terminate 用）。
 
         哨兵让 writer 处理完队列再退出（Sourcery：直接 cancel 会把正在
-        to_thread 落库的当前批一起丢掉）；超时才 cancel，残余同步落库。"""
+        to_thread 落库的当前批一起丢掉）；超时才 cancel，残余同步落库。
+        terminate 先 cancel_and_wait_all 再到这里时 writer 已被注册表
+        取消（M-P1 修复，2026-09-11 审查实锤：原 wait_for 对已取消任务
+        必把 CancelledError 抛回 terminate——close() 永不执行、残余排水
+        被跳过、卸载向框架抛异常）。wait() 只观察不传染，已取消/异常
+        退出都直接进残余排水，保证 close() 必达。在途落库线程无法取消，
+        由 store.close 的 executor.shutdown(wait=True) 兜底 join
+        （Sourcery #32：cancel 后 close 不再与在途写竞态）。"""
         writer, q = self._writer, self._queue
         self._writer, self._queue = None, None
         if writer is None:
             return
         try:
             q.put_nowait(self._SENTINEL)
-            await asyncio.wait_for(writer, timeout=timeout)
-        except (asyncio.TimeoutError, asyncio.QueueFull):
+        except asyncio.QueueFull:
+            pass  # 队列满：哨兵进不去，走下方取消路径
+        await asyncio.wait([writer], timeout=timeout)
+        if not writer.done():
             writer.cancel()
             await asyncio.wait([writer], timeout=1.0)
+        elif not writer.cancelled() and writer.exception() is not None:
+            _exc = writer.exception()
+            logger.debug(
+                "maisoul: 监控 writer 异常退出（残余事件将同步落库）",
+                exc_info=(type(_exc), _exc, _exc.__traceback__),
+            )
         if q is not None:
             while not q.empty():
                 item = q.get_nowait()

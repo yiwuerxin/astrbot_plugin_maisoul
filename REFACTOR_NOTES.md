@@ -1,3 +1,61 @@
+# REFACTOR_NOTES — v6.26.1（卸载生命周期 + 观察库治理 + 收口批次，2026-09-11 全库审查修复）
+
+零数据迁移、零配置迁移、零行为变化（除下述缺陷本身）。升级注意事项：无。
+
+- **stop_writer 卸载必挂修复**：terminate 先 `cancel_and_wait_all`（writer 在注册表内，
+  先被取消）再 `stop_writer`——原 `asyncio.wait_for(writer)` 对已取消任务必把
+  CancelledError 抛回 terminate：观察库连接池不关闭（Windows 热重载累积句柄）、
+  残余观察事件全丢、terminate 向框架抛异常。改 `asyncio.wait`（观察不传染），
+  已取消/超时/异常退出统一进残余同步排水。回归用例先红后绿实证。
+- **观察库建表收窄**：`SQLModel.metadata.create_all` 全量建表把 18 张 AstrBot 核心
+  空表建进了生产 data_monitor.db（拉库实锤）；收窄为 `tables=[MaisakaMonitorEventRecord.__table__]`。
+  已存在的空表无害，不迁移不清理。
+- **单一真相清偿**：ceil(1/f²) 必要性阈值公式下沉 `constants.necessity_threshold`
+  （trigger/scoring 原各一份副本）；删零引用死常量 TRIGGER_SCORE。
+- **core 层深 import 收口**：planner 的 FunctionTool/ToolSet、prompt 的 ImageURLPart
+  改经 bridge 适配器（`planner_tool_classes`/`make_image_url_parts`），core 目录下
+  astrbot.core 引用仅剩 bridge 收口文件本体。
+- **静默降级补留痕**：表达/黑话学习终败 warning+exc_info、延迟工具/表情包链路/
+  订阅者移除 debug、工具桥告警带堆栈、WebUI 四处 JSON 解析下沉 `_json_body`
+  单一实现、`_BOT_NAME_CACHE` 补上界淘汰（4096，超限先清过期）。
+- **前置批次（同分支早前提交）**：叙述性回复意图补问、At 用生效人格名、转录
+  @名释义（见上方 v6.25.0 挂账批次）、补问轮死信修复、黑话学习闸门（自身名/
+  别名/指令永不入库）与黑话参考块防泄漏。
+
+## 验证
+
+- `python3 tests/test_core.py`：499 通过 0 失败（新增 3 项回归，其中 2 项先红后绿
+  实证：旧实现分别抛 CancelledError / 把探针表建进库）。
+- black 26.5.1 干净；`grep create_task` 注册表外零处；`grep time.sleep` 零处；
+  core 层 astrbot.core 引用仅 bridge 本体。
+
+# REFACTOR_NOTES — 2026-09-11 生产实报修复批次（挂 v6.25.0，未发版）
+
+部署 v6.24.1+v6.25.0 合并树后用户 QQ 实测 @bot 三次仅得一次回复，取证定位三个缺陷
+（监控库事件序列分析，证据见推理过程页/日志）。零数据迁移、零配置迁移。
+
+- **叙述性回复意图补问**（影响最大）：两轮模型分析明确写"让我用麦麦的身份回复
+  某群友"却零工具调用，planner 把空工具列表当有意沉默收轮。新增
+  `planner.narrated_reply_intent`（先剥否定式再高精度匹配）+ 每循环至多一次
+  `<system-reminder>` 补问轮（`REPAIR_NO_TOOL_CALL`）；重问后仍空动作按原逻辑收轮。
+  误判代价=多一轮 LLM 调用，漏判代价=被点名后沉默，两害取轻。
+- **At 文本化 @bot 用生效人格名**：群绑定人格名与主配置 bot_name 分叉时，@bot 按
+  主配置名渲染而身份提示词是人格名，模型对不上号→被点名却沉默。门控在链上确有
+  @bot（`sanitize.has_at_to_self` 廉价扫描）时取 `personas.effective_bot_name`
+  （60s TTL 缓存摊平 conversation_manager 查询成本，人格切换最迟 60s 反映进 @ 文本）。
+- **转录 @名释义进 planner 系统提示词**：群友与 bot 撞名时纯文本无法区分 @ 谁
+  （QQ 客户端靠高亮锚点，转录丢了该信息），加一行"@ 后是你的名字=点名你本人；
+  @ 其他名字=叫那位群友"降低误应答/漏应答。
+
+## 验证
+
+- 新增 `test_reply_intent_repair` 15 项：意图正反例（含生产实报原文）、@bot 开关、
+  人格名解析/TTL 缓存行为（切换人格 TTL 内不生效、过期后生效）、提示词行。先红
+  后绿实证：对合并基线 b48a61a 跑新测试 AttributeError。
+- 全量 486 通过 0 失败（pytest/自执行双入口）；black 26.5.1 干净；pyflakes 干净。
+- 补问轮接线（`_planner_cycle` 空动作分支）无离线集成测试（需完整 P 装配），
+  依赖生产验证：@bot 后观察日志"注入补问轮"与 reply 是否发出。
+
 # REFACTOR_NOTES — v6.25.0（§6.6 情绪-关系耦合 + N9 补齐）
 
 MaiBot §6.6「情绪-关系耦合」移植为与心弦插件（astrbot_plugin_xinxian v1.31.0+）的

@@ -175,6 +175,12 @@ async def _planner_cycle(
     pl.replyer_reasoning = ""
     end_reason = ""
     interrupted = False
+    # 叙述性回复意图补问只允许一次（防模型反复叙述不调用造成循环放大）
+    repair_used = False
+    # 补问已注入 contexts 但尚未被 LLM 消费——轮首"无新消息即收轮"检查
+    # 必须放行补问轮（生产实报 2026-09-11 二刷：补问注入后 continue 重进
+    # 轮首，安静群无新消息直接 break，补问 user 轮死信、零 LLM 调用零效果）
+    repair_pending = False
 
     system_prompt = ""  # no_provider 提前 finalize 时未构建（Sourcery：未定义读取）
 
@@ -296,9 +302,13 @@ async def _planner_cycle(
                 and round_index > 0
                 and not tool_feedback
                 and not tail_is_tool
+                and not repair_pending
             ):
                 end_reason = "no_new_message"
                 break  # 无新消息且无待回填的工具结果 → 本轮结束
+            if repair_pending:
+                # 补问轮放行即消费：本轮 LLM 调用携带已注入的补问 user 轮
+                repair_pending = False
             if pending:
                 _monitor_stage(
                     P,
@@ -509,6 +519,23 @@ async def _planner_cycle(
                 if round_model:
                     model_by_idx[len(contexts) - 1] = round_model  # 推理过程页素材
             if not names:
+                # 叙述性回复意图补问（生产实报 2026-09-11）：模型分析写明
+                # "决定/让我回复"却没发工具调用——补一轮 <system-reminder>
+                # 纠正，每循环至多一次；重问后仍空动作则按原逻辑收轮。
+                if (
+                    not repair_used
+                    and round_index < planner.MAX_INTERNAL_ROUNDS - 1
+                    and planner.narrated_reply_intent(analysis)
+                ):
+                    repair_used = True
+                    repair_pending = True
+                    contexts.append(
+                        {"role": "user", "content": planner.REPAIR_NO_TOOL_CALL}
+                    )
+                    logger.info(
+                        f"maisoul[{gid}] planner: 分析含回复意图但未发工具调用，注入补问轮"
+                    )
+                    continue
                 if is_group:
                     pl.record_idle_cycle(eff_cfg)
                 logger.info(
@@ -666,6 +693,11 @@ async def _planner_cycle(
                             P.context, ev, deferred_item["tool"], args
                         )
                     except Exception as e:
+                        # 文本回执给模型继续对话；堆栈留日志供排障
+                        logger.debug(
+                            f"maisoul: 延迟工具执行失败 {deferred_item['tool']}",
+                            exc_info=True,
+                        )
                         result = f"执行失败 {e}"
                     tool_records.append(
                         {
@@ -1036,6 +1068,7 @@ async def _planner_send_emoji(P, deps) -> str:
         _emit_sent(P, deps.gid, f"[表情包] {query}", "", "emoji", deps.event)
         return f"已发送表情包（检索词：{query}｜{how} #{pick}）"
     except Exception as e:
+        logger.debug("maisoul: 表情包链路终败（回退文本回执）", exc_info=True)
         return f"表情包发送失败: {e}"
 
 

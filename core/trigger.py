@@ -21,6 +21,7 @@ from math import ceil
 from astrbot.api import logger
 
 from . import freqfeedback, scoring
+from .constants import necessity_threshold
 from .states import GroupState
 
 TRIGGER_SCORE = 80  # REPLY_NECESSITY_TRIGGER_SCORE
@@ -116,12 +117,14 @@ def effective_talk_value(
 
 
 def message_trigger_threshold(mode: str, frequency: float) -> int:
-    """复刻 runtime._get_message_trigger_threshold：frequency=ceil(1/f)，necessity=ceil(1/f²)。"""
+    """复刻 runtime._get_message_trigger_threshold：frequency=ceil(1/f)，necessity=ceil(1/f²)。
+
+    necessity 分支引 constants.necessity_threshold（单一真相）。"""
     f = min(1.0, max(0.0, frequency))
     if f <= 0:
         return 0
     if mode == "reply_necessity":
-        return max(1, ceil(1.0 / (f * f)))
+        return necessity_threshold(f)
     return max(1, ceil(1.0 / f))
 
 

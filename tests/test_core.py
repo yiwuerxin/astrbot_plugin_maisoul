@@ -1799,6 +1799,34 @@ def test_monitor():
     tmp = pathlib.Path(tempfile.mkdtemp()) / "m.db"
     store = M.MonitorStore(path=tmp)
     mon = M.Monitor(store)
+
+    # 表污染回归(2026-09-11 生产库实锤:data_monitor.db 里混进了 18 张
+    # AstrBot 核心空表)——共享 metadata 里注册的无关模型不得建进观察库。
+    # 先注册探针表,再建新库:旧实现全量 create_all 会把它也建出来。
+    from sqlmodel import SQLModel as _SM
+    from sqlalchemy import Column, Integer, Table as _SATable
+
+    _SATable(
+        "probe_should_not_exist",
+        _SM.metadata,
+        Column("id", Integer, primary_key=True),
+    )
+    _probe_db = pathlib.Path(tempfile.mkdtemp()) / "probe.db"
+    M.MonitorStore(path=_probe_db)  # 建表发生在构造时
+    import sqlite3 as _sq
+
+    _conn = _sq.connect(str(_probe_db))
+    _tables = {
+        r[0] for r in _conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    _conn.close()
+    _SM.metadata.remove(_SM.metadata.tables["probe_should_not_exist"])
+    check(
+        "建表收窄: 共享 metadata 的无关表不进观察库",
+        "maisaka_monitor_events" in _tables and "probe_should_not_exist" not in _tables,
+        f"tables={sorted(_tables)}",
+    )
+
     check(
         "常量: 保留策略对齐 MaiBot event_store",
         (
@@ -2168,7 +2196,7 @@ def test_learning():
     blk = learning.jargon_reference_block(store, "global", ["这波太yyds了", "哈哈"])
     check(
         "黑话块: 命中注入",
-        blk.startswith("以下黑话来自当前上下文") and "1. yyds：永远的神" in blk,
+        blk.startswith("以下是聊天中可能出现的黑话") and "1. yyds：永远的神" in blk,
         blk,
     )
     check(
@@ -2458,12 +2486,12 @@ def test_learning():
         "原因",
         "",
         expression_habits='【表达习惯参考，请视情况自然的使用】\n- 当"X"时，可以用"Y"来表达。',
-        jargon_reference="以下黑话来自当前上下文……\n1. yyds：永远的神",
+        jargon_reference="以下是聊天中可能出现的黑话……\n1. yyds：永远的神",
         keyword_reaction="【关键词反应】\n最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n- 热情打招呼\n",
     )
     idx_rec = fm.find("【最近群聊记录】")
     idx_expr = fm.find("【表达习惯参考")
-    idx_jar = fm.find("以下黑话来自")
+    idx_jar = fm.find("以下是聊天中可能出现的黑话")
     idx_ref = fm.find("【回复信息参考】")
     idx_kwr = fm.find("【关键词反应】")
     idx_end = fm.find(prompt.REPLY_INSTRUCTION)
@@ -2909,6 +2937,166 @@ def test_phase3_mechanisms():
     )
 
 
+def test_reply_intent_repair():
+    print("[2026-09-11 修复批次：叙述性回复意图补问/生效人格名 At/@名释义]")
+    import asyncio
+    from types import SimpleNamespace as _NS
+
+    from astrbot_plugin_maisoul.core import planner, personas, sanitize
+
+    # --- 修复① narrated_reply_intent：先剥否定式再匹配 ---
+    check(
+        "意图: 生产实报文本命中（决定+让我用身份回复）",
+        planner.narrated_reply_intent(
+            "**决策：**\n某群友在认真等麦麦回应TA的问题，我应该让麦麦回复这个问题。"
+            "让我用麦麦的身份回复。"
+        ),
+    )
+    check(
+        "意图: 需要回应 命中",
+        planner.narrated_reply_intent("这个问题需要回应她一下"),
+    )
+    check(
+        "意图: 否定式不命中（不需要回复）",
+        not planner.narrated_reply_intent("这是系统消息，不需要回复"),
+    )
+    check(
+        "意图: 否定式不命中（决定不回复）",
+        not planner.narrated_reply_intent("权衡后我决定不回复她"),
+    )
+    check(
+        "意图: 陈述已回复不命中",
+        not planner.narrated_reply_intent("麦麦已在上一轮回复过该问题"),
+    )
+    check("意图: 空文本不命中", not planner.narrated_reply_intent(""))
+    check(
+        "意图: 补问文案为 system-reminder 形态",
+        "<system-reminder>" in planner.REPAIR_NO_TOOL_CALL
+        and "reply" in planner.REPAIR_NO_TOOL_CALL,
+    )
+    # 死信回归（生产实报 2026-09-11 二刷）：补问注入后 continue 重进轮首，
+    # 安静群无新消息直接 break 收轮——补问 user 轮零 LLM 调用零效果。
+    # 与 N9 同款源码文本比对（planner_host 连带 ecobridge 导入，离线不可 import）
+    from pathlib import Path as _Path
+
+    _ph = (
+        _Path(__file__).resolve().parent.parent / "pipeline" / "planner_host.py"
+    ).read_text(encoding="utf-8")
+    check(
+        "意图: 补问轮豁免无新消息收轮（repair_pending 在 break 条件内）",
+        "and not repair_pending" in _ph and "repair_pending = True" in _ph,
+    )
+
+    # --- 修复② has_at_to_self：@bot 廉价开关 ---
+    check(
+        "At开关: @bot 命中",
+        sanitize.has_at_to_self([_NS(qq="10000"), _NS(text="嗨")], "10000"),
+    )
+    check(
+        "At开关: @他人不命中",
+        not sanitize.has_at_to_self([_NS(qq="123")], "10000"),
+    )
+    check(
+        "At开关: self_id 空不命中",
+        not sanitize.has_at_to_self([_NS(qq="10000")], ""),
+    )
+
+    # --- 修复② effective_bot_name：群绑定人格名 + TTL 缓存行为 ---
+    class _NoConv:
+        conversation_manager = None
+
+    cfg = {
+        "bot_name": "麦麦",
+        "personas": [{"name": "好人", "bot_name": "好人", "personality": "p"}],
+        "group_persona": [{"chat": "777", "name": "好人"}],
+        "default_persona": "",
+        "follow_persona_switch": False,
+    }
+    personas._BOT_NAME_CACHE.clear()
+    check(
+        "人格名: 群绑定人格名生效",
+        asyncio.run(personas.effective_bot_name(_NoConv(), cfg, "777", "u")) == "好人",
+    )
+    check(
+        "人格名: 无绑定回退主配置",
+        asyncio.run(personas.effective_bot_name(_NoConv(), cfg, "888", "u")) == "麦麦",
+    )
+
+    cfg2 = {
+        "bot_name": "麦麦",
+        "personas": [
+            {"name": "傲娇", "bot_name": "傲娇", "personality": "p"},
+            {"name": "温柔", "bot_name": "温柔", "personality": "p"},
+        ],
+        "group_persona": [],
+        "default_persona": "",
+        "follow_persona_switch": True,
+    }
+
+    class _SwitchConv:
+        def __init__(self):
+            self.persona_id = "傲娇"
+
+    class _SwitchMgr:
+        def __init__(self):
+            self.conv = _SwitchConv()
+
+        async def get_curr_conversation_id(self, umo):
+            return "c1"
+
+        async def get_conversation(self, umo, cid):
+            return self.conv
+
+    class _SwitchCtx:
+        def __init__(self):
+            self.conversation_manager = _SwitchMgr()
+
+    ctx2 = _SwitchCtx()
+    personas._BOT_NAME_CACHE.clear()
+    a = asyncio.run(personas.effective_bot_name(ctx2, cfg2, "555", "u"))
+    ctx2.conversation_manager.conv.persona_id = "温柔"  # 模拟切换人格
+    b = asyncio.run(personas.effective_bot_name(ctx2, cfg2, "555", "u"))
+    check(
+        "人格名: TTL 内切换不生效（缓存命中）",
+        a == "傲娇" and b == "傲娇",
+    )
+    personas._BOT_NAME_CACHE.clear()
+    c = asyncio.run(personas.effective_bot_name(ctx2, cfg2, "555", "u"))
+    check("人格名: 缓存过期后读到新人格名", c == "温柔")
+
+    # --- 学习闸门（2026-09-11 二刷）：自身名/别名/指令不入库 ---
+    from astrbot_plugin_maisoul.core.learning import (
+        LEARN_JARGON_PROMPT as _LJP,
+        _self_name_set,
+    )
+
+    _cfgn = {
+        "bot_name": "麦麦",
+        "aliases": ["小麦", "阿麦"],
+        "personas": [{"name": "麦兜", "bot_name": "麦兜", "personality": "p"}],
+    }
+    _ns = _self_name_set(_cfgn)
+    check(
+        "学习闸门: 名字全集含主名/别名/人格名",
+        {"麦麦", "小麦", "阿麦", "麦兜"} <= _ns,
+    )
+    check(
+        "学习闸门: 空别名与空人格库不炸",
+        _self_name_set({"bot_name": "麦麦"}) == {"麦麦"},
+    )
+    check(
+        "学习闸门: 提取提示词含 SELF 排除与名字声明",
+        "排除 [SELF] 发言" in _LJP and "永远不要提取" in _LJP,
+    )
+
+    # --- 修复③ 系统提示词 @名释义行 ---
+    tpl = planner.PLANNER_SYSTEM_TEMPLATE
+    check(
+        "提示词: @名释义行存在且指向 bot_name 本人",
+        "@名字" in tpl and "点名{bot_name}本人" in tpl,
+    )
+
+
 def test_emotion_favor_coupling():
     print("[§6.6 情绪-关系耦合 maisoul 侧（累积器/facade/N9）]")
     import asyncio
@@ -3339,6 +3527,42 @@ def test_taskregistry():
         _size_after == 0,
         f"size={_size_after}",
     )
+
+    # M-P1(2026-09-11 审查实锤):terminate 顺序是先 cancel_and_wait_all
+    # (writer 在注册表里,先被取消)再 stop_writer——旧实现的 wait_for 对
+    # 已取消任务必把 CancelledError 抛回 terminate,close() 永不执行、
+    # 残余排水被跳过、每次卸载/热重载都向框架抛异常。
+    async def _cancelled_writer_scenario():
+        s6 = _MS(pathlib.Path(tempfile.mkdtemp()) / "cx.db")
+        m6 = _M(s6)
+        reg6 = _TR()
+        m6.start_writer(reg6)
+        await reg6.cancel_and_wait_all(timeout=5.0)  # terminate 第一步
+        # writer 已死但队列仍在:后续事件进队等排水(确定性残余)
+        m6.emit_message_sent(
+            "g1", "麦麦", "r0", "i0", time.time(), "reply", platform="qq"
+        )
+        await m6.stop_writer()  # 旧实现:此处抛 CancelledError
+        return s6
+
+    _cx_err = None
+    try:
+        s6 = _aio2.run(_cancelled_writer_scenario())
+    except BaseException as e:  # noqa: BLE001
+        _cx_err = e
+    check(
+        "writer 取消: terminate 顺序下 stop_writer 不抛 CancelledError",
+        _cx_err is None,
+        f"raised={_cx_err!r}",
+    )
+    if _cx_err is None:
+        with s6._session_factory() as sess:
+            n6 = len(sess.query(_Rec).all())
+        check(
+            "writer 取消: 残余队列同步落库(close 必达前提)",
+            n6 == 1,
+            f"rows={n6}",
+        )
 
     # M12：StateManager 会话上限 + 闲置淘汰 + 活跃保护
     from astrbot_plugin_maisoul.core.states import StateManager as _SM
@@ -4361,6 +4585,7 @@ if __name__ == "__main__":
     test_mention()
     test_history_tool()
     test_phase3_mechanisms()
+    test_reply_intent_repair()
     test_emotion_favor_coupling()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     # check 失败必须非零退出，否则 CI 步骤假绿（Sourcery PR 审查指出）

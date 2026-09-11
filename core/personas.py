@@ -19,6 +19,8 @@ find_persona 对该名字（或"主配置"）返回主配置本身，因此群�
 
 from astrbot.api import logger
 
+import time
+
 PERSONA_FIELDS = (
     "bot_name",
     "personality",
@@ -128,6 +130,43 @@ async def resolve_active(context, cfg, gid: str, umo: str) -> tuple[dict, str]:
 
     # 4) 主配置兜底
     return dict(cfg), f"主配置·{str(cfg.get('bot_name') or '麦麦').strip()}"
+
+
+# At 文本化取「生效人格名」用的 TTL 缓存（键=会话 gid）。
+# 逐消息 resolve_active 会每条消息打一次 conversation_manager 查询
+# （评审报告 §6 遗留热点），60s 缓存摊平成本；人格切换最迟 60s 反映进 @ 文本。
+_BOT_NAME_CACHE: dict[str, tuple[float, str]] = {}
+_BOT_NAME_TTL = 60.0
+_BOT_NAME_MAX = 4096  # M12：会话数上界——超限先清过期,仍超则丢最旧,防长部署无界增长
+
+
+def _bot_name_cache_put(gid: str, now: float, name: str) -> None:
+    if len(_BOT_NAME_CACHE) >= _BOT_NAME_MAX:
+        for k in [k for k, v in _BOT_NAME_CACHE.items() if now - v[0] >= _BOT_NAME_TTL]:
+            del _BOT_NAME_CACHE[k]
+        while len(_BOT_NAME_CACHE) >= _BOT_NAME_MAX:  # 全不过期才到这：丢最旧
+            oldest = min(_BOT_NAME_CACHE, key=lambda k: _BOT_NAME_CACHE[k][0])
+            del _BOT_NAME_CACHE[oldest]
+    _BOT_NAME_CACHE[gid] = (now, name)
+
+
+async def effective_bot_name(context, cfg, gid: str, umo: str) -> str:
+    """当前会话生效的 bot 名（At 文本化 @bot 用，2026-09-11 缝隙修复：
+    群绑定人格名与主配置 bot_name 分叉时，@bot 若按主配置名渲染而身份
+    提示词是人格名，模型对不上号 → 被点名却沉默）。任何失败回退主配置名。"""
+    fallback = str(cfg.get("bot_name") or "麦麦").strip() or "麦麦"
+    now = time.time()
+    hit = _BOT_NAME_CACHE.get(gid)
+    if hit and now - hit[0] < _BOT_NAME_TTL:
+        return hit[1]
+    name = fallback
+    try:
+        eff, _pname = await resolve_active(context, cfg, gid, umo)
+        name = str(eff.get("bot_name") or "").strip() or fallback
+    except Exception:
+        logger.debug("maisoul: 生效人格名解析失败，回退主配置名", exc_info=True)
+    _bot_name_cache_put(gid, now, name)
+    return name
 
 
 def name_of(persona: dict) -> str:
