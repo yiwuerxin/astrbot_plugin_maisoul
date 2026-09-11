@@ -68,7 +68,14 @@ jobs:
           case "$TAG" in *-*) PRE_ARGS="--prerelease" ;; esac
           cd astrbot_plugin_maisoul
           PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
-          NOTES=$(git log --oneline ${PREV:+$PREV..}"refs/tags/${TAG}" | head -80)
+          # Release Notes = 打 tag 时写好的 curated 摘要（annotated tag 正文），
+          # 不是提交流水账；有前序 tag 时附 GitHub 官方 Full Changelog 对比链接
+          NOTES=$(git for-each-ref "refs/tags/${TAG}" --format='%(contents)')
+          if [ -n "$PREV" ]; then
+            NOTES="${NOTES}
+
+**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
+          fi
           gh release create "$TAG" "../astrbot_plugin_maisoul-${TAG}.zip" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" --notes "$NOTES" $PRE_ARGS
