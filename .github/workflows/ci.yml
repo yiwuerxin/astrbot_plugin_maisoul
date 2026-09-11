@@ -51,3 +51,22 @@ jobs:
             exit 1
           fi
           echo "✅ 无部署细节泄露"
+
+      - name: 生产数据红线（私有名单经 secret 注入，公开仓库不可见）
+        # 名单值存仓库 secret REDLINE_PATTERN（gh secret set，内容=AGENTS.local.md
+        # 红线 grep 的完整模式）。为什么用 secret：仓库公开发布，CI 配置里写
+        # 字面人名=自己泄露；secret 对公众不可见但 CI 可用。fork PR 取不到
+        # secret——该步跳过（本仓库协作以同仓分支为主）。#32 曾把生产人格名/
+        # 用户昵称带进注释与测试夹具而 CI 放行，本步封堵该类漏网。
+        env:
+          REDLINE: ${{ secrets.REDLINE_PATTERN }}
+        run: |
+          if [ -z "$REDLINE" ]; then
+            echo "ℹ️ 未配置 REDLINE_PATTERN secret，本步跳过（名单检查退回本地 AGENTS.local.md 纪律）"
+            exit 0
+          fi
+          if git grep -nE "$REDLINE" -- .               | grep -vE '^\.github/workflows/ci\.yml:[0-9]+:'; then
+            echo "⛔ 命中生产数据红线（真实人格名/用户昵称/部署细节），禁止合并——夹具与注释一律用中性占位"
+            exit 1
+          fi
+          echo "✅ 生产数据红线通过"
