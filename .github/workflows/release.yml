@@ -45,6 +45,9 @@ jobs:
             v[0-9]*) ;;
             *) echo "⛔ 非法 tag：$TAG"; exit 1 ;;
           esac
+          case "$TAG" in
+            *[!A-Za-z0-9v.-]*) echo "⛔ tag 含非法字符：$TAG"; exit 1 ;;
+          esac
           if ! git -C astrbot_plugin_maisoul rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
             echo "⛔ tag 不存在：${TAG}"; exit 1
           fi
