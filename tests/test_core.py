@@ -2948,8 +2948,8 @@ def test_reply_intent_repair():
     check(
         "意图: 生产实报文本命中（决定+让我用身份回复）",
         planner.narrated_reply_intent(
-            "**决策：**\n黎璃在认真等小千回应她的问题，我应该让小千回复黎璃这个问题。"
-            "让我用小千的身份回复黎璃。"
+            "**决策：**\n某群友在认真等麦麦回应TA的问题，我应该让麦麦回复这个问题。"
+            "让我用麦麦的身份回复。"
         ),
     )
     check(
@@ -2966,7 +2966,7 @@ def test_reply_intent_repair():
     )
     check(
         "意图: 陈述已回复不命中",
-        not planner.narrated_reply_intent("小千已在上一轮回复过该问题"),
+        not planner.narrated_reply_intent("麦麦已在上一轮回复过该问题"),
     )
     check("意图: 空文本不命中", not planner.narrated_reply_intent(""))
     check(
@@ -3071,14 +3071,14 @@ def test_reply_intent_repair():
     )
 
     _cfgn = {
-        "bot_name": "小千",
-        "aliases": ["好人", "千咲"],
-        "personas": [{"name": "麦麦", "bot_name": "麦麦", "personality": "p"}],
+        "bot_name": "麦麦",
+        "aliases": ["小麦", "阿麦"],
+        "personas": [{"name": "麦兜", "bot_name": "麦兜", "personality": "p"}],
     }
     _ns = _self_name_set(_cfgn)
     check(
         "学习闸门: 名字全集含主名/别名/人格名",
-        {"小千", "好人", "千咲", "麦麦"} <= _ns,
+        {"麦麦", "小麦", "阿麦", "麦兜"} <= _ns,
     )
     check(
         "学习闸门: 空别名与空人格库不炸",
