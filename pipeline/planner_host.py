@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 from astrbot.api import logger
@@ -508,7 +509,11 @@ async def _planner_cycle(
                             "type": "function",
                             "function": {
                                 "name": c["name"],
-                                "arguments": c["arguments"],
+                                # OpenAI 协议要求 arguments 为 JSON 字符串——
+                                # dict 直传在严格网关（Go 解码）下 400 拒收
+                                "arguments": json.dumps(
+                                    c["arguments"], ensure_ascii=False
+                                ),
                             },
                         }
                         for c in planner_calls
