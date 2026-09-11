@@ -658,8 +658,8 @@ modern，future-retro 是 303 个 `[data-dashboard-style=future-retro]` 覆盖�
 
 ## 9. 打包与发布
 
-- **打生产 zip**：python zipfile 打包，排除 `__pycache__`、`data_learning.json`（学习库）、`data_monitor.db*`（观察账本，含 SQLite -wal/-shm 侧车）、`data_monitor.json.imported`、`*.log`、`AGENTS.local.md`、`.git/`——最稳妥的取文件方式是 `git ls-files`（天然只含干净源文件）；生产部署各自生成这两份；`data_char_frequency.json`（错字引擎依赖）必须包含。插件市场对发布包有 **16MB 上限**。
-- **纯净交付红线（每次提交与发版自查）**：被提交/打包的文件里不得出现任何本机部署细节——容器名、内网 IP/端口、容器内绝对路径、webchat 会话 ID、真实人设与 QQ 号；文档示例一律用 `<astrbot容器>`、`<端口>`、`<容器内插件路径>`、`<AstrBot数据目录>` 占位符，本机实际命令只记在 AGENTS.local.md「本机环境备注」。**新装纯净验收**：交付包内容 = `git ls-files` 全集（无运行时数据、无本地信息、中性默认值），安装后插件目录只新增该部署自己生成的运行时文件（学习库/观察账本等）。**本地实验目录、临时脚本、比对用私有产物不经 owner 确认不进共享历史**（对齐 MaiBot「实验目录不入共享历史」——MaiBot 源码 dump/部署前端 chunk 只留在本机，路径记 AGENTS.local.md）。
+- **打生产 zip**：python zipfile 打包，排除 `__pycache__`、`data_learning.json`（学习库）、`data_monitor.db*`（观察账本，含 SQLite -wal/-shm 侧车）、`data_monitor.json.imported`、`*.log`、`AGENTS.local.md`、`.git/`——正式发布走 tag 触发的 release 工作流：产物 = `git archive` 输出（`.gitattributes` 的 export-ignore 自动剔除 tests/、.github/、REFACTOR_NOTES.md 等开发资产；稳定版由人工打 tag 拍板，含 `-` 的 tag 自动标 prerelease）；生产部署各自生成这两份；`data_char_frequency.json`（错字引擎依赖）必须包含。插件市场对发布包有 **16MB 上限**。
+- **纯净交付红线（每次提交与发版自查）**：被提交/打包的文件里不得出现任何本机部署细节——容器名、内网 IP/端口、容器内绝对路径、webchat 会话 ID、真实人设与 QQ 号；文档示例一律用 `<astrbot容器>`、`<端口>`、`<容器内插件路径>`、`<AstrBot数据目录>` 占位符，本机实际命令只记在 AGENTS.local.md「本机环境备注」。**新装纯净验收**：交付包内容 = `git archive` 输出（= `git ls-files` 全集减 export-ignore 清单，开发资产不随包分发）（无运行时数据、无本地信息、中性默认值），安装后插件目录只新增该部署自己生成的运行时文件（学习库/观察账本等）。**本地实验目录、临时脚本、比对用私有产物不经 owner 确认不进共享历史**（对齐 MaiBot「实验目录不入共享历史」——MaiBot 源码 dump/部署前端 chunk 只留在本机，路径记 AGENTS.local.md）。
 - **分发默认值不含任何个人部署内容**：人格三件套默认 = MaiBot 官方模板原文 + 中性示例人设；实机环境细节（容器名/端口/网关）不进仓库。
 - **提交 PR 流程**（本仓库）：开分支 → 提交 → `gh pr create` → 页面审阅合并；Commit/PR 格式与版本联动规则见 §5 条目 9（Conventional Commits）。
 - **本地私有红线与环境备注**：写在 `AGENTS.local.md`（已列 .gitignore，永不入库）——含禁止提交的真实环境数据/隐私清单、同步前自查命令与发版自查清单。

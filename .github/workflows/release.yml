@@ -1,0 +1,58 @@
+name: release
+
+# 正式发布只由 tag 触发（稳定版由人工打 tag 拍板）；workflow_dispatch 为
+# 手动补发已有 tag 的入口。PR/普通 push 不产生任何发布物（只跑 ci.yml）。
+# 打包用 git archive：.gitattributes 的 export-ignore 自动剔除开发资产
+# （tests/、.github/、REFACTOR_NOTES.md），产物 = git archive 输出（§9 口径）。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的已有 tag（如 v6.26.3）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # 检出到子目录：与 ci.yml 测试 job 同布局（tests 以包名导入 core，
+      # 工作区根必须是插件目录的父目录）；fetch-depth 0 供发布说明取历史
+      - uses: actions/checkout@v4
+        with:
+          path: astrbot_plugin_maisoul
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        run: pip install -r astrbot_plugin_maisoul/requirements.txt pytest
+      - name: 测试门禁（不过不出包）
+        run: pytest astrbot_plugin_maisoul/tests/ -q
+      - name: 构建发布包
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          cd astrbot_plugin_maisoul
+          git archive --format=zip -o "../astrbot_plugin_maisoul-${TAG}.zip" "refs/tags/${TAG}"
+          cd ..
+          echo "===== 产物清单（应无 tests/.github/REFACTOR_NOTES） ====="
+          unzip -l "astrbot_plugin_maisoul-${TAG}.zip" | awk '{print $4}' | grep -E '^(tests/|\.github/|REFACTOR_NOTES)' && {
+            echo "⛔ 开发资产混入发布包"; exit 1; } || true
+          unzip -l "astrbot_plugin_maisoul-${TAG}.zip" | tail -3
+      - name: 发布 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          cd astrbot_plugin_maisoul
+          PREV=$(git describe --tags --abbrev=0 "refs/tags/${TAG}^" 2>/dev/null || true)
+          NOTES=$(git log --oneline ${PREV:+$PREV..}"refs/tags/${TAG}" | head -80 || git log --oneline -40)
+          cd ..
+          PRE_ARGS=""
+          case "$TAG" in *-*) PRE_ARGS="--prerelease" ;; esac
+          gh release create "$TAG" "astrbot_plugin_maisoul-${TAG}.zip" \
+            --title "$TAG" --notes "$NOTES" $PRE_ARGS
