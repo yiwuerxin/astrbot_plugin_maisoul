@@ -94,6 +94,13 @@ def full_plain_text(
     parts: list[str] = []
     at_last = False  # 上一产出是 At 文本（控制 At 与相邻文本的空白分隔）
     for seg in segments or []:
+        if hasattr(seg, "chain"):
+            # Reply 容器段：其 .text/.message_str 是**被引用者**的原文
+            # （适配器 get_reply=True 时携带完整引用内容），鸭子判定"有
+            # .text 即文本段"会把它拼进来冒充本人发言（用户实报：引用
+            # 消息被解析成发言文字）。有 chain 属性即 Reply——引用关系只
+            # 经 _quote_ids 进 <message quote="…"> 属性，内容不进正文
+            continue
         t = getattr(seg, "text", None)
         if isinstance(t, str) and t.strip():
             if at_last and not t[:1].isspace():
