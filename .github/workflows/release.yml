@@ -24,6 +24,8 @@ jobs:
       # 工作区根必须是插件目录的父目录）；fetch-depth 0 供发布说明取历史
       - uses: actions/checkout@v4
         with:
+          # dispatch 补发时检出到目标 tag：测试门禁与打包必须是同一份代码
+          ref: ${{ inputs.tag || github.ref }}
           path: astrbot_plugin_maisoul
           fetch-depth: 0
       - uses: actions/setup-python@v5
@@ -34,25 +36,36 @@ jobs:
       - name: 测试门禁（不过不出包）
         run: pytest astrbot_plugin_maisoul/tests/ -q
       - name: 构建发布包
+        env:
+          TAG_INPUT: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
+          # dispatch 输入只经环境变量进 shell（Sourcery：内插 shell 源=命令注入面）
+          TAG="${TAG_INPUT#refs/tags/}"
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "⛔ 非法 tag：$TAG"; exit 1 ;;
+          esac
+          if ! git -C astrbot_plugin_maisoul rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "⛔ tag 不存在：${TAG}"; exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
           cd astrbot_plugin_maisoul
           git archive --format=zip -o "../astrbot_plugin_maisoul-${TAG}.zip" "refs/tags/${TAG}"
           cd ..
           echo "===== 产物清单（应无 tests/.github/REFACTOR_NOTES） ====="
-          unzip -l "astrbot_plugin_maisoul-${TAG}.zip" | awk '{print $4}' | grep -E '^(tests/|\.github/|REFACTOR_NOTES)' && {
-            echo "⛔ 开发资产混入发布包"; exit 1; } || true
+          if unzip -l "astrbot_plugin_maisoul-${TAG}.zip" | awk '{print $4}' | grep -qE '^(tests/|\.github/|REFACTOR_NOTES)'; then
+            echo "⛔ 开发资产混入发布包"; exit 1
+          fi
           unzip -l "astrbot_plugin_maisoul-${TAG}.zip" | tail -3
       - name: 发布 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          cd astrbot_plugin_maisoul
-          PREV=$(git describe --tags --abbrev=0 "refs/tags/${TAG}^" 2>/dev/null || true)
-          NOTES=$(git log --oneline ${PREV:+$PREV..}"refs/tags/${TAG}" | head -80 || git log --oneline -40)
-          cd ..
           PRE_ARGS=""
           case "$TAG" in *-*) PRE_ARGS="--prerelease" ;; esac
-          gh release create "$TAG" "astrbot_plugin_maisoul-${TAG}.zip" \
+          cd astrbot_plugin_maisoul
+          PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+          NOTES=$(git log --oneline ${PREV:+$PREV..}"refs/tags/${TAG}" | head -80)
+          gh release create "$TAG" "../astrbot_plugin_maisoul-${TAG}.zip" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" --notes "$NOTES" $PRE_ARGS
