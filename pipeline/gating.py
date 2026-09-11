@@ -129,7 +129,9 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
             user_id=None if is_group else gid,
             platform=str(event.get_platform_name() or ""),
         )
-    _record(P, event, text, gid)
+    # 记录用全量原文：含引用渲染（[回复了X的消息: 原文]，对标 MaiBot
+    # processed_plain_text 进会话历史）；评分/提及用清洗后 text 不变
+    _record(P, event, raw_text, gid)
     logger.debug(f"maisoul[{gid}]: 记录完成 pending={st.pending_since_fire}")
 
     aliases = [str(a) for a in (P.config.get("aliases") or [])]

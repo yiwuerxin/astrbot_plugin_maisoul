@@ -98,7 +98,7 @@ async def maisoul_cmd_impl(P, event: AstrMessageEvent):
             str(P.config.get("reply_trigger_mode", "frequency")), f
         )
         yield event.plain_result(
-            f"maisoul v6.26.0 状态：{'运行中' if P.config['enable'] else '已停用'} | "
+            f"maisoul v6.26.2 状态：{'运行中' if P.config['enable'] else '已停用'} | "
             f"模式={P.config['mode']} | bot={P.config['bot_name']}\n"
             f"触发模式={P.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={f:.3f} 阈值={th}条消息 "
