@@ -1,3 +1,31 @@
+# REFACTOR_NOTES — v6.26.4（planner 工具轮回放协议修复，2026-09-12 生产实报）
+
+零数据迁移、零配置迁移、零行为变化（除下述缺陷本身）。升级注意事项：无。
+
+- **工具轮回放 arguments 字符串化**：`_planner_cycle` 回放 assistant(tool_calls) 时
+  function.arguments 以 dict 直传——OpenAI 协议要求 JSON 字符串；AstrBot openai
+  兼容源 `_ensure_message_to_dicts` 对 dict 消息原样透传，严格 OpenAI 兼容网关
+  （Go 解码）按协议拒收 400：json: cannot unmarshal object into Go struct field
+  Request.messages.N.tool_calls.0.function.arguments of type string。首轮干净
+  上下文可成功、第二轮起历史带 tool_calls 必炸，表象为 planner 循环异常与
+  "调用失败，尝试下一候选"对全候选刷屏。
+- 走 anthropic 等转换型源的部署不受影响（框架转换路径自然字符串化），故部分
+  环境长期未暴露。
+- **测试 seam 缺失挂账**：回放构造内联在 `_planner_cycle` 循环体内，现有测试
+  够不到该路径，本批次验证依赖网关复现回路与真机端到端；后续可拆纯函数补
+  回归用例。
+
+## 验证
+
+- 兼容网关复现回路：同一 messages 仅 arguments 形态不同——dict 直传 400（与
+  生产报错逐字一致），JSON 字符串 200 正常补全。
+- `python3 -m pytest tests/ -q`：26 通过 0 失败（离线桩口径）；
+  `python3 tests/test_core.py`：503 通过 0 失败。
+- 实测环境部署后：webchat 冒烟走完 fetch_chat_history → reply 多轮工具循环、
+  回复正常发出，群聊流量 planner 正常出 reply/wait 动作；部署后观察窗口零
+  400、零循环异常（修复前同环境每 20-60 秒必现）。
+- black 26.5.1 干净。
+
 # REFACTOR_NOTES — v6.26.1（卸载生命周期 + 观察库治理 + 收口批次，2026-09-11 全库审查修复）
 
 零数据迁移、零配置迁移、零行为变化（除下述缺陷本身）。升级注意事项：无。
