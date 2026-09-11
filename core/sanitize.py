@@ -95,11 +95,26 @@ def full_plain_text(
     at_last = False  # 上一产出是 At 文本（控制 At 与相邻文本的空白分隔）
     for seg in segments or []:
         if hasattr(seg, "chain"):
-            # Reply 容器段：其 .text/.message_str 是**被引用者**的原文
-            # （适配器 get_reply=True 时携带完整引用内容），鸭子判定"有
-            # .text 即文本段"会把它拼进来冒充本人发言（用户实报：引用
-            # 消息被解析成发言文字）。有 chain 属性即 Reply——引用关系只
-            # 经 _quote_ids 进 <message quote="…"> 属性，内容不进正文
+            # Reply 容器段：文本化对齐 MaiBot process_reply_component——
+            # "[回复了{被引用者}的消息: {原文}]"（原文取适配器 get_reply
+            # 携带的 .text/.message_str，缺失按 MaiBot 原文回落）。曾把
+            # .text 直接当本人发言拼入（坑 65）；评分/评审层由 sanitize_text
+            # 剥掉此前缀，引用内容不冒充本人发言（P-F 语义不变）
+            name = (
+                str(getattr(seg, "sender_nickname", "") or "").strip()
+                or str(getattr(seg, "sender_id", "") or "").strip()
+            )
+            content = str(
+                getattr(seg, "text", "") or getattr(seg, "message_str", "") or ""
+            ).strip()
+            if not content:
+                piece = "[回复了一条消息，但原消息已无法访问]"
+            else:
+                piece = f"[回复了{name}的消息: {content}]"
+            if parts and not parts[-1][-1:].isspace():
+                parts.append(" ")
+            parts.append(piece)
+            at_last = True  # 自造文本（同 At）：与后续正文保证空白分隔
             continue
         t = getattr(seg, "text", None)
         if isinstance(t, str) and t.strip():

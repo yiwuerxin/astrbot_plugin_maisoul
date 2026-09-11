@@ -2759,21 +2759,38 @@ def test_phase3_mechanisms():
         )
         == "你胖了",
     )
-    # Reply 容器段泄漏回归（用户实报：引用消息被解析成发言文字）——
-    # 适配器 get_reply=True 时 Reply 组件 .text/.chain 携带被引用原文，
-    # 必须整体跳过，引用关系只进 <message quote="…"> 属性
+    # 引用回复渲染（对齐 MaiBot process_reply_component 原文格式）——
+    # 适配器 get_reply=True 时 Reply 组件 .text/.chain 携带被引用原文；
+    # 渲染成"[回复了X的消息: 原文]"进正文，评分/评审层由 sanitize_text
+    # 剥前缀（引用不冒充本人发言，坑 65）
     check(
-        "引用: Reply 段的被引用原文不进全量文本（回落 fallback）",
-        sanitize.full_plain_text(
-            [_NS(text="被引用者说的话", chain=["x"], sender_id=1)], "本人正文"
-        )
-        == "本人正文",
-    )
-    check(
-        "引用: [Reply, At(自己), 正文] 只出 At 文本与正文",
+        "引用: MaiBot 原文格式渲染（名字+原文+正文）",
         sanitize.full_plain_text(
             [
-                _NS(text="被引用者说的话", chain=["x"], sender_id=1),
+                _NS(
+                    text="被引用者说的话",
+                    chain=["x"],
+                    sender_id=1,
+                    sender_nickname="某人",
+                ),
+                _NS(text=" 我同意"),
+            ],
+            "",
+            self_id="10000",
+            bot_name="麦麦",
+        )
+        == "[回复了某人的消息: 被引用者说的话] 我同意",
+    )
+    check(
+        "引用: [Reply, At(自己), 正文] 引用渲染在前、At 文本在后",
+        sanitize.full_plain_text(
+            [
+                _NS(
+                    text="被引用者说的话",
+                    chain=["x"],
+                    sender_id=1,
+                    sender_nickname="某人",
+                ),
                 _NS(qq="10000", name="小小麦"),
                 _NS(text=" 你好"),
             ],
@@ -2781,7 +2798,19 @@ def test_phase3_mechanisms():
             self_id="10000",
             bot_name="麦麦",
         )
-        == "@麦麦 你好",
+        == "[回复了某人的消息: 被引用者说的话] @麦麦 你好",
+    )
+    check(
+        "引用: 原文缺失按 MaiBot 原文回落文案",
+        sanitize.full_plain_text(
+            [_NS(text="", message_str="", chain=["x"], sender_id=1), _NS(text="嗯")],
+            "",
+        )
+        == "[回复了一条消息，但原消息已无法访问] 嗯",
+    )
+    check(
+        "引用: 评分层剥引用前缀（引用不冒充本人发言）",
+        sanitize.sanitize_text("[回复了某人的消息: 被引用者说的话] 我同意") == "我同意",
     )
 
     # P-E 频率窗口反馈
