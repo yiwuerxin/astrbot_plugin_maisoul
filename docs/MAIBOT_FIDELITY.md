@@ -118,3 +118,4 @@
 5. **maisoul 独有扩展（MaiBot 之外的加项）**：预设对话（preset_dialogues 注入【预设对话】块，人格可覆盖）、多人格、管家桥（call_maid 桥+单轮回填）、independent/native 模式、逃生舱（escape_at_wake）、总开关、native 三件套注入、情绪 VA 模型+频率窗口反馈（见 ARCHITECTURE.md §5/§6）。
 6. **用户明示同意的取舍**：A_memorix→livingmemory、偷表情→stealer、行为/高频词学习、聊天回想、世界书/好感度（见 §3 表）。
 7. **工程差异（行为一致）**：错字引擎 jieba 词典进程内缓存；学习器为发言后异步任务（受 max_expression_learner 信号量约束）而非逐消息队列。
+8. **@他人文本化带 QQ 号后缀（有意偏离，机制性优于原版）**：MaiBot `process_at_component` 对 @他人只输出名字（群卡片>昵称>ID）；maisoul 渲染为 `@昵称(QQ号)`——与 AstrBot 原生 message_str 的 @他人渲染同款格式。机制依据：① **QQ 号是跨改名稳定的身份锚点**——成员改名后模型仍能把 `@新名字(同一QQ号)` 与历史 `@旧名字(同一QQ号)` 关联为同一人；② **消除撞名同形**——他人昵称与 bot_name 相同时，MaiBot 格式下 @bot 与 @他人在上下文里完全同形，模型无法区分归属（曾致 planner 把 @他人的寒暄误读为对自己点名并产生"已回应过"的错误记忆）；③ 提及判定层 `mention._AT_RENDERED_RE` 本就剥除该 token 格式，零误命中成本。门控行为不受影响（被@判定以 At 段 qq 精确匹配为唯一权威）。

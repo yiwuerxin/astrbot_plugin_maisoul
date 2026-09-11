@@ -95,10 +95,11 @@ def full_plain_text(
     传入 self_id 时 At 段一并文本化（MaiBot process_at_component 语义）：
     aiocqhttp 适配器会把第一个 @bot 从 message_str 剔除（原生流程当唤醒
     前缀剥掉），At 不文本化则门控评分/planner 决策/replyer/观察页对
-    "@了我"全程不可见（用户实报：@bot 后 planner 分析"没看清是否提及
-    自己"而选择沉默）。规则：@bot → "@bot_name"（配置昵称——QQ 名可与
+    "@了我"全程不可见。规则：@bot → "@bot_name"（配置昵称——QQ 名可与
     bot_name 不同；空回落 QQ 号）；qq="all" → "@全体成员"；@他人 →
-    "@适配器昵称"（群名片/昵称，取不到按 QQ 号）。At 文本按链上原位插入，
+    "@适配器昵称(QQ号)"（带 QQ 号后缀，对齐 AstrBot 原生 message_str 渲染，
+    有意偏离 MaiBot 只输出名字——QQ 号是稳定身份锚点且消除与 @bot 的
+    撞名同形；取不到昵称回落纯 QQ 号）。At 文本按链上原位插入，
     并与相邻文本保证空白分隔（MaiBot 为组件间空格拼接的近似——QQ 客户端
     @ 后通常自带空格，无空格时补一个；Plain 段之间保持原文拼接不加工）。
 
@@ -149,7 +150,13 @@ def full_plain_text(
         elif sq == "all":
             marker = str(getattr(seg, "name", "") or "").strip() or "全体成员"
         else:
-            marker = str(getattr(seg, "name", "") or "").strip() or sq
+            # @他人带 QQ 号后缀（对齐 AstrBot 原生 message_str 的 "@昵称(QQ号)"
+            # 渲染，有意偏离 MaiBot 只输出名字的格式）：QQ 号是跨改名稳定的
+            # 身份锚点，且消除与 @bot 文本的撞名同形（他人昵称=bot_name 时
+            # 模型无法区分归属）；提及判定层 mention._AT_RENDERED_RE 剥除
+            # 同款 token，不产生误命中。差异登记见 docs/MAIBOT_FIDELITY.md §8
+            _name = str(getattr(seg, "name", "") or "").strip()
+            marker = f"{_name}({sq})" if _name else sq
         if parts and not parts[-1][-1:].isspace():
             parts.append(" ")
         parts.append(f"@{marker}")

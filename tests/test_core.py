@@ -2709,7 +2709,9 @@ def test_phase3_mechanisms():
     )
     # At 文本化（对齐 MaiBot process_at_component）：@bot → @bot_name（配置
     # 昵称，不看适配器抓到的名字——QQ 名可与 bot_name 不同）；@他人 →
-    # @适配器昵称（取不到按 QQ 号）；@全体 → @全体成员
+    # @适配器昵称(QQ号)（带 QQ 号后缀，对齐 AstrBot 原生 message_str 渲染——
+    # 有意偏离 MaiBot 只输出名字：QQ 号是跨改名稳定身份锚点，且消除与
+    # @bot 文本的撞名同形，见 docs/MAIBOT_FIDELITY.md §8）；@全体 → @全体成员
     check(
         "At 文本化: @bot 用配置昵称（QQ 名与 bot_name 不同也按 bot_name）",
         sanitize.full_plain_text(
@@ -2721,17 +2723,27 @@ def test_phase3_mechanisms():
         == "@麦麦 你胖了",
     )
     check(
-        "At 文本化: @他人用适配器昵称",
+        "At 文本化: @他人带 QQ 号后缀（AstrBot 原生渲染格式）",
         sanitize.full_plain_text(
             [_NS(qq="123", name="小明"), _NS(text="在吗")],
             "",
             self_id="10000",
             bot_name="麦麦",
         )
-        == "@小明 在吗",
+        == "@小明(123) 在吗",
     )
     check(
-        "At 文本化: 昵称抓取失败回落 QQ 号",
+        "At 文本化: 他人昵称与 bot_name 撞名时靠后缀区分（不与 @bot 同形）",
+        sanitize.full_plain_text(
+            [_NS(qq="123", name="麦麦"), _NS(text="你昨天说的xx")],
+            "",
+            self_id="10000",
+            bot_name="麦麦",
+        )
+        == "@麦麦(123) 你昨天说的xx",
+    )
+    check(
+        "At 文本化: 昵称抓取失败回落 QQ 号（不产生空括号）",
         sanitize.full_plain_text(
             [_NS(qq="123", name=""), _NS(text="在吗")],
             "",
@@ -2759,6 +2771,19 @@ def test_phase3_mechanisms():
             bot_name="麦麦",
         )
         == "@麦麦",
+    )
+    # 提及判定兼容（根治撞名的验收）：@他人带 (qq) 后缀的渲染 token 被
+    # mention.py 的 _AT_RENDERED_RE 剥除——昵称与 bot_name 完全同名的
+    # @他人不算提及 bot（机制层防线，与渲染层双保险）
+    from astrbot_plugin_maisoul.core import mention as _mention
+
+    check(
+        "提及判定: 撞名 @他人渲染 token 不算提及 bot",
+        not _mention.is_mentioned("@麦麦(123) 你昨天说的xx", "麦麦", []),
+    )
+    check(
+        "提及判定: 非撞名 @他人渲染 token 同样剥除",
+        not _mention.is_mentioned("@小明(123) 在吗", "麦麦", []),
     )
     check(
         "At 文本化: At 居中按链上原位插入（与相邻文本空白分隔）",
