@@ -96,8 +96,7 @@ print((h + b'.' + b(hmac.new(s.encode(), h, hashlib.sha256).digest())).decode())
 2. 版本号联动：`fix`→patch、`feat`→minor、`BREAKING CHANGE`→major（联动八处同步）。
 3. PR 四段：① 改动简述（用户可感知）② 为什么改 ③ 核心改动（1-2 个关键文件或风险点）④ 测试情况。reviewer 不点开 Files changed 就能懂 = 合格。
 4. 流程：开分支 → 提交 → `gh pr create` → 页面审阅合并。审阅 AI（Sourcery 等）的评论不回复，直接修复；修复提交落在引入该问题的分支。
-5. 发布 = annotated tag 触发 release.yml（测试门禁 → git archive 出 zip → GitHub Release）；Release Notes 写进 tag 正文（`## [版本] - 日期` + 分组条目，不写 git log 流水账）；`.gitattributes` export-ignore 剔除开发资产。
-6. 自审纪律：任何改动写完先逐行自审 + 本地实测，全绿才 commit/push。
+5. 自审纪律：任何改动写完先逐行自审 + 本地实测，全绿才 commit/push。
 
 ## 7. 关键文档索引
 
@@ -107,6 +106,6 @@ print((h + b'.' + b(hmac.new(s.encode(), h, hashlib.sha256).digest())).decode())
 | 改配置字段/查 MaiBot 映射 | [docs/CONFIG.md](docs/CONFIG.md) |
 | 对标 MaiBot 行为/提示词/观察页/推理页/WebUI 像素/取舍清单 | [docs/MAIBOT_FIDELITY.md](docs/MAIBOT_FIDELITY.md) |
 | 排查问题/动 AstrBot 框架交互/前端 | [docs/PITFALLS.md](docs/PITFALLS.md)（65 条坑，**编号稳定，代码注释与测试按「坑 N」引用**） |
-| 本机环境实值/隐私红线名单/推送节奏/发版自查 | AGENTS.local.md（已列 .gitignore，永不入库） |
+| 本机环境实值/隐私红线名单/推送节奏 | AGENTS.local.md（已列 .gitignore，永不入库） |
 
 外部参考：MaiBot 官方仓库 <https://github.com/Mai-with-u/MaiBot>（复刻保真蓝本，含其 AGENTS.md 代码规范）；AstrBot 框架 <https://github.com/AstrBotDevs/AstrBot>（插件宿主）。
