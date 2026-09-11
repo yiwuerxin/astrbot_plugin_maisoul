@@ -114,7 +114,11 @@ astrbot_plugin_maisoul/
 │   ├── events_util.py        #   事件与观察工具
 │   └── admin.py              #   /maisoul 管理指令
 ├── webui/routes.py           # 插件页后端 API（config/status/tools/monitor/learning/expressions）
-├── pages/dashboard/index.html# 单文件零依赖 WebUI（7 页；规范见 MAIBOT_FIDELITY.md WebUI 一节）
+├── pages/dashboard/          # WebUI（7 页；零外部依赖本地分离文件，规范见 MAIBOT_FIDELITY.md WebUI 一节）
+│   ├── index.html            #   壳（1.3KB）：markup + 相对引用，服务端自动改写补 asset_token
+│   ├── app.css               #   全站样式（modern 主题令牌）
+│   ├── app.js                #   全部逻辑（PAGE_VERSION 在此）
+│   └── mbrc.css.js           #   推理过程页 srcdoc 数据：MBRC_CSS（String.raw 装 dist CSS，坑 66）
 ├── tests/test_core.py        # 单元测试（自执行 + pytest 双入口；编号引用「坑 N」）
 └── docs/                     # 开发文档（AGENTS.md 索引指向；不随发布包分发）
 ```

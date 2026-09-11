@@ -81,7 +81,7 @@
 
 ## 6. 推理过程页（部署版逐像素复刻，"没有一丝差距"）
 
-点击 Planner 卡「推理过程」→ iframe（srcdoc 隔离文档）内渲染与部署版 /reasoning-process 同构页面：同类名 DOM（记录行=工具名+时间+耗时/Token/大小、item 卡=序号+角色徽章+类型 mono 标+内容 pre+「完整 Item JSON」折叠、头=页签+条数/页码+过滤/搜索、底=分页+Token 合计）+ **原版 CSS 整体内嵌**（dist index CSS，JetBrains Mono base64 内联，`<style id=mbrc media=none>` 运行时注入 iframe；该构建产物已获授权嵌入仓库，AGPL 同族、来源版本已记录）。
+点击 Planner 卡「推理过程」→ iframe（srcdoc 隔离文档）内渲染与部署版 /reasoning-process 同构页面：同类名 DOM（记录行=工具名+时间+耗时/Token/大小、item 卡=序号+角色徽章+类型 mono 标+内容 pre+「完整 Item JSON」折叠、头=页签+条数/页码+过滤/搜索、底=分页+Token 合计）+ **原版 CSS 整体内嵌**（dist index CSS，JetBrains Mono base64 内联；载荷存 pages/dashboard/mbrc.css.js 的 MBRC_CSS——String.raw 标签模板装 669630 字符，坑 66——运行时注入 iframe；该构建产物已获授权嵌入仓库，AGPL 同族、来源版本已记录）。
 
 - 颜色映射（实抓）：system=cyan、他人消息=emerald、自发消息=orange、reasoning=indigo、工具调用=fuchsia、工具结果=violet、assistant=amber。
 - 数据侧：planner.finalized 的 request 带 `system_prompt`/`messages[].tool_calls`/`messages[].tool_call_id`/`messages[].reasoning`（maisoul 扩展字段，MaiBot 从 dump 文件取）；旧事件无字段时对应卡片自然缺失。
