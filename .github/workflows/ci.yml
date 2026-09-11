@@ -35,6 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: 工作流文件 YAML 校验
+        # 块标量内顶格续行等语法错误会让 GitHub 静默废掉整个工作流（tag 推送
+        # 不触发、每次 push 出 0 秒 phantom 失败）——release.yml 曾因此失灵，
+        # CI 提前拦截，杜绝"坏了才发现"。
+        run: |
+          python3 -c "import yaml" 2>/dev/null || pip install pyyaml -q
+          python3 -c "import glob,yaml; [yaml.safe_load(open(f)) for f in sorted(glob.glob('.github/workflows/*.yml'))]; print('OK: workflow yaml valid')"
       - name: 运行时数据与本地私有文件不得被跟踪
         run: |
           if git ls-files | grep -E 'data_learning\.json|data_monitor\.db|data_monitor\.json\.imported|AGENTS\.local\.md|__pycache__|\.log$'; then

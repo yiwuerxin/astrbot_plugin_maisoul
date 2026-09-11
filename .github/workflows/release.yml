@@ -71,10 +71,10 @@ jobs:
           # Release Notes = 打 tag 时写好的 curated 摘要（annotated tag 正文），
           # 不是提交流水账；有前序 tag 时附 GitHub 官方 Full Changelog 对比链接
           NOTES=$(git for-each-ref "refs/tags/${TAG}" --format='%(contents)')
+          # 换行拼接用 $'…' 单行形式——块标量里顶格续行会终止 YAML 块（曾致
+          # 工作流整体解析失败、tag 推送不触发），也不给 Notes 混入前导空格
           if [ -n "$PREV" ]; then
-            NOTES="${NOTES}
-
-**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
+            NOTES="${NOTES}"$'\n\n'"**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
           fi
           gh release create "$TAG" "../astrbot_plugin_maisoul-${TAG}.zip" \
             --repo "$GITHUB_REPOSITORY" \
