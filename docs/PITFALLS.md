@@ -15,12 +15,12 @@
 9. SQLModel 表类热重载会重复注册同名表 → 定义前 `SQLModel.metadata.remove(...)`；sessionmaker 用 `class_=sqlmodel.Session`。
 10. `@filter.llm_tool` 工具不能直接 `tool.call()`，必须走 `FunctionToolExecutor.execute()`；统一入口 `bridge.call_llm_tool(context, event, tool, args)`，无原始 event 用 `bridge.SyntheticEvent(umo)`。
 11. 插件 WebAPI 的 HTTP 前缀带 `/api/v1`（见 AGENTS.md §2）。
-12. 版本**八处**同步（**按字面量逐条枚举打勾——按文件归并计数会漏**）：① metadata.yaml（版本登记——框架读取它且**优先覆盖 `@register`** 声明的版本，star_manager 源码实锤；maisoul 自己的两条日志是硬编码、不读它）② main.py `@register`（运行时被 yaml 覆盖，仅 yaml 缺失时兜底）③ main.py 模块 docstring ④ main.py 已加载日志 ⑤ main.py 已卸载日志 ⑥ PAGE_VERSION（pages/dashboard/index.html）⑦ status API（webui/routes.py）⑧ pipeline/admin.py 的 `/maisoul` 状态行。
+12. 版本**八处**同步（**按字面量逐条枚举打勾——按文件归并计数会漏**）：① metadata.yaml（版本登记——框架读取它且**优先覆盖 `@register`** 声明的版本，star_manager 源码实锤；maisoul 自己的两条日志是硬编码、不读它）② main.py `@register`（运行时被 yaml 覆盖，仅 yaml 缺失时兜底）③ main.py 模块 docstring ④ main.py 已加载日志 ⑤ main.py 已卸载日志 ⑥ PAGE_VERSION（pages/dashboard/app.js）⑦ status API（webui/routes.py）⑧ pipeline/admin.py 的 `/maisoul` 状态行。
 
 ## 8.2 插件页与桥
 
 13. 页面跑在 sandbox iframe（无 allow-same-origin）——一切 API 必须走桥；SDK 注入晚于内联脚本且资源令牌 60s 过期 → 轮询等待 + 内置备用桥（postMessage，channel `astrbot-plugin-page`）。
-14. 内联脚本**禁写 `</body>` 字面量**（注入逻辑替换首个 body 闭合标签会截断脚本）。
+14. 内联 script **禁写 `</body>` 字面量**（服务端 bridge-sdk 注入逻辑替换首个 body 闭合标签会截断脚本——历史事故发生在单文件内联时代；现 JS 已外链，规则继续防守任何回流内联的写法）。
 15. 页面内容接口有缓存：改 pages/ 后重载插件 + 浏览器 Ctrl+F5。
 16. 桥 `apiGet(endpoint, params)` 支持查询参数（axios 转 query）——页面包装层必须透传 params，丢弃=增量语义失效。
 17. **SSE 会被扩展层整包缓冲**（`_quart_response_to_starlette` 对 quart Response `await get_data()`）——实时数据用轮询 `/monitor/replay?since=`；SSE 端点保留，前端策略为**轮询保底常开、SSE 真正收到帧（含 stream.open）才停轮询**，看门狗要在 `await subscribeSSE` 之前注册（promise 悬死时后注册的定时器不会跑）。
@@ -66,6 +66,7 @@
 41. flex 挤压口诀：**基准 0 且 min-width:0 的元素 + 兄弟要 100% 宽 = 必挤扁**（中文竖排）——wide 行纵向堆叠、普通行 wrap + 说明 `flex:1 1 240px`、不可压元素 `flex:none`。
 42. CSS `var()` 嵌套回退是非法值（`hsl(var(--a, hsl(var(--b))))` → `hsl(hsl(…))` 整条失效变透明）——拆开写或用确定存在的 token。
 43. 本机 node 12 不认 `?.`/`??`（语法误报）——页面 JS 检查用任一 node≥18 环境（容器或本机）`node --check`。
+66. **JS 模板字面量装 CSS 必须用 `String.raw`**：CSS 里的 Tailwind 转义（`.lg\:`、`\[`）与 CSS unicode 转义（`\2` 序列）在普通模板字面量里是非法八进制转义——`node --check` 报 "Octal escape sequences are not allowed in template strings"，加载即 SyntaxError 整脚本报废；且普通模板串会把 `\n` 等解释成转义、静默改变内容。`String.raw` 标签模板（ES2018 起带标签模板允许任意转义序列）原样保留反斜杠，零内容变换。先例：mbrc.css.js 的 MBRC_CSS（669630 字符，往返校验与原载荷逐字符相等）。搬运前先扫载荷：反引号与 `${` 必须为零，否则不可用此法。
 
 ## 8.8 排查口诀
 

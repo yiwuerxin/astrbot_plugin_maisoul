@@ -64,7 +64,7 @@ print((h + b'.' + b(hmac.new(s.encode(), h, hashlib.sha256).digest())).decode())
 9. 会话键全链路统一：群=group_id、私聊=sender_id；业务代码不得自拼会话键或造 fallback hash（坑 23）。
 10. 配置迁移保持幂等；已发布迁移路径不可改，不擅自新增迁移步骤。
 11. AstrBot 框架 API/schema 动手前先查框架文档：llm_tool 参数类型只认 string/number/object/array/boolean 五类，写 `integer` 拒载整插件（坑 30b）。
-12. WebUI（pages/dashboard/index.html）铁律：单文件零外部依赖；内联 script 禁 `</body>` 闭合标签字面量（坑 14）；桥必须 `ensureBridge()`；图标 lucide SVG 禁 emoji。
+12. WebUI（pages/dashboard/）铁律：**零外部网络依赖、无构建链**——禁 CDN/网络字体/外部请求；本地静态文件分离（index.html 壳 + app.css + app.js + 数据文件 mbrc.css.js，相对路径引用由服务端自动改写补 asset_token）；HTML 内联内容禁 `</body>` 闭合标签字面量（服务端 bridge-sdk 注入替换首个 `</body>`，坑 14）；桥必须 `ensureBridge()`；图标 lucide SVG 禁 emoji；JS 里装 CSS/大段数据用 `String.raw` 标签模板（坑 66）。
 13. changelog 以 git 提交信息承载，无独立 changelog 文件。
 
 ## 5. 协作边界与禁令
@@ -73,7 +73,7 @@ print((h + b'.' + b(hmac.new(s.encode(), h, hashlib.sha256).digest())).decode())
 
 1. 复刻保真：凡涉及"对齐 MaiBot"，动手前先对照官方源码与部署实例产物，不凭记忆直觉；对标验收物是请求 dump / 构建产物逐项 diff（规格见 docs/MAIBOT_FIDELITY.md）。
 2. 加配置项流程：_conf_schema.json 加字段（键名/默认值/描述先查 MaiBot official_configs.py）→ core 读 `cfg.get` → 页面 render/collect → 测试断言 → docs/CONFIG.md 映射表同步。
-3. 版本号**八处**同步（坑 12 全清单，按字面量逐条打勾）：metadata.yaml、main.py `@register`、模块 docstring、已加载日志、已卸载日志、PAGE_VERSION、status API、pipeline/admin.py 状态行。
+3. 版本号**八处**同步（坑 12 全清单，按字面量逐条打勾）：metadata.yaml、main.py `@register`、模块 docstring、已加载日志、已卸载日志、PAGE_VERSION（pages/dashboard/app.js）、status API、pipeline/admin.py 状态行。
 4. 提交前跑 AGENTS.local.md 的红线 grep。
 
 **先问再做**：
