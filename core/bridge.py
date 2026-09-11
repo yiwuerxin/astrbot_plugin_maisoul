@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 from astrbot.api import logger
 
-# MaiBot builtin_tool → AstrBot 等价工具名（用于 AGENTS.md 同步维护）
+# MaiBot builtin_tool → AstrBot 等价工具名（用于 docs/ARCHITECTURE.md 同步维护）
 
 
 # 两步制工具的前置依赖必须一同暴露（坑 40：stealer 的 search_meme → send_meme，

@@ -27,7 +27,7 @@
   默认 0=不打断，消息留待本轮循环的后续轮次）
 
 未移植（对应 maisoul 无等价基础设施，未伪造）：focus 专注模式、注意力漂移、
-行为表现情景分析子代理、query_memory（记忆由 livingmemory 承担，取舍见 AGENTS §7）。
+行为表现情景分析子代理、query_memory（记忆由 livingmemory 承担，取舍见 docs/MAIBOT_FIDELITY.md）。
 """
 
 import re

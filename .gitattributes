@@ -1,3 +1,4 @@
 tests/ export-ignore
 .github/ export-ignore
 REFACTOR_NOTES.md export-ignore
+docs/ export-ignore
