@@ -2677,6 +2677,22 @@ def test_phase3_mechanisms():
         "P-F 点名: 指向自己的前缀不剥",
         sanitize.strip_leading_ai_mention("@麦麦 你好", "麦麦", []) == "@麦麦 你好",
     )
+    # @他人文本化带 (QQ号) 后缀（坑 63 偏离）后开头形态的兼容：整 token
+    # 连后缀一起剥掉，不残留 "(123)" 进提及/评分文本（Sourcery #37 指出）
+    check(
+        "P-F 点名: @别的AI(QQ号) 前缀整 token 剥离",
+        sanitize.strip_leading_ai_mention("@别的AI(123) 帮我查天气", "麦麦", [])
+        == "帮我查天气",
+    )
+    check(
+        "P-F 点名: @他人(QQ号) 识别出的名字不含后缀",
+        sanitize.leading_ai_mention("@文心(456) 帮我", "麦麦", []) == "文心",
+    )
+    check(
+        "P-F 点名: 撞名他人的 (QQ号) 后缀不误剥成点名自己",
+        sanitize.strip_leading_ai_mention("@麦麦(123) 你好", "麦麦", [])
+        == "@麦麦(123) 你好",
+    )
     # 坑 61 全接收：waking_check 剥唤醒前缀改写 message_str，全量原文从消息链拼回
     from types import SimpleNamespace as _NS
 

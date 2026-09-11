@@ -14,7 +14,9 @@ _REPLY_PREFIX_RE = re.compile(
     r"^\s*(?:\[CQ:reply[^\]]*\]|\[回复[^\]]*\]|\[引用[^\]]*\]|<reply>[^<]*</reply>)\s*"
 )
 _FORWARD_RE = re.compile(r"\[CQ:forward[^\]]*\]|\[合并转发[^\]]*\]")
-_AT_LEAD_RE = re.compile(r"^\s*@([\w\u4e00-\u9fff·\-]+)\s*")
+# 开头 @呼名（可带 @他人文本化的 (QQ号) 后缀——坑 63 偏离格式；不吃后缀会
+# 给提及/评分文本留下 "(123)" 残渣，Sourcery #37 指出）
+_AT_LEAD_RE = re.compile(r"^\s*@([\w\u4e00-\u9fff·\-]+)(?:\(\d+\))?\s*")
 
 # 拼进系统提示词的两句防注入声明（P-F：开关控制，默认开）
 ANTI_INJECTION_LINES = (
