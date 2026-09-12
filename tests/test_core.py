@@ -3858,7 +3858,9 @@ def test_planner():
             and not P.should_followup(pls, sts, gs),
         )
     else:
-        _, drained_offline = P.split_pending(list(sts.buffer), pls.last_cycle_ts)
+        # 解构顺序=pending 在前（CI 红 43feb75 的教训：写反拿到的是空
+        # history 列表，断言恒假）
+        drained_offline, _ = P.split_pending(list(sts.buffer), pls.last_cycle_ts)
         pls.last_cycle_ts = 600.0
         pls.followup_armed = False
         check(
