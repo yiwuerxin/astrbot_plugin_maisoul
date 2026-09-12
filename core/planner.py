@@ -530,6 +530,9 @@ class PlannerState:
     llm_in_flight: bool = (
         False  # planner LLM 请求在途标志（唯一可打断窗口，对齐上游中断标记按请求绑定）
     )
+    followup_armed: bool = (
+        False  # 后继轮令牌：running 期间被推迟的门控命中消息（≈上游 _enqueue_message_turn）
+    )
     last_analysis: str = (
         ""  # 上一轮 planner 思考（防复读比对用，对齐 _should_replace_reasoning）
     )
@@ -639,6 +642,22 @@ def should_interrupt(pl: PlannerState, cfg) -> bool:
         and pl.running_task is not None
         and pl.llm_in_flight
     )
+
+
+def should_followup(pl: PlannerState, st, gen: int) -> bool:
+    """循环结束后是否补开后继轮（对齐上游排队令牌的消费判定）。
+
+    上游架构：运行中每条门控命中消息向 _internal_turn_queue 投令牌，
+    当前轮一结束 run_loop 立刻消费令牌开新轮排水——打断是快路径，排队
+    令牌是慢路径兜底，两者共同保证"最后一轮窗口"不漏消息。maisoul 对应
+    物：armed 由 running 推迟分支置位（调用方保证该消息已过门控），循环
+    自然完成时按此判定补轮。两个条件缺一不可：只看 armed 不看积压会在
+    消息已被中途排水后空转补轮；只看积压不看 armed 会让未过门控的低频
+    消息绕过频率触发抬高发言频率。"""
+    if pl.cycle_gen != gen or not pl.followup_armed:
+        return False
+    pending, _ = split_pending(list(st.buffer), pl.last_cycle_ts)
+    return bool(pending)
 
 
 def build_planner_toolset(deps) -> "object":

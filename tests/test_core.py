@@ -3779,6 +3779,41 @@ def test_planner():
     pli.mark_turn_completed(gi - 1)
     check("打断计数: 旧代退出不清零（代际守卫）", pli.interrupt_count == 1)
 
+    # 后继轮兜底判定（v6.27.2，对齐上游 _internal_turn_queue 排队令牌）：
+    # 上游运行中每条门控命中消息都会向轮次队列投令牌，当前轮结束立刻
+    # 消费开新轮排水——打断只是快路径，排队令牌才是慢路径兜底。maisoul
+    # 对应物：running 推迟分支置 followup_armed，循环自然结束时仍有
+    # 未排水消息才补轮；只看积压不看 armed 会让未过门控的低频消息
+    # 绕过频率触发
+    plf = P.PlannerState()
+    stf = GroupState()
+    stf.record_external(
+        {
+            "name": "u",
+            "sid": "1",
+            "msg_id": "m1",
+            "text": "@bot 在吗",
+            "at_bot": True,
+            "reply_bot": False,
+            "ts": 200.0,
+        }
+    )
+    gf = plf.begin_cycle()
+    check(
+        "后继轮: 未 armed 不补（积压≠门控命中）",
+        not P.should_followup(plf, stf, gf),
+    )
+    plf.followup_armed = True
+    check("后继轮: armed 且有未排水消息 → 补轮", P.should_followup(plf, stf, gf))
+    plf.last_cycle_ts = 300.0  # 水位越过消息 ts = 已被排水
+    check("后继轮: armed 但积压已排水 → 不补", not P.should_followup(plf, stf, gf))
+    plf.last_cycle_ts = 0.0
+    check("后继轮: 旧代不清（代际守卫）", not P.should_followup(plf, stf, gf - 1))
+    check(
+        "后继轮: followup_armed 默认 False",
+        P.PlannerState().followup_armed is False,
+    )
+
     # fetch_history 已移除（v6.13.5）：MaiBot focus 模式专属工具，部署版
     # focus_mode=false 不暴露——工具集与请求结构均不得出现
     st = GroupState()
