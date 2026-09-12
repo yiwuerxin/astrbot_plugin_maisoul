@@ -1,4 +1,4 @@
-# 坑库（65 条，按主题分组）
+# 坑库（68 条，按主题分组）
 
 > 开发准则入口见 [AGENTS.md](../AGENTS.md)。只记结论与数值。**编号稳定：代码注释与测试按「坑 N」引用，只增不改号。**
 
@@ -97,3 +97,4 @@
 
 66. **JS 模板字面量装 CSS 必须用 `String.raw`**：CSS 里的 Tailwind 转义（`.lg\:`、`\[`）与 CSS unicode 转义（`\2` 序列）在普通模板字面量里是非法八进制转义——`node --check` 报 "Octal escape sequences are not allowed in template strings"，加载即 SyntaxError 整脚本报废；且普通模板串会把 `\n` 等解释成转义、静默改变内容。`String.raw` 标签模板（ES2018 起带标签模板允许任意转义序列）原样保留反斜杠，零内容变换。先例：mbrc.css.js 的 MBRC_CSS（669630 字符，往返校验与原载荷逐字符相等）。搬运前先扫载荷：反引号与 `${` 必须为零，否则不可用此法。
 67. **同循环多次 reply 的生成素材单槽覆盖——推理过程页只见最后一次**：`replyer_trace` 是单 dict，`_planner_execute_reply` 每次 reply 整组覆盖，finalize 只带最后一条——同循环实发多条时，中间几条的真实发送在推理过程页不可见（实测环境实报：实发四条、规划器只见两条）。修法：`PlannerState.replyer_traces` 列表**按次追加**（每条含自身 reasoning），开轮清空，载荷键改 `replyers` 数组（旧事件 `replyer` dict 由前端兼容读取）；前端回复器流程一次 finalized 渲染多条，多于一同时标「第 N 次」。与坑 64 同族互补：64 是跨循环不清空复读，本条是循环内覆盖丢失。
+68. **打断计数清零位置装反 + 任务级 cancel 无差别落点——打断上限恒失效**：上游的可打断窗口只有 planner LLM 请求在途（中断标记按请求绑定，`ReqAbortException` 只从 LLM 客户端流式层抛出；`PlannerInterruptController.unbind(interrupted=False)` 才清计数，runtime.py）。旧实现两处叠加：① `interrupt_count=0` 放在**循环启动处**——打断必然伴随新循环启动，判定点恒见 0，max≥1 等于无限打断（上限是死代码）；② `running_task.cancel()` 打在整个循环任务上，去抖静默窗/工具执行/replyer 生成/分段发送阶段都可被掐——半截回复不进 buffer（`record_self_reply` 未执行，新循环不知道已说了一半）、忙碌群 >1 条/秒时反复 cancel-restart 连一次 LLM 都发不出（静默窗在可 cancel 任务内被架空）。修法=判定收敛为 `planner.should_interrupt`（仅 `llm_in_flight` 且未达上限放行）；`_planner_cycle` 在 planner LLM 请求 try/finally 前后维护 `llm_in_flight`；清零移到 finalize 非 interrupted 出口（`mark_turn_completed`，代际守卫——打断退出不清）。**教训：对标"打断/取消"先找上游中断标记绑在哪一层（请求级/轮级/任务级决定可打断窗口）再抄计数语义；清零点放在"必然伴随目标事件发生的路径"上等于没有上限**。

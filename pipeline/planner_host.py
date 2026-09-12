@@ -31,6 +31,8 @@ def _schedule_planner(
 
     群聊 wait 期间新消息不唤醒；私聊 wait 期间收到新消息则结束等待进入
     Planner（MaiBot 原文行为）；空闲退避仅群聊生效。
+    打断判定走 planner.should_interrupt（v6.27.1，对齐上游按请求绑定的
+    中断标记）：仅 planner LLM 请求在途可打断，其余阶段消息只累积。
     send_fn 非空时（WebUI 聊天页）返回待 await 的协程；其余分支一律返回
     即完的空协程（asyncio.sleep(0)）——调用方统一 await，裸 return None
     会让调用方 `await None` 抛 TypeError，进而漏掉 stop_event、事件漏进
@@ -59,7 +61,11 @@ def _schedule_planner(
             return done
     if pl.agent_state == "running":
         max_interrupt = int(cfg.get("planner_interrupt_max_consecutive_count", 0))
-        if max_interrupt > 0 and pl.interrupt_count < max_interrupt and pl.running_task:
+        # 阶段守卫（v6.27.1，对齐上游 PlannerInterruptController.request 的
+        # idle/limit 语义）：仅 planner LLM 请求在途可打断——去抖静默窗/工具
+        # 执行/replyer 生成/分段发送阶段一律不打断，新消息只累积留待当前
+        # 循环后续轮；连续打断达上限后等自然完成（计数只在自然完成清零）
+        if planner.should_interrupt(pl, cfg):
             pl.interrupt_count += 1
             logger.info(
                 f"maisoul[{gid}] planner: 新消息打断思考（连续打断 "
@@ -68,11 +74,21 @@ def _schedule_planner(
             pl.running_task.cancel()
             # 打断后由本条消息重新发起一轮
         else:
+            logger.debug(
+                f"maisoul[{gid}] planner: 运行中不满足打断条件（连续打断 "
+                f"{pl.interrupt_count}/{max_interrupt}，"
+                f"LLM在途={pl.llm_in_flight}），消息留待当前循环后续轮"
+            )
             return done  # 消息留待当前循环的后续轮次处理
 
     gen = pl.begin_cycle()  # M3：新循环换代——被打断的旧循环退出不得回写状态
     pl.agent_state = "running"
-    pl.interrupt_count = 0
+    # v6.27.1：连续打断计数不再在循环启动处清零——打断必然伴随新循环启动，
+    # 此处清零会让上限恒不绑定（max≥1=无限打断）；改为自然完成时清零
+    # （_planner_cycle 的 finalize 非 interrupted 出口走 mark_turn_completed）。
+    # LLM 在途标志同步复位：被 cancel 的旧任务解卷前可能还挂着 True，
+    # 不复位会把新循环的去抖阶段误判为可打断窗口
+    pl.llm_in_flight = False
     umo = event.unified_msg_origin
     platform = str(event.get_platform_name() or "")
     pl.umo, pl.platform = umo, platform
@@ -186,6 +202,10 @@ async def _planner_cycle(
     system_prompt = ""  # no_provider 提前 finalize 时未构建（Sourcery：未定义读取）
 
     def finalize(reason: str, detail: str = "") -> None:
+        if reason != "interrupted":
+            # 自然完成清零连续打断计数（对齐上游 unbind(interrupted=False)）；
+            # 循环所有出口都经 finalize，集中清零防路径遗漏（v6.27.1）
+            pl.mark_turn_completed(gen)
         P.monitor.emit_planner_finalized(
             session_id=gid,
             cycle_id=cycle_id,
@@ -395,6 +415,7 @@ async def _planner_cycle(
                     f"{planner_bind[1]}@{getattr(planner_bind[0], 'provider_config', {}).get('id', '?')}"
                 )
             llm_started = time.time()
+            pl.llm_in_flight = True  # 打开唯一可打断窗口（should_interrupt 凭此放行）
             round_model_used: dict[str, str] = (
                 {}
             )  # 本次请求实际服务的模型（观察页展示）
@@ -427,6 +448,8 @@ async def _planner_cycle(
                 )
                 raise
             finally:
+                # 关闭在途窗口；cancel 解卷同样经过这里，被掐任务的标志不残留
+                pl.llm_in_flight = False
                 del contexts[tail_base:]  # 撤销尾部注入（不进历史）
             planner_llm_ms += (time.time() - llm_started) * 1000
             # 本轮实际模型进观察副本（random/balance 多候选时逐轮可能不同）

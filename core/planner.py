@@ -24,7 +24,9 @@
   focus_mode=false 不暴露，maisoul 同样不暴露，v6.13.5）
 - 连续 wait 上限（默认 3）后视为对话休息；空闲结束累积退避
 - 思考中的 Planner 可被新消息打断重思（planner_interrupt_max_consecutive_count，
-  默认 0=不打断，消息留待本轮循环的后续轮次）
+  默认 0=不打断，消息留待本轮循环的后续轮次；开启后仅 planner LLM 请求在途
+  可打断、连续计数自然完成才清零——对齐上游 PlannerInterruptController，
+  v6.27.1）
 
 未移植（对应 maisoul 无等价基础设施，未伪造）：focus 专注模式、注意力漂移、
 行为表现情景分析子代理、query_memory（记忆由 livingmemory 承担，取舍见 docs/MAIBOT_FIDELITY.md）。
@@ -522,7 +524,12 @@ class PlannerState:
     backoff_count: int = 0
     backoff_until: float = 0.0
     running_task: object = None
-    interrupt_count: int = 0
+    interrupt_count: int = (
+        0  # 连续打断计数：仅自然完成清零（mark_turn_completed），打断与循环启动不清
+    )
+    llm_in_flight: bool = (
+        False  # planner LLM 请求在途标志（唯一可打断窗口，对齐上游中断标记按请求绑定）
+    )
     last_analysis: str = (
         ""  # 上一轮 planner 思考（防复读比对用，对齐 _should_replace_reasoning）
     )
@@ -559,6 +566,16 @@ class PlannerState:
         循环 → 双循环并发）。只有代际号仍是自己时才允许回写。"""
         if self.cycle_gen == gen:
             self.agent_state = "idle"
+
+    def mark_turn_completed(self, gen: int) -> None:
+        """自然完成（未被中断的退出）清零连续打断计数（代际守卫）。
+
+        对齐上游 PlannerInterruptController.unbind(interrupted=False)：
+        上游只在请求未被中断地结束时归位计数；打断路径不清零——打断必然
+        伴随新循环启动，若在循环启动处清零，判定点看到的计数恒 0，上限
+        永不绑定（max≥1 等于无限打断，v6.27.1 修复的旧缺陷）。"""
+        if self.cycle_gen == gen:
+            self.interrupt_count = 0
 
     def try_enter_wait(self, cfg, seconds: int) -> tuple[bool, int, int]:
         maximum = max(1, int(cfg.get("max_consecutive_wait_count", 3)))
@@ -605,6 +622,23 @@ class PlannerState:
         if bypass > 0 and pending_count >= bypass:
             return False
         return True
+
+
+def should_interrupt(pl: PlannerState, cfg) -> bool:
+    """新消息打断判定（对齐上游 PlannerInterruptController.request 的 idle/limit 语义）。
+
+    上游唯一可打断窗口是 planner LLM 请求在途：中断标记按请求绑定，
+    ReqAbortException 只从 LLM 客户端流式层抛出——去抖静默窗、工具执行、
+    replyer 生成、分段发送阶段一律不打断，新消息只累积（留待当前循环
+    后续轮 drain_pending 或去抖顺延）；连续打断达上限后同样不打断，等
+    当前循环自然完成（计数只在自然完成清零，见 mark_turn_completed）。"""
+    max_interrupt = int(cfg.get("planner_interrupt_max_consecutive_count", 0))
+    return (
+        max_interrupt > 0
+        and pl.interrupt_count < max_interrupt
+        and pl.running_task is not None
+        and pl.llm_in_flight
+    )
 
 
 def build_planner_toolset(deps) -> "object":
