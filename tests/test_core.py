@@ -3814,6 +3814,60 @@ def test_planner():
         P.PlannerState().followup_armed is False,
     )
 
+    # 防重复序列回归（PR #39 人工审阅回应）：重复发送的唯一通路是同一
+    # 消息被两个循环各排一次水。防线=排水即抬水位（split_pending 排除
+    # 已消费消息）+ 清令牌（armed 消息进上下文后不再触发补轮）+ 代际
+    # 守卫（打断重启后旧代 finalize 不得补轮），三重锁死
+    pls = P.PlannerState()
+    sts = GroupState()
+    sts.record_external(
+        {
+            "name": "u",
+            "sid": "1",
+            "msg_id": "m1",
+            "text": "@bot 在吗",
+            "at_bot": True,
+            "reply_bot": False,
+            "ts": 500.0,
+        }
+    )
+    gs = pls.begin_cycle()
+    pls.followup_armed = True  # running 期间被推迟
+    check(
+        "防重复: 末轮后 armed+积压 → 允许补轮（唯一正当触发）",
+        P.should_followup(pls, sts, gs),
+    )
+    # 后继轮开跑并排水（_drain_pending 的等价三步：取水+抬水位+清令牌）
+    drained, _ = P.split_pending(list(sts.buffer), pls.last_cycle_ts)
+    pls.last_cycle_ts = 600.0
+    pls.followup_armed = False
+    check(
+        "防重复: 消息已排水（水位越过 ts）→ 后续 finalize 不补",
+        len(drained) == 1 and not P.should_followup(pls, sts, gs),
+    )
+    # 打断重启同帧清令牌：armed 残留时新循环启动（_schedule_planner 复位），
+    # 新旧两代的 finalize 都不得补轮（旧代=代际守卫，新代=令牌已清）
+    pls.followup_armed = True
+    gs2 = pls.begin_cycle()
+    pls.followup_armed = False  # 开轮入口统一清令牌
+    check(
+        "防重复: 打断重启后新旧两代都不补（令牌清+代际守卫）",
+        not P.should_followup(pls, sts, gs) and not P.should_followup(pls, sts, gs2),
+    )
+    # 打断窗口收窄不变量：旧判定（max>0 且未达上限且任务在）放行的全部
+    # 组合里，llm_in_flight=False 一律不得打断——错误中止在途请求的风险
+    # 面相比旧实现只减不增
+    for armed_window in (False, True):
+        plw = P.PlannerState()
+        plw.agent_state = "running"
+        plw.running_task = object()
+        plw.llm_in_flight = armed_window
+        check(
+            f"打断窗口: llm_in_flight={armed_window} 时判定={'放行' if armed_window else '拒绝'}",
+            P.should_interrupt(plw, {"planner_interrupt_max_consecutive_count": 3})
+            is armed_window,
+        )
+
     # fetch_history 已移除（v6.13.5）：MaiBot focus 模式专属工具，部署版
     # focus_mode=false 不暴露——工具集与请求结构均不得出现
     st = GroupState()
