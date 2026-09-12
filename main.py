@@ -1,4 +1,4 @@
-"""astrbot_plugin_maisoul v6.27.0 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
+"""astrbot_plugin_maisoul v6.27.2 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
 
 main.py 只做注册/生命周期/钩子薄壳（M7 拆分）；管线逻辑在 pipeline/ 包：
 - pipeline/gating        门控：逃生舱/过滤词/双模式分发/空窗补偿
@@ -39,7 +39,7 @@ _RUNTIME_DATA_FILES = (
 
 
 @register(
-    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.27.0"
+    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.27.2"
 )
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -117,7 +117,7 @@ class MaiSoulPlugin(Star):
             self.config.get("task_models")
         )
         logger.info(
-            f"maisoul v6.27.0 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.27.2 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -239,4 +239,4 @@ class MaiSoulPlugin(Star):
         await self._registry.cancel_and_wait_all(timeout=5.0)
         await self.monitor.stop_writer()  # M10：冲刷残余事件后再关连接池
         self.monitor.close()
-        logger.info("maisoul v6.27.0 已卸载")
+        logger.info("maisoul v6.27.2 已卸载")

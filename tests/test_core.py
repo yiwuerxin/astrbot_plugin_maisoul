@@ -3750,6 +3750,70 @@ def test_planner():
     plg.set_idle_if_current(g2)
     check("M3 代际: 新代自身退出仍生效", plg.agent_state == "idle")
 
+    # 打断判定与计数语义（v6.27.1，对齐上游 PlannerInterruptController）：
+    # 上游唯一可打断窗口是 planner LLM 请求在途（中断标记按请求绑定，
+    # ReqAbortException 只从 LLM 客户端流式层抛出），去抖静默窗/工具执行/
+    # replyer 生成/分段发送阶段一律不打断；连续打断计数只在自然完成清零
+    # ——旧实现把清零放在循环启动处，打断必然伴随新循环启动，上限恒不
+    # 绑定（max≥1 等于无限打断）
+    pli = P.PlannerState()
+    pli.agent_state = "running"
+    pli.running_task = object()  # 判定只查存在性，非 None 即可
+    cfg_i = {"planner_interrupt_max_consecutive_count": 2}
+    check("打断判定: 未开启（0）不打断", not P.should_interrupt(pli, {}))
+    check(
+        "打断判定: 非LLM在途不打断（去抖/工具/回复阶段只累积）",
+        not P.should_interrupt(pli, cfg_i),
+    )
+    pli.llm_in_flight = True
+    check("打断判定: LLM在途且未达上限放行", P.should_interrupt(pli, cfg_i))
+    pli.interrupt_count = 2
+    check("打断判定: 达上限后等自然完成", not P.should_interrupt(pli, cfg_i))
+    pli.interrupt_count = 1
+    pli.begin_cycle()  # 打断后新循环启动：不得清零计数（旧缺陷的回归锚点）
+    check("打断计数: 循环启动不清零", pli.interrupt_count == 1)
+    gi = pli.begin_cycle()
+    pli.mark_turn_completed(gi)
+    check("打断计数: 自然完成清零", pli.interrupt_count == 0)
+    pli.interrupt_count = 1
+    pli.mark_turn_completed(gi - 1)
+    check("打断计数: 旧代退出不清零（代际守卫）", pli.interrupt_count == 1)
+
+    # 后继轮兜底判定（v6.27.2，对齐上游 _internal_turn_queue 排队令牌）：
+    # 上游运行中每条门控命中消息都会向轮次队列投令牌，当前轮结束立刻
+    # 消费开新轮排水——打断只是快路径，排队令牌才是慢路径兜底。maisoul
+    # 对应物：running 推迟分支置 followup_armed，循环自然结束时仍有
+    # 未排水消息才补轮；只看积压不看 armed 会让未过门控的低频消息
+    # 绕过频率触发
+    plf = P.PlannerState()
+    stf = GroupState()
+    stf.record_external(
+        {
+            "name": "u",
+            "sid": "1",
+            "msg_id": "m1",
+            "text": "@bot 在吗",
+            "at_bot": True,
+            "reply_bot": False,
+            "ts": 200.0,
+        }
+    )
+    gf = plf.begin_cycle()
+    check(
+        "后继轮: 未 armed 不补（积压≠门控命中）",
+        not P.should_followup(plf, stf, gf),
+    )
+    plf.followup_armed = True
+    check("后继轮: armed 且有未排水消息 → 补轮", P.should_followup(plf, stf, gf))
+    plf.last_cycle_ts = 300.0  # 水位越过消息 ts = 已被排水
+    check("后继轮: armed 但积压已排水 → 不补", not P.should_followup(plf, stf, gf))
+    plf.last_cycle_ts = 0.0
+    check("后继轮: 旧代不清（代际守卫）", not P.should_followup(plf, stf, gf - 1))
+    check(
+        "后继轮: followup_armed 默认 False",
+        P.PlannerState().followup_armed is False,
+    )
+
     # fetch_history 已移除（v6.13.5）：MaiBot focus 模式专属工具，部署版
     # focus_mode=false 不暴露——工具集与请求结构均不得出现
     st = GroupState()

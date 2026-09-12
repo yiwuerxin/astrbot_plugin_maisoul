@@ -31,6 +31,8 @@ def _schedule_planner(
 
     群聊 wait 期间新消息不唤醒；私聊 wait 期间收到新消息则结束等待进入
     Planner（MaiBot 原文行为）；空闲退避仅群聊生效。
+    打断判定走 planner.should_interrupt（v6.27.1，对齐上游按请求绑定的
+    中断标记）：仅 planner LLM 请求在途可打断，其余阶段消息只累积。
     send_fn 非空时（WebUI 聊天页）返回待 await 的协程；其余分支一律返回
     即完的空协程（asyncio.sleep(0)）——调用方统一 await，裸 return None
     会让调用方 `await None` 抛 TypeError，进而漏掉 stop_event、事件漏进
@@ -59,7 +61,11 @@ def _schedule_planner(
             return done
     if pl.agent_state == "running":
         max_interrupt = int(cfg.get("planner_interrupt_max_consecutive_count", 0))
-        if max_interrupt > 0 and pl.interrupt_count < max_interrupt and pl.running_task:
+        # 阶段守卫（v6.27.1，对齐上游 PlannerInterruptController.request 的
+        # idle/limit 语义）：仅 planner LLM 请求在途可打断——去抖静默窗/工具
+        # 执行/replyer 生成/分段发送阶段一律不打断，新消息只累积留待当前
+        # 循环后续轮；连续打断达上限后等自然完成（计数只在自然完成清零）
+        if planner.should_interrupt(pl, cfg):
             pl.interrupt_count += 1
             logger.info(
                 f"maisoul[{gid}] planner: 新消息打断思考（连续打断 "
@@ -68,11 +74,29 @@ def _schedule_planner(
             pl.running_task.cancel()
             # 打断后由本条消息重新发起一轮
         else:
+            # 后继轮令牌（v6.27.2，对齐上游排队语义）：到达本分支的消息已经
+            # 过门控（gating 只在 should_trigger 命中后才调 _schedule_planner），
+            # running 态只能推迟不能丢弃——置 armed，循环自然结束时若仍未
+            # 排水则补开一轮（上游 _enqueue_message_turn 的令牌等价物），
+            # 否则安静群里最后一轮窗口漏掉的 @ 会无限期搁置
+            pl.followup_armed = True
+            logger.debug(
+                f"maisoul[{gid}] planner: 运行中不满足打断条件（连续打断 "
+                f"{pl.interrupt_count}/{max_interrupt}，"
+                f"LLM在途={pl.llm_in_flight}），消息留待当前循环后续轮/后继轮"
+            )
             return done  # 消息留待当前循环的后续轮次处理
 
     gen = pl.begin_cycle()  # M3：新循环换代——被打断的旧循环退出不得回写状态
     pl.agent_state = "running"
-    pl.interrupt_count = 0
+    # v6.27.1：连续打断计数不再在循环启动处清零——打断必然伴随新循环启动，
+    # 此处清零会让上限恒不绑定（max≥1=无限打断）；改为自然完成时清零
+    # （_planner_cycle 的 finalize 非 interrupted 出口走 mark_turn_completed）。
+    # LLM 在途标志同步复位：被 cancel 的旧任务解卷前可能还挂着 True，
+    # 不复位会把新循环的去抖阶段误判为可打断窗口。
+    # 后继轮令牌一并复位：新循环首轮排水会消费一切积压（含 armed 消息）
+    pl.llm_in_flight = False
+    pl.followup_armed = False
     umo = event.unified_msg_origin
     platform = str(event.get_platform_name() or "")
     pl.umo, pl.platform = umo, platform
@@ -102,6 +126,7 @@ def _drain_pending(P, st, pl) -> list[dict]:
     pending, _ = planner.split_pending(list(st.buffer), pl.last_cycle_ts)
     pl.last_cycle_ts = time.time()
     st.pending_since_fire = 0
+    pl.followup_armed = False  # 排水即消费令牌：armed 消息（若有）已进上下文
     return pending
 
 
@@ -186,6 +211,11 @@ async def _planner_cycle(
     system_prompt = ""  # no_provider 提前 finalize 时未构建（Sourcery：未定义读取）
 
     def finalize(reason: str, detail: str = "") -> None:
+        natural = reason != "interrupted"
+        if natural:
+            # 自然完成清零连续打断计数（对齐上游 unbind(interrupted=False)）；
+            # 循环所有出口都经 finalize，集中清零防路径遗漏（v6.27.1）
+            pl.mark_turn_completed(gen)
         P.monitor.emit_planner_finalized(
             session_id=gid,
             cycle_id=cycle_id,
@@ -213,6 +243,13 @@ async def _planner_cycle(
             replyer_reasoning=getattr(pl, "replyer_reasoning", ""),
             replyer_traces=getattr(pl, "replyer_traces", None),
         )
+        if natural and planner.should_followup(pl, st, gen):
+            # 后继轮兜底（v6.27.2，对齐上游排队令牌消费）：running 期间被
+            # 推迟的门控命中消息若本循环始终未排水（最后一轮窗口），补开
+            # 一轮处理。wait 续轮场景在工具分支已解除 armed（到期续轮自带
+            # 排水，双开会顶掉 wait 回执，坑 26）
+            pl.followup_armed = False
+            _start_followup_cycle(P, st, pl, gid)
 
     try:
         # 消息去抖：等最后一条外部消息静默 ≥1s 再开轮（对齐
@@ -395,6 +432,7 @@ async def _planner_cycle(
                     f"{planner_bind[1]}@{getattr(planner_bind[0], 'provider_config', {}).get('id', '?')}"
                 )
             llm_started = time.time()
+            pl.llm_in_flight = True  # 打开唯一可打断窗口（should_interrupt 凭此放行）
             round_model_used: dict[str, str] = (
                 {}
             )  # 本次请求实际服务的模型（观察页展示）
@@ -427,6 +465,8 @@ async def _planner_cycle(
                 )
                 raise
             finally:
+                # 关闭在途窗口；cancel 解卷同样经过这里，被掐任务的标志不残留
+                pl.llm_in_flight = False
                 del contexts[tail_base:]  # 撤销尾部注入（不进历史）
             planner_llm_ms += (time.time() - llm_started) * 1000
             # 本轮实际模型进观察副本（random/balance 多候选时逐轮可能不同）
@@ -629,6 +669,9 @@ async def _planner_cycle(
                             gid,
                             max(0, int(args.get("seconds", 0) or 0)),
                         )
+                        # 续轮自带排水，令牌让位（双开后继轮会抢跑置 running，
+                        # _resume 的 wait 态检查失效、回执丢失，坑 26 同族）
+                        pl.followup_armed = False
                     _monitor_stage(
                         P,
                         gid,
@@ -772,6 +815,40 @@ async def _planner_cycle(
         pl.set_idle_if_current(gen)
 
 
+def _start_followup_cycle(P, st, pl, gid: str):
+    """后继轮：running 期间被推迟的门控命中消息，在循环自然结束后补开一轮排水。
+
+    对齐上游 _internal_turn_queue 的排队令牌（v6.27.2）：上游打断是快路径、
+    令牌是慢路径兜底；maisoul 原先只有轮内 drain_pending，消息落在循环最后
+    一轮的 LLM 调用/工具执行期间（no_action 轮是最常见出口）时无后续轮可
+    依附，安静群里被无限期搁置。开轮入口统一清令牌（_schedule_planner 与
+    _resume 同款），令牌只能由真实门控命中消息重新置位。"""
+    gen = pl.begin_cycle()  # M3：后继轮同样换代，旧代退出不得回写
+    pl.agent_state = "running"
+    pl.followup_armed = False
+    cycle_id = P._cycle_counter.get(gid, 0) + 1
+    P._cycle_counter[gid] = cycle_id
+    logger.info(
+        f"maisoul[{gid}] planner: 后继轮启动决策循环 {cycle_id}"
+        f"（处理运行期间被推迟的消息）"
+    )
+    _monitor_stage(
+        P, gid, monitor.STAGE_LOOP_START, f"循环 {cycle_id}", agent_state=pl.agent_state
+    )
+    pl.running_task = P._registry.spawn(
+        _planner_cycle(
+            P,
+            getattr(pl, "umo", ""),
+            getattr(pl, "platform", ""),
+            gid,
+            st,
+            getattr(pl, "is_group", True),
+            gen=gen,
+        ),
+        name=f"planner:{gid}",
+    )
+
+
 def _schedule_wait_resume(P, st, cfg, gid: str, seconds: int):
     """wait 到期：必续一轮并注入完成回执（对齐 timeout 触发 + _build_wait_completed_message）。
 
@@ -791,6 +868,7 @@ def _schedule_wait_resume(P, st, cfg, gid: str, seconds: int):
             receipt = planner.build_wait_completed_message(elapsed, seconds, has_new)
             gen = pl.begin_cycle()  # M3：续轮换代，旧代退出不得回写
             pl.agent_state = "running"
+            pl.followup_armed = False  # 开轮入口统一清令牌（见 _start_followup_cycle）
             # wait 续轮也是新循环：自增计数器并上报阶段（对齐 _schedule_planner
             # 的 79-87 行）——此前续轮直呼 _planner_cycle 不自增，与原循环共用
             # cycle_id，推理过程页出现两个"循环#N"（用户实报：两个循环1）

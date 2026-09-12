@@ -42,7 +42,7 @@
 - **agent 循环**：MAX_INTERNAL_ROUNDS=10，多轮工具调用，工具结果回填下一轮，contexts 跨轮累积。
 - **工具集（可见 4 个）**：reply（msg_id/set_quote/reply_reference/reply_style 枚举——篇幅由 Planner 参数指定）、wait（连续上限 max_consecutive_wait_count=3，超限=对话休息；期间新消息不提前打断）、send_emoji（声明无参数=MaiBot 原样，执行桥接 send_meme 两步制）、tool_search。fetch_history 不暴露（MaiBot focus 模式专属，部署版未开）。
 - **分工铁律：planner 唯一干活者、replyer 纯嘴**。管家与生态工具全部进 deferred 池（tool_search 发现后下一轮可用；打分表 1000/300/200/100/25/10、返回文案、`<system-reminder>` 模板均为 MaiBot 原文；提醒只进当次请求不进 contexts 历史；discovered_tools 会话级）。replyer 不带 func_tool（independent/native 模式例外，管家桥留 replyer 侧）。
-- **WAIT/RUNNING 状态机**：群聊 wait 不唤醒，@/提及必回主动触发恢复；思考打断 planner_interrupt_max_consecutive_count=0 默不打断；空闲指数退避（base15×2^n 封顶 300、起点 2、积压 6 绕过、reply 重置）；wait 到期有积压自动续轮并注入完成回执（build_wait_completed_message 原文；无积压不续轮会让异步工具后的循环静默死亡，坑 26）。
+- **WAIT/RUNNING 状态机**：群聊 wait 不唤醒，@/提及必回主动触发恢复；思考打断 planner_interrupt_max_consecutive_count=0 默不打断（开启后仅 planner LLM 请求在途可打断、连续计数自然完成才清零——对齐上游 PlannerInterruptController 的 idle/limit 语义，v6.27.1）；运行中被推迟的门控命中消息由后继轮兜底（对齐 _internal_turn_queue 排队令牌：打断是快路径、令牌是慢路径，v6.27.2）；空闲指数退避（base15×2^n 封顶 300、起点 2、积压 6 绕过、reply 重置）；wait 到期有积压自动续轮并注入完成回执（build_wait_completed_message 原文；无积压不续轮会让异步工具后的循环静默死亡，坑 26）。
 - **请求结构**（坑 53 口径，验收=diff 部署请求 dump）：
   - 消息渲染 = 部署版 `planner_messages.build_planner_prefix` 原文：`<message msg_id="…" [quote="…"] time="…" user="…" [group_card="…"] [is_self_message="true"]>\n内容`（无闭合标签）。
   - 全部聊天消息（含自发消息，带 is_self_message）进 **user 轮**；只有 planner 分析进 assistant 轮。
