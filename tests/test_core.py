@@ -3814,10 +3814,17 @@ def test_planner():
         P.PlannerState().followup_armed is False,
     )
 
-    # 防重复序列回归（PR #39 人工审阅回应）：重复发送的唯一通路是同一
+    # 防重复序列回归（PR #39/#40 审阅回应）：重复发送的唯一通路是同一
     # 消息被两个循环各排一次水。防线=排水即抬水位（split_pending 排除
     # 已消费消息）+ 清令牌（armed 消息进上下文后不再触发补轮）+ 代际
-    # 守卫（打断重启后旧代 finalize 不得补轮），三重锁死
+    # 守卫（打断重启后旧代 finalize 不得补轮），三重锁死。测试走真实
+    # 生产入口（begin_cycle 换代清令牌 / _drain_pending 排水），不手工
+    # 模拟副作用——入口遗漏清理时测试必须红
+    try:
+        from astrbot_plugin_maisoul.pipeline import planner_host as _ph
+    except Exception:
+        _ph = None  # CI 无 astrbot 运行时：退化手工模拟（仅保底，非入口验证）
+
     pls = P.PlannerState()
     sts = GroupState()
     sts.record_external(
@@ -3832,41 +3839,66 @@ def test_planner():
         }
     )
     gs = pls.begin_cycle()
+    check(
+        "防重复: 开轮换代即清令牌（begin_cycle 真实行为）",
+        pls.followup_armed is False,
+    )
     pls.followup_armed = True  # running 期间被推迟
     check(
         "防重复: 末轮后 armed+积压 → 允许补轮（唯一正当触发）",
         P.should_followup(pls, sts, gs),
     )
-    # 后继轮开跑并排水（_drain_pending 的等价三步：取水+抬水位+清令牌）
-    drained, _ = P.split_pending(list(sts.buffer), pls.last_cycle_ts)
-    pls.last_cycle_ts = 600.0
-    pls.followup_armed = False
-    check(
-        "防重复: 消息已排水（水位越过 ts）→ 后续 finalize 不补",
-        len(drained) == 1 and not P.should_followup(pls, sts, gs),
-    )
-    # 打断重启同帧清令牌：armed 残留时新循环启动（_schedule_planner 复位），
-    # 新旧两代的 finalize 都不得补轮（旧代=代际守卫，新代=令牌已清）
+    if _ph is not None:
+        drained = _ph._drain_pending(None, sts, pls)  # P 形参未使用，None 即可
+        check(
+            "防重复: 真实 _drain_pending = 返回积压+抬水位+清令牌",
+            len(drained) == 1
+            and pls.followup_armed is False
+            and pls.last_cycle_ts > 500.0
+            and not P.should_followup(pls, sts, gs),
+        )
+    else:
+        _, drained_offline = P.split_pending(list(sts.buffer), pls.last_cycle_ts)
+        pls.last_cycle_ts = 600.0
+        pls.followup_armed = False
+        check(
+            "防重复:（离线保底）排水后不补轮",
+            len(drained_offline) == 1 and not P.should_followup(pls, sts, gs),
+        )
+    # 打断重启：残留令牌随换代作废（真实 begin_cycle 行为，新旧两代 finalize 均不补）
     pls.followup_armed = True
     gs2 = pls.begin_cycle()
-    pls.followup_armed = False  # 开轮入口统一清令牌
     check(
-        "防重复: 打断重启后新旧两代都不补（令牌清+代际守卫）",
-        not P.should_followup(pls, sts, gs) and not P.should_followup(pls, sts, gs2),
+        "防重复: 打断重启换代后令牌已清、新旧两代都不补",
+        pls.followup_armed is False
+        and not P.should_followup(pls, sts, gs)
+        and not P.should_followup(pls, sts, gs2),
     )
-    # 打断窗口收窄不变量：旧判定（max>0 且未达上限且任务在）放行的全部
-    # 组合里，llm_in_flight=False 一律不得打断——错误中止在途请求的风险
-    # 面相比旧实现只减不增
-    for armed_window in (False, True):
-        plw = P.PlannerState()
-        plw.agent_state = "running"
-        plw.running_task = object()
-        plw.llm_in_flight = armed_window
-        check(
-            f"打断窗口: llm_in_flight={armed_window} 时判定={'放行' if armed_window else '拒绝'}",
-            P.should_interrupt(plw, {"planner_interrupt_max_consecutive_count": 3})
-            is armed_window,
-        )
+    # 打断窗口收窄穷举（3×4×2×2=48 组合）：新判定 ≡ 旧判定（max>0 且
+    # 未达上限且任务在）∧ llm_in_flight——错误中止在途请求的风险面相比
+    # 旧实现只减不增，任何一组偏离即红
+    _combos = []
+    for _max in (0, 1, 3):
+        for _cnt in (0, 1, 2, 3):
+            for _task in (False, True):
+                for _flight in (False, True):
+                    plw = P.PlannerState()
+                    plw.interrupt_count = _cnt
+                    plw.running_task = object() if _task else None
+                    plw.llm_in_flight = _flight
+                    _old = _max > 0 and _cnt < _max and _task
+                    if P.should_interrupt(
+                        plw,
+                        {"planner_interrupt_max_consecutive_count": _max},
+                    ) is not (_old and _flight):
+                        _combos.append(
+                            f"max={_max},cnt={_cnt},task={_task},flight={_flight}"
+                        )
+    check(
+        "打断窗口穷举: 48 组合全部 新判定=旧判定∧在途",
+        not _combos,
+        "; ".join(_combos),
+    )
 
     # fetch_history 已移除（v6.13.5）：MaiBot focus 模式专属工具，部署版
     # focus_mode=false 不暴露——工具集与请求结构均不得出现
