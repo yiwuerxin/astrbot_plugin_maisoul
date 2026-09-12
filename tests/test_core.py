@@ -3479,6 +3479,33 @@ def test_taskregistry():
         "推理过程: 全空迹跳过不产出",
         _srb([{"system_prompt": "", "user_message": "", "output": ""}]) is None,
     )
+    # 兼容旧调用方单 dict 关键字（混部 partial deploy 防炸，Sourcery #38）
+    s4 = _MS2(pathlib.Path(tempfile.mkdtemp()) / "compat.db")
+    m4 = _M2(s4)
+    m4.emit_planner_finalized(
+        session_id="g4",
+        cycle_id=9,
+        planner_request_messages=[{"role": "user", "content": "hi"}],
+        planner_content="想回",
+        replyer_trace={
+            "system_prompt": "【身份】麦麦",
+            "user_message": "【记录】旧调用",
+            "output": "旧路径输出",
+            "model": "old-model",
+            "duration_ms": 500.0,
+        },
+    )
+    m4.close()
+    with s4._session_factory() as sess:
+        d4 = _json.loads(sess.query(_R3).one().payload_json)
+    rps4 = d4.get("replyers") or []
+    check(
+        "推理过程: 旧 replyer_trace 单 dict 关键字归一为单元素列表",
+        len(rps4) == 1
+        and rps4[0].get("output") == "旧路径输出"
+        and rps4[0].get("model_name") == "old-model",
+        str(rps4)[:80],
+    )
     from astrbot_plugin_maisoul.core.monitor import _serialize_planner_block as _spb
 
     check(

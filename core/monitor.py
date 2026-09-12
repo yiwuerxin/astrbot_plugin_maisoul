@@ -653,6 +653,7 @@ class Monitor:
         planner_model_name: str = "",
         replyer_reasoning: str = "",
         replyer_traces=None,
+        replyer_trace=None,  # 兼容旧调用方单 dict（混部 partial deploy 防炸：归一为单元素列表）
     ) -> None:
         """广播一轮 planner 结束后的最终聚合事件（MaiBot 原事件名与嵌套结构）。
 
@@ -697,6 +698,8 @@ class Monitor:
                 "eco_injection": eco_injection or "",
             },
         }
+        if replyer_traces is None and replyer_trace:
+            replyer_traces = [replyer_trace]
         replyer_blocks = _serialize_replyer_blocks(replyer_traces)
         if replyer_blocks:
             # maisoul 扩展：回复器流程素材（推理过程页「类型」切换用），缺省即省。
