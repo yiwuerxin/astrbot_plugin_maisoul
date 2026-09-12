@@ -652,7 +652,8 @@ class Monitor:
         model_by_idx=None,
         planner_model_name: str = "",
         replyer_reasoning: str = "",
-        replyer_trace=None,
+        replyer_traces=None,
+        replyer_trace=None,  # 兼容旧调用方单 dict（混部 partial deploy 防炸：归一为单元素列表）
     ) -> None:
         """广播一轮 planner 结束后的最终聚合事件（MaiBot 原事件名与嵌套结构）。
 
@@ -697,10 +698,13 @@ class Monitor:
                 "eco_injection": eco_injection or "",
             },
         }
-        replyer_block = _serialize_replyer_block(replyer_trace, replyer_reasoning)
-        if replyer_block is not None:
-            # maisoul 扩展：回复器流程素材（推理过程页「类型」切换用），缺省即省
-            payload["replyer"] = replyer_block
+        if replyer_traces is None and replyer_trace:
+            replyer_traces = [replyer_trace]
+        replyer_blocks = _serialize_replyer_blocks(replyer_traces)
+        if replyer_blocks:
+            # maisoul 扩展：回复器流程素材（推理过程页「类型」切换用），缺省即省。
+            # v6.27.1 起为列表——同循环多次 reply 按次全留（旧单槽只存最后一条）
+            payload["replyers"] = replyer_blocks
         self._broadcast("planner.finalized", payload)
 
 
@@ -788,13 +792,26 @@ def _serialize_planner_block(
     return out
 
 
-def _serialize_replyer_block(trace, reasoning=""):
-    """推理过程页「回复器」流程素材（maisoul 扩展，v6.19.0）。
+def _serialize_replyer_blocks(traces):
+    """推理过程页「回复器」流程素材列表（maisoul 扩展；v6.27.1 起按次列表）。
 
-    trace 来自 _planner_execute_reply 的 replyer_trace：请求双段 + 输出全文 +
-    本次服务的模型/耗时。全空（本轮无 reply 生成）返回 None，旧事件无此键。
+    traces 来自 _planner_execute_reply 的 replyer_traces：每次 reply 一条
+    （请求双段 + 输出全文 + 思考 + 本次服务的模型/耗时）。同循环多次 reply
+    按次全留——旧单槽只存最后一次，中间几条真实发送曾在推理过程页不可见。
+    全空（本轮无 reply 生成）返回 None，旧事件无此键。
     """
+    out = []
+    for t in list(traces or []):
+        block = _serialize_replyer_block(t)
+        if block is not None:
+            out.append(block)
+    return out or None
+
+
+def _serialize_replyer_block(trace, reasoning=""):
+    """单条 replyer 素材；trace 自带 reasoning（按次思考），参数兜底旧调用方。"""
     t = dict(trace or {})
+    reasoning = str(t.get("reasoning") or reasoning or "").strip()
     system_prompt = str(t.get("system_prompt") or "").strip()
     user_message = str(t.get("user_message") or "").strip()
     output = str(t.get("output") or "").strip()

@@ -3393,14 +3393,25 @@ def test_taskregistry():
         model_by_idx={1: "test-planner-model"},
         planner_model_name="test-planner-model",
         replyer_reasoning="回复器思考：要热情一点",
-        replyer_trace={
-            "system_prompt": "【身份】麦麦",
-            "user_message": "【记录】你好",
-            "output": "早呀",
-            "model": "reply-model-x",
-            "provider": "src_r",
-            "duration_ms": 2345.6,
-        },
+        replyer_traces=[
+            {
+                "system_prompt": "【身份】麦麦",
+                "user_message": "【记录】你好",
+                "output": "早呀",
+                "model": "reply-model-x",
+                "provider": "src_r",
+                "duration_ms": 2345.6,
+                "reasoning": "回复器思考：要热情一点",
+            },
+            {
+                "system_prompt": "【身份】麦麦",
+                "user_message": "【记录】再见",
+                "output": "晚安",
+                "model": "reply-model-y",
+                "provider": "src_r",
+                "duration_ms": 1111.0,
+            },
+        ],
     )
     m3.close()
     import json as _json
@@ -3428,7 +3439,13 @@ def test_taskregistry():
         "推理过程: 整循环模型名在 planner 块（多模型去重拼接）",
         data["planner"].get("model_name") == "test-planner-model",
     )
-    rp = data.get("replyer") or {}
+    rps = data.get("replyers") or []
+    rp = rps[0] if rps else {}
+    check(
+        "推理过程: replyers 列表按次全留（同循环多次 reply 各一条）",
+        len(rps) == 2,
+        str(rps)[:80],
+    )
     check(
         "推理过程: replyer 块=回复器流程素材（v6.19.0 扩展）",
         rp.get("system_prompt") == "【身份】麦麦"
@@ -3438,6 +3455,56 @@ def test_taskregistry():
         and rp.get("duration_ms") == 2345.6
         and rp.get("reasoning") == "回复器思考：要热情一点",
         str(rp)[:80],
+    )
+    check(
+        "推理过程: 第二次 reply 素材在列（旧单槽只存最后一次，中间记录丢失）",
+        rps[1].get("output") == "晚安"
+        and rps[1].get("model_name") == "reply-model-y"
+        and rps[1].get("duration_ms") == 1111.0,
+        str(rps[1])[:80],
+    )
+    check(
+        "推理过程: 旧单键 replyer 不再发出（新载荷为 replyers 列表）",
+        "replyer" not in data,
+    )
+    from astrbot_plugin_maisoul.core.monitor import (
+        _serialize_replyer_blocks as _srb,
+    )
+
+    check(
+        "推理过程: 空迹/空入参返回 None（缺省即省）",
+        _srb([]) is None and _srb(None) is None,
+    )
+    check(
+        "推理过程: 全空迹跳过不产出",
+        _srb([{"system_prompt": "", "user_message": "", "output": ""}]) is None,
+    )
+    # 兼容旧调用方单 dict 关键字（混部 partial deploy 防炸，Sourcery #38）
+    s4 = _MS2(pathlib.Path(tempfile.mkdtemp()) / "compat.db")
+    m4 = _M2(s4)
+    m4.emit_planner_finalized(
+        session_id="g4",
+        cycle_id=9,
+        planner_request_messages=[{"role": "user", "content": "hi"}],
+        planner_content="想回",
+        replyer_trace={
+            "system_prompt": "【身份】麦麦",
+            "user_message": "【记录】旧调用",
+            "output": "旧路径输出",
+            "model": "old-model",
+            "duration_ms": 500.0,
+        },
+    )
+    m4.close()
+    with s4._session_factory() as sess:
+        d4 = _json.loads(sess.query(_R3).one().payload_json)
+    rps4 = d4.get("replyers") or []
+    check(
+        "推理过程: 旧 replyer_trace 单 dict 关键字归一为单元素列表",
+        len(rps4) == 1
+        and rps4[0].get("output") == "旧路径输出"
+        and rps4[0].get("model_name") == "old-model",
+        str(rps4)[:80],
     )
     from astrbot_plugin_maisoul.core.monitor import _serialize_planner_block as _spb
 
