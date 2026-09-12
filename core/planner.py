@@ -556,8 +556,14 @@ class PlannerState:
 
     # ---------------- wait 状态机（对齐 _try_enter_wait_state） ----------------
     def begin_cycle(self) -> int:
-        """开启新循环并返回其代际号（打断 cancel 旧循环后由新循环调用）。"""
+        """开启新循环并返回其代际号（打断 cancel 旧循环后由新循环调用）。
+
+        换代即作废后继轮令牌：新循环首轮排水会消费一切积压（含 armed
+        消息），残留令牌若不清会让旧代 finalize 误补轮——三处开轮入口
+        （_schedule_planner/_resume/_start_followup_cycle）的清令牌统一
+        收口到这里（三处同源教训见坑 62）。"""
         self.cycle_gen += 1
+        self.followup_armed = False
         return self.cycle_gen
 
     def set_idle_if_current(self, gen: int) -> None:

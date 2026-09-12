@@ -93,10 +93,9 @@ def _schedule_planner(
     # 此处清零会让上限恒不绑定（max≥1=无限打断）；改为自然完成时清零
     # （_planner_cycle 的 finalize 非 interrupted 出口走 mark_turn_completed）。
     # LLM 在途标志同步复位：被 cancel 的旧任务解卷前可能还挂着 True，
-    # 不复位会把新循环的去抖阶段误判为可打断窗口。
-    # 后继轮令牌一并复位：新循环首轮排水会消费一切积压（含 armed 消息）
+    # 不复位会把新循环的去抖阶段误判为可打断窗口。后继轮令牌由
+    # begin_cycle 换代统一作废（见其 docstring）
     pl.llm_in_flight = False
-    pl.followup_armed = False
     umo = event.unified_msg_origin
     platform = str(event.get_platform_name() or "")
     pl.umo, pl.platform = umo, platform
@@ -821,11 +820,10 @@ def _start_followup_cycle(P, st, pl, gid: str):
     对齐上游 _internal_turn_queue 的排队令牌（v6.27.2）：上游打断是快路径、
     令牌是慢路径兜底；maisoul 原先只有轮内 drain_pending，消息落在循环最后
     一轮的 LLM 调用/工具执行期间（no_action 轮是最常见出口）时无后续轮可
-    依附，安静群里被无限期搁置。开轮入口统一清令牌（_schedule_planner 与
-    _resume 同款），令牌只能由真实门控命中消息重新置位。"""
-    gen = pl.begin_cycle()  # M3：后继轮同样换代，旧代退出不得回写
+    依附，安静群里被无限期搁置。换代即清令牌（begin_cycle 收口），令牌
+    只能由真实门控命中消息重新置位。"""
+    gen = pl.begin_cycle()  # M3：后继轮同样换代，旧代退出不得回写（换代即清令牌）
     pl.agent_state = "running"
-    pl.followup_armed = False
     cycle_id = P._cycle_counter.get(gid, 0) + 1
     P._cycle_counter[gid] = cycle_id
     logger.info(
@@ -866,9 +864,8 @@ def _schedule_wait_resume(P, st, cfg, gid: str, seconds: int):
             elapsed = time.time() - armed_at
             has_new = st.pending_since_fire > 0
             receipt = planner.build_wait_completed_message(elapsed, seconds, has_new)
-            gen = pl.begin_cycle()  # M3：续轮换代，旧代退出不得回写
+            gen = pl.begin_cycle()  # M3：续轮换代，旧代退出不得回写（换代即清令牌）
             pl.agent_state = "running"
-            pl.followup_armed = False  # 开轮入口统一清令牌（见 _start_followup_cycle）
             # wait 续轮也是新循环：自增计数器并上报阶段（对齐 _schedule_planner
             # 的 79-87 行）——此前续轮直呼 _planner_cycle 不自增，与原循环共用
             # cycle_id，推理过程页出现两个"循环#N"（用户实报：两个循环1）
