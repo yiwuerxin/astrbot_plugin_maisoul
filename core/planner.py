@@ -536,6 +536,9 @@ class PlannerState:
         None  # 最近一次真实触发 event（wait 续轮复用：候选列表挂 event 上，换对象=candidate_expired）
     )
     eco_injection: str = ""  # 本轮 replyer 收集的生态注入全文（观察页展示用，轮始清空）
+    replyer_traces: list = field(
+        default_factory=list
+    )  # 本轮每次 reply 的生成素材（按次追加，轮始清空——单槽覆盖曾致同循环中间几次 reply 在推理过程页丢失）
     last_cycle_ts: float = 0.0  # 上一轮消费到的消息时间戳（pending 排水用）
     umo: str = ""  # wait 恢复续轮所需的发送上下文
     platform: str = ""

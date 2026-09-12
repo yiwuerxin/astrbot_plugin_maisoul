@@ -1479,10 +1479,16 @@ function rrTypeOfRec(rec){
   if(ts.every(n=>n==='finish'||n==='wait'))return 'wait';
   return 'tools'
 }
+function rrReplyerTraces(d){
+  /* 兼容两代载荷：v6.27.1+ 的 replyers 列表（同循环多次 reply 按次全留——
+     旧单槽只存最后一次，中间几次真实发送曾在本页不可见）；旧事件单键 replyer dict */
+  const arr=(d&&d.replyers)||((d&&d.replyer)?[d.replyer]:[]);
+  return Array.isArray(arr)?arr:[]
+}
 function rrRoundsOfReplyer(ev){
-  /* 回复器流程：一轮 finalized 一条（有 v6.20.0 扩展 replyer 块才可见，
-     标题=输出预览——对齐部署版 replyer 记录 display_title=output_preview） */
-  return ((ev.data||{}).replyer)?[{key:ev.id+'_rp',ev:ev,rp:true,tools:[],slice:false}]:[]
+  /* 回复器流程：一次 finalized 的每次 reply 各一条（标题=输出预览——对齐
+     部署版 replyer 记录 display_title=output_preview）；旧事件无素材不可见 */
+  return rrReplyerTraces(ev.data||{}).map((t,i)=>({key:ev.id+'_rp'+i,ev:ev,rp:t,rpi:i,tools:[],slice:false}))
 }
 function rrFiltered(){
   const rr=MO.rr||{};
@@ -1490,7 +1496,7 @@ function rrFiltered(){
   if(rr.sess)evs=evs.filter(x=>x.sid===rr.sess);
   /* stage 分流（对齐部署版 ?stage=planner|replyer）：replyer 只看带 replyer 块的事件 */
   const replyer=MO.rrStage==='replyer';
-  if(replyer)evs=evs.filter(x=>(x.data||{}).replyer);
+  if(replyer)evs=evs.filter(x=>rrReplyerTraces(x.data||{}).length);
   const recs=[];
   [...evs].reverse().forEach(ev=>{
     let rs=replyer?rrRoundsOfReplyer(ev):rrRoundsOf(ev);
@@ -1526,15 +1532,17 @@ function rrRowHTML(rec,selected){
   return `<button type="button" class="${cls}" data-tools="${esc(names)}" onclick="rrSel('${jsq(rec.key)}')"><div class="flex items-start justify-between gap-2"><div class="min-w-0 flex-1"><div class="flex min-w-0 items-start gap-1.5"><div class="text-foreground line-clamp-2 min-w-0 text-sm font-medium" title="${esc(names)}">${esc(names)}</div></div></div><span class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">${RR_SVG_CLOCK}${m.tstr}</span></div><div class="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs" title="${esc(meta)}"><span class="inline-flex min-w-0 items-center gap-1">${RR_SVG_CPU}<span class="truncate">循环 #${m.cycle==null?'-':m.cycle}</span></span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${m.dur} s</span><span class="inline-flex items-center gap-1">输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token</span><span class="shrink-0">${m.size} KB</span></div></button>`
 }
 function rrReplyerRowHTML(rec,selected){
-  /* 回复器记录行（对齐部署版 replyer 记录：标题=输出预览，meta=模型/耗时） */
-  const d=rec.ev.data||{},rp=d.replyer||{};
+  /* 回复器记录行（对齐部署版 replyer 记录：标题=输出预览，meta=模型/耗时）；
+     同循环多次 reply 各一行，多行时标「第 N 次」 */
+  const d=rec.ev.data||{},rp=rec.rp||d.replyer||{};
+  const traces=rrReplyerTraces(d),multi=traces.length>1;
   const ts=new Date((d.timestamp||rec.ev.ts)*1000);
   const tstr=String(ts.getMonth()+1).padStart(2,'0')+'/'+String(ts.getDate()).padStart(2,'0')+' '+ts.toTimeString().slice(0,8);
   const dur=((rp.duration_ms||0)/1000).toFixed(2);
   const title=(String(rp.output||'').replace(/\s+/g,' ').trim()).slice(0,60)||'（无输出）';
   const meta=`模型：${rp.model_name||'maisoul replyer'} · 耗时：${dur} s`;
   const cls='flex w-full flex-col gap-1.5 rounded-md border px-2.5 py-2 text-left text-sm transition-colors sm:gap-2 sm:px-3 '+(selected?'border-primary bg-primary/10 text-foreground selrow':'hover:border-border hover:bg-muted/60 border-transparent');
-  return `<button type="button" class="${cls}" data-tools="reply" onclick="rrSel('${jsq(rec.key)}')"><div class="flex items-start justify-between gap-2"><div class="min-w-0 flex-1"><div class="flex min-w-0 items-start gap-1.5"><div class="text-foreground line-clamp-2 min-w-0 text-sm font-medium" title="${esc(title)}">${esc(title)}</div></div></div><span class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">${RR_SVG_CLOCK}${tstr}</span></div><div class="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs" title="${esc(meta)}"><span class="inline-flex min-w-0 items-center gap-1">${RR_SVG_CPU}<span class="truncate">循环 #${d.cycle_id==null?'-':d.cycle_id}</span></span><span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${dur} s</span>${rp.model_name?`<span class="inline-flex items-center gap-1">${RR_SVG_CPU}${esc(rp.model_name)}</span>`:''}</div></button>`
+  return `<button type="button" class="${cls}" data-tools="reply" onclick="rrSel('${jsq(rec.key)}')"><div class="flex items-start justify-between gap-2"><div class="min-w-0 flex-1"><div class="flex min-w-0 items-start gap-1.5"><div class="text-foreground line-clamp-2 min-w-0 text-sm font-medium" title="${esc(title)}">${esc(title)}</div></div></div><span class="text-muted-foreground flex shrink-0 items-center gap-1 text-xs">${RR_SVG_CLOCK}${tstr}</span></div><div class="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs" title="${esc(meta)}"><span class="inline-flex min-w-0 items-center gap-1">${RR_SVG_CPU}<span class="truncate">循环 #${d.cycle_id==null?'-':d.cycle_id}</span></span>${multi?`<span class="inline-flex items-center gap-1">第 ${rec.rpi+1} 次</span>`:''}<span class="inline-flex items-center gap-1">${RR_SVG_TIMER}${dur} s</span>${rp.model_name?`<span class="inline-flex items-center gap-1">${RR_SVG_CPU}${esc(rp.model_name)}</span>`:''}</div></button>`
 }
 function rrRowsHTML(list,pi){
   return list.slice((pi.page-1)*RR_PAGE,pi.page*RR_PAGE).map(r=>r.rp?rrReplyerRowHTML(r,r.key===(MO.rr&&MO.rr.sel)):rrRowHTML(r,r.key===(MO.rr&&MO.rr.sel))).join('')
@@ -1567,7 +1575,7 @@ function rrDetailHTML(rec){
   const d=rec.ev.data||{},req=d.request||{};
   /* 回复器详情：请求双段（system/user）+ 输出（思考+正文）+ 生态注入 */
   if(rec.rp){
-    const rp=d.replyer||{};
+    const rp=rec.rp||d.replyer||{};
     const ts=new Date((d.timestamp||rec.ev.ts)*1000);
     const tstr=String(ts.getMonth()+1).padStart(2,'0')+'/'+String(ts.getDate()).padStart(2,'0')+' '+ts.toTimeString().slice(0,8);
     const dur=((rp.duration_ms||0)/1000).toFixed(2);
@@ -1597,7 +1605,7 @@ function rrPagerHTML(pi){
 }
 function rrFootTok(rec){
   if(!rec)return '';
-  if(rec.rp){const rp=(rec.ev.data||{}).replyer||{};return `耗时 ${((rp.duration_ms||0)/1000).toFixed(2)} s`}
+  if(rec.rp){const rp=rec.rp||((rec.ev.data||{}).replyer)||{};return `耗时 ${((rp.duration_ms||0)/1000).toFixed(2)} s`}
   const m=rrRecMeta(rec);
   return `输入 ${m.tin.toLocaleString()} / 输出 ${m.tout.toLocaleString()} / 总计 ${(m.tin+m.tout).toLocaleString()} Token`;
 }

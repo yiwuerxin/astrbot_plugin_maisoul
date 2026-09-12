@@ -172,7 +172,7 @@ async def _planner_cycle(
     # 回复器素材是单轮消费：开轮清空，防止上一轮 reply 的 trace 被本轮
     # finalize 复读（用户实报：推理过程页回复器流程循环#N/N+1/…内容全同
     # ——首条 reply 之后 no_action/wait 轮都复读同一份过期块）
-    pl.replyer_trace = None
+    pl.replyer_traces = []
     pl.replyer_reasoning = ""
     end_reason = ""
     interrupted = False
@@ -211,7 +211,7 @@ async def _planner_cycle(
             model_by_idx=model_by_idx,
             planner_model_name=" / ".join(planner_models),
             replyer_reasoning=getattr(pl, "replyer_reasoning", ""),
-            replyer_trace=getattr(pl, "replyer_trace", None),
+            replyer_traces=getattr(pl, "replyer_traces", None),
         )
 
     try:
@@ -946,16 +946,22 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     # 状态上，由 finalize 汇入 planner.finalized 的 maisoul 扩展 replyer 块——
     # 不进麦麦观察时间线；生态注入同轮已有 final_state.eco_injection）
     _pl = st.planner_state()
-    _pl.replyer_reasoning = str(getattr(resp, "reasoning_content", None) or "").strip()
+    _reply_reasoning = str(getattr(resp, "reasoning_content", None) or "").strip()
+    _pl.replyer_reasoning = _reply_reasoning  # planner 块展示口径：最近一次
     _pl.replyer_duration_ms = (time.time() - reply_started) * 1000
-    _pl.replyer_trace = {
-        "system_prompt": system_prompt,
-        "user_message": user_message,
-        "output": answer,
-        "model": str(replyer_used.get("model") or ""),
-        "provider": str(replyer_used.get("provider") or ""),
-        "duration_ms": _pl.replyer_duration_ms,
-    }
+    # 按次追加（v6.27.1）：同循环多次 reply 各留一份——旧单槽只存最后一次，
+    # 中间几次真实发送在推理过程页不可见（实测环境实报：实发四条、规划器只见两条）
+    _pl.replyer_traces.append(
+        {
+            "system_prompt": system_prompt,
+            "user_message": user_message,
+            "output": answer,
+            "model": str(replyer_used.get("model") or ""),
+            "provider": str(replyer_used.get("provider") or ""),
+            "duration_ms": _pl.replyer_duration_ms,
+            "reasoning": _reply_reasoning,
+        }
+    )
     if not answer:
         return "模型未返回内容，本次未发言"
 
