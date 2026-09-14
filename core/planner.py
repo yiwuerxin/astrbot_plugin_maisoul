@@ -710,7 +710,9 @@ def build_planner_toolset(deps) -> "object":
         FunctionTool(
             name="send_emoji",
             description="发送一个表情包来表达情绪，参与聊天。",
-            parameters={"type": "object", "properties": {}},
+            # required:[] 不可省（v6.28.0）：MaiBot 工具规范化层显式补空数组，
+            # 缺省时 DeepSeek 等严格校验网关会报 null is not of type "array" 400
+            parameters={"type": "object", "properties": {}, "required": []},
             handler=_send_emoji,
         )
     )
