@@ -1071,6 +1071,7 @@ def _schedule_backoff_recheck(P, event, st, gid: str, is_group: bool, delay: flo
             platform=str(event.get_platform_name() or ""),
             chat_id=gid,
             is_group=is_group,
+            batch_texts=trigger.batch_texts_since_fire(st),
         )
         if not fired:
             logger.debug(f"maisoul[{gid}] 退避到期重查未达标：{detail}")

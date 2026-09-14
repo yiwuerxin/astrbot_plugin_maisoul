@@ -172,6 +172,10 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
         _has_at_all(P, event),
         _is_reply_to_bot(P, event),
     )
+    # 批次评分素材（v6.28.0，对齐 turn_gates 的 pending_messages 整批评）：
+    # 上次发言以来的整批外部消息——必要性模式的内容分按拼接全文算长度、
+    # 短反应按批次判定、批内任一条提及都拿 80 档（修单条评分缩水）
+    batch_texts = trigger.batch_texts_since_fire(st)
     fired, detail, nec = trigger.should_trigger(
         st,
         P.config,
@@ -183,6 +187,7 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
         platform=str(event.get_platform_name() or ""),
         chat_id=gid,
         is_group=is_group,
+        batch_texts=batch_texts,
     )
     logger.debug(f"maisoul[{gid}] {detail}")
 
@@ -226,6 +231,14 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     # 消息同样要拦截——不 stop_event 会被原生 LLM 阶段照常回复（@/唤醒消息
     # 带 is_at_or_wake_command），与稍后完成的麦麦回复形成双回复（v6.28.0）
     if st.firing:
+        # 强制触发（@必回）不丢弃：一次性武装，生成结束后补轮消费（对齐
+        # _arm_forced_turn 的下一轮消费语义，v6.28.0——此前生成中到达的 @
+        # 被直接吞掉）
+        _forced_like = (at_bot and P.config.get("inevitable_at_reply", True)) or (
+            mentioned and P.config.get("mentioned_bot_reply", False)
+        )
+        if _forced_like:
+            st.forced_armed = True
         event.stop_event()
         return
     st.firing = True
@@ -236,6 +249,29 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     finally:
         st.firing = False
     event.stop_event()
+    # 武装补轮（v6.28.0）：生成期间到达的 @ 在生成结束后消费——取积压里
+    # 最近的点名消息作触发文本；补轮期间再来的 @ 继续武装，封顶防连环
+    _armed_rounds = 0
+    while st.forced_armed and _armed_rounds < 3:
+        st.forced_armed = False
+        _armed_rounds += 1
+        _trig = next(
+            (
+                m
+                for m in reversed(list(st.buffer))
+                if m.get("at_bot") and str(m.get("sid")) != "self"
+            ),
+            None,
+        )
+        _ttext = str((_trig or {}).get("text") or text)
+        logger.info(f"maisoul[{gid}] 武装补轮：消费生成期间到达的强制触发消息")
+        st.firing = True
+        try:
+            await _generate_and_send(P, event, st, "强制触发补轮", "", _ttext, is_group)
+        except Exception:
+            logger.error("maisoul 武装补轮生成失败", exc_info=True)
+        finally:
+            st.firing = False
 
 
 # ------------------------------------------------------------------ #
@@ -289,6 +325,7 @@ def _maybe_defer_recheck(P, event: AstrMessageEvent, st, gid: str, is_group: boo
             platform=platform,
             chat_id=gid,
             is_group=is_group,
+            batch_texts=trigger.batch_texts_since_fire(st),
         )
         if not fired:
             logger.debug(f"maisoul[{gid}] 空窗到点重查未达标：{detail}")
