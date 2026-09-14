@@ -14,6 +14,10 @@ from .events_util import _emit_sent
 async def on_llm_request_impl(P, event: AstrMessageEvent, req):
     if not event.get_extra("maisoul_triggered"):
         return
+    # 模式守卫（v6.28.0）：native 命中飞行中切换模式/停用插件时，该事件的
+    # 后续原生请求不再注入三件套
+    if P.config["mode"] != "native" or not P.config["enable"]:
+        return
     if not req or not hasattr(req, "system_prompt"):
         return
     gid = session_key(event)
@@ -35,6 +39,11 @@ async def on_llm_response_impl(P, event: AstrMessageEvent, resp):
         if event.get_extra("maisoul_eco_resp"):
             return  # 生态注入桥自己触发的链，防回声重复记录
         if P.config["mode"] == "independent":
+            return
+        # 对称守卫（v6.28.0）：只记麦麦触发的请求的回复——escape 放行的
+        # 原生/他插件回复此前被记为麦麦自发，污染频率窗口反馈、存在感
+        # 惩罚与观察账本（双记账）
+        if not event.get_extra("maisoul_triggered"):
             return
         answer = (getattr(resp, "completion_text", "") or "").strip()
         if not answer:

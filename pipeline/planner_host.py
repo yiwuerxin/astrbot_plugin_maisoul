@@ -474,6 +474,17 @@ async def _planner_cycle(
                 if x
             ]
             tail_msgs.append(time.strftime("时间：%Y-%m-%d %H:%M:%S"))
+            if bool(eff_cfg.get("emotion_enable", False)):
+                # 决策轮情绪元信息（v6.28.0）：MaiBot 决策前有记忆/人物档案
+                # 注入位，maisoul 以自有情绪数值面做轻量等价——好感/情绪开始
+                # 影响开口意愿；心弦在场时经方向②（apply_emotion_event）
+                # 自动充实该信号。随尾部注入只在当次请求出现（不进历史）
+                _emo = st.emotion
+                tail_msgs.append(
+                    f"当前{str(eff_cfg.get('bot_name') or '麦麦')}的情绪状态："
+                    f"「{_emo.label(time.time())}」（心情值 {_emo.v:+.2f}，"
+                    f"激昂度 {_emo.a:.2f}），判断是否回应与如何回应时可参考"
+                )
             if attention_tail_msg:
                 tail_msgs.append(attention_tail_msg)
             final_reminder = planner.PLANNER_FINAL_USER_REMINDER.format(
@@ -1140,9 +1151,11 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
     )
     # 黑话参考已移至 planner 每轮注入（对齐 jargon_context_matcher 位置）
     trigger_text = ""
+    target_name = ""
     for m in reversed(list(st.buffer)):
         if str(m.get("msg_id") or "") == msg_id:
             trigger_text = str(m.get("text") or "")
+            target_name = str(m.get("name") or "").strip()
             break
     eco_event = deps.event or bridge.SyntheticEvent(
         deps.umo, send_message=P.context.send_message
@@ -1167,6 +1180,7 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         keyword_reaction=keyword_block,
         reference_override=reference,
         is_group=deps.is_group,
+        target_msg_id=msg_id,
     )
     if bool(
         eff_cfg.get("emotion_enable", False)
@@ -1250,7 +1264,14 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         gen_baseline=reply_baseline,
         is_group=deps.is_group,
     )
-    return f"已发送 {len(sent)} 段" + ("（引用回复）" if quote_id else "")
+    # 回执 = MaiBot reply.py 原文格式（v6.28.0）："麦麦"已生成并向"张三"
+    # 发送了回复"你好呀"——带双方名与正文预览，模型对"发给谁/发了什么"
+    # 的自察远强于旧"已发送 N 段"
+    _bot_name = str(eff_cfg.get("bot_name") or "麦麦")
+    return (
+        f'"{_bot_name}"已生成并向"{target_name or "大家"}"发送了回复'
+        f'"{"".join(sent)}"'
+    )
 
 
 async def _planner_send_emoji(P, deps) -> str:
