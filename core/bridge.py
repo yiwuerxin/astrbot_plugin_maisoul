@@ -227,13 +227,25 @@ class SyntheticEvent:
 
 
 def _result_text(r) -> str:
+    """工具产物 → 文本。
+
+    铁律：对象转文本边界只取 .text / str 本体，禁止 str() 整对象——
+    pydantic repr（type=<ComponentType...> 之类）会灌进管家桥二轮上下文
+    占用截断位（v6.28.0）。无法转文本的产物丢弃并留 error 日志。
+    """
     contents = getattr(r, "content", None)
     if contents:
         texts = [str(getattr(c, "text", "") or "") for c in contents]
         joined = "\n".join(t for t in texts if t)
         if joined:
             return joined
-    return str(r or "")
+    if isinstance(r, str):
+        return r
+    text = getattr(r, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text
+    logger.error(f"maisoul: 工具返回无法转文本的产物（{type(r).__name__}），已丢弃该段")
+    return ""
 
 
 async def call_llm_tool(
