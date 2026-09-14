@@ -164,7 +164,10 @@ def register_webui(context, config, states, learning_store=None, monitor=None) -
             if err:
                 return jsonify({"success": False, "error": err}), 400
             learning_store.data = payload
-            learning_store.save()
+            # 落盘移出事件循环（8MB 级 JSON 同步写会卡循环，v6.28.0）
+            import asyncio as _aio
+
+            await _aio.to_thread(learning_store.save)
             return jsonify({"success": True})
 
         async def get_expressions():

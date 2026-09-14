@@ -378,12 +378,17 @@ async def _planner_cycle(
             )
             history_count = len(history_msgs)
         # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
-        # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
+        # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）。仅他人
+        # 消息参与命中（对齐 jargon_context_matcher 排除自发消息，v6.28.0）
         use_jargon, _ = learning.learning_flags(
             eff_cfg, "jargon_learning_list", platform, gid, is_group
         )
         jargon_key = learning.share_key(eff_cfg, "jargon_groups", platform, gid)
-        jargon_recent = [m.get("text") or "" for m in list(st.buffer)[-context_limit:]]
+        jargon_recent = [
+            m.get("text") or ""
+            for m in list(st.buffer)[-context_limit:]
+            if str(m.get("sid")) != "self"
+        ]
         injected_jargons: set[str] = set()
         # wait 回执已在种子段以 role=tool 配对注入（v6.28.0），不再走
         # user 文本轮前置

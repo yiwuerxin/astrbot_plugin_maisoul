@@ -193,7 +193,10 @@ def _schedule_learning(
     """发言后异步学习表达/黑话（对齐 MaiBot 学习器：失败不影响发言）。
 
     is_group：学习规则按 group/private 匹配（v6.20.3 贯通——此前漏传恒按
-    group 匹配，私聊 learn=False 规则失效）。"""
+    group 匹配，私聊 learn=False 规则失效）。
+    学习触发闸三件套（v6.28.0，对齐 runtime 学习调度）：① 会话级互斥——
+    同会话上一批未完成不叠批（重复学习同一窗口虚增 count + 重复账单）；
+    ② 30s 最小间隔——学习 LLM 不再与聊天 1:1 放大；③ ≥10 条可学外部消息。"""
     try:
         _, learn_expr = learning.learning_flags(
             eff_cfg, "expression_learning_list", platform, gid, is_group
@@ -203,8 +206,19 @@ def _schedule_learning(
         )
         if not (learn_expr or learn_jargon):
             return
-        snapshot_cfg = dict(eff_cfg)
+        now = time.time()
+        if st.learn_busy:
+            logger.debug(f"maisoul[{gid}] 学习跳过：同会话上一批未完成")
+            return
+        if now - st.last_learn_ts < learning.LEARN_MIN_INTERVAL_SECONDS:
+            return
         snapshot_buf = list(st.buffer)[-30:]
+        learnable = sum(1 for m in snapshot_buf if str(m.get("sid")) != "self")
+        if learnable < learning.LEARN_MIN_MESSAGES:
+            return
+        st.learn_busy = True
+        st.last_learn_ts = now
+        snapshot_cfg = dict(eff_cfg)
         learn_bind = _pick_task_model(P, "learner", snapshot_cfg)
 
         async def _run():
@@ -223,6 +237,8 @@ def _schedule_learning(
                     logger.info(f"maisoul[{gid}] 学习: {summary}")
             except Exception:
                 logger.debug("maisoul: 学习任务失败", exc_info=True)
+            finally:
+                st.learn_busy = False
 
         P._spawn(_run(), name=f"learning:{gid}")
     except Exception:
