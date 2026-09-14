@@ -648,6 +648,88 @@ def test_scoring():
     ).score
     check("存在感惩罚生效", noisy < quiet, f"{noisy} < {quiet}")
 
+    # v6.28.0：打字拟人总时长上限（maisoul 扩展，MaiBot 同病无上限）
+    from astrbot_plugin_maisoul.core import sender as _sender_mod
+
+    check(
+        "打字上限: 逐段钳制预算耗尽归零",
+        _sender_mod.cap_total_delay([10.0, 25.0, 5.0], 30.0) == [10.0, 20.0, 0.0],
+        str(_sender_mod.cap_total_delay([10.0, 25.0, 5.0], 30.0)),
+    )
+    check(
+        "打字上限: 预算内不动",
+        _sender_mod.cap_total_delay([1.0, 2.0], 30.0) == [1.0, 2.0],
+    )
+
+    # v6.28.0：用户正则超时防护（灾难回溯挂死事件循环的兜底）
+    from astrbot_plugin_maisoul.core import sanitize as _sanitize_mod
+    import time as _time_mod
+
+    check(
+        "正则防护: 正常命中",
+        asyncio.run(_sanitize_mod.safe_regex_any([r"微信\d+"], "加微信123", 0.5)),
+    )
+    check(
+        "正则防护: 未命中放行",
+        not asyncio.run(_sanitize_mod.safe_regex_any([r"x{9,}"], "普通消息", 0.5)),
+    )
+    # (a+)+$ 回溯爆炸（26 个 a 后跟 b，约 2^25 步、后台线程数秒内自了）——
+    # 超时兜底返回 False 且确实等了超时窗；线程不可取消是 asyncio.to_thread
+    # 的边界，输入规模刻意压在有界档防测试自身钉死 CPU
+    _t0 = _time_mod.time()
+    _r = asyncio.run(_sanitize_mod.safe_regex_any([r"(a+)+$"], "a" * 26 + "b", 0.5))
+    _elapsed = _time_mod.time() - _t0
+    check(
+        "正则防护: 灾难回溯超时放行且不挂死",
+        _r is False and _elapsed >= 0.4,
+        f"r={_r} elapsed={_elapsed:.2f}",
+    )
+    from astrbot_plugin_maisoul.core import learning as _learning_mod
+
+    check(
+        "关键词反应: 异步安全版与同步版同构",
+        asyncio.run(
+            _learning_mod.keyword_reaction_block_safe(
+                {"keyword_rules": [{"keywords": ["游戏"], "reaction": "聊聊"}]},
+                "最近在玩什么游戏",
+            )
+        )
+        == _learning_mod.keyword_reaction_block(
+            {"keyword_rules": [{"keywords": ["游戏"], "reaction": "聊聊"}]},
+            "最近在玩什么游戏",
+        )
+        != "",
+    )
+
+    # v6.28.0（A10）：TASKS 三处同源护栏（坑 62——改一漏二完全隐形）
+    import json as _json10
+    import re as _re10
+    from pathlib import Path as _P10
+    from astrbot_plugin_maisoul.core import modelbind as _mb10
+
+    _root10 = _P10(__file__).resolve().parent.parent
+    _schema10 = _json10.loads(
+        (_root10 / "_conf_schema.json").read_text(encoding="utf-8")
+    )
+    _schema_tasks = [
+        e.get("task")
+        for e in _schema10["task_models"]["default"]
+        if isinstance(e, dict)
+    ]
+    _js10 = (_root10 / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    _m10 = _re10.search(r"MD_TASKS\s*=\s*\[(.*?)\n\]", _js10, _re10.S)
+    _js_tasks = _re10.findall(r"key:\s*'([^']+)'", _m10.group(1)) if _m10 else []
+    check(
+        "TASKS 护栏: schema 默认值 = modelbind.TASKS",
+        set(_schema_tasks) == set(_mb10.TASKS),
+        f"{sorted(_schema_tasks)} vs {sorted(_mb10.TASKS)}",
+    )
+    check(
+        "TASKS 护栏: 页面 MD_TASKS = modelbind.TASKS",
+        set(_js_tasks) == set(_mb10.TASKS),
+        f"{sorted(_js_tasks)} vs {sorted(_mb10.TASKS)}",
+    )
+
     check("频率0.1倍率0.55", abs(scoring.freq_factor(0.1) - 0.55) < 1e-9)
     check("压力: 4/4无闲置=50", scoring.pressure_score(4, 4, False) == 50)
     check("压力: 超阈值对数封顶", scoring.pressure_score(400, 4, False) == 100)

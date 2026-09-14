@@ -192,6 +192,22 @@ def hit_ban_filter(text: str, words, regexes) -> bool:
     return False
 
 
+async def hit_ban_filter_safe(text: str, words, regexes) -> bool:
+    """hit_ban_filter 的异步安全版（v6.28.0）：正则部分经 sanitize.
+    safe_regex_any 超时兜底——管理员配灾难回溯正则不再把事件循环挂死
+    整个 bot；子串部分线性安全保持同步直查。"""
+    from . import sanitize as _sanitize
+
+    text = str(text or "")
+    if not text:
+        return False
+    for word in words or []:
+        word = str(word or "")
+        if word and word in text:
+            return True
+    return await _sanitize.safe_regex_any(regexes, text)
+
+
 def batch_texts_since_fire(st: GroupState) -> list[str]:
     """上次发言以来的整批外部消息文本（对齐 turn_gates 的 pending_messages）。
 

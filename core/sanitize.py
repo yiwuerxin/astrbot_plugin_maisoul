@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from astrbot.api import logger
+
 # 引用/转发占位（QQ OneBot 常见形态 + 通用文案形态）
 _REPLY_PREFIX_RE = re.compile(
     r"^\s*(?:\[CQ:reply[^\]]*\]|\[回复[^\]]*\]|\[引用[^\]]*\]|<reply>[^<]*</reply>)\s*"
@@ -32,6 +34,34 @@ def sanitize_text(text: str) -> str:
     t = _REPLY_PREFIX_RE.sub("", t, count=1)
     t = _FORWARD_RE.sub("[转发消息]", t)
     return t.strip()
+
+
+async def safe_regex_any(patterns, text: str, timeout: float = 0.5) -> bool:
+    """用户配置正则的安全执行（maisoul 扩展，v6.28.0）：灾难回溯正则会把
+    事件循环挂死整个 bot——to_thread + 超时兜底。超时/异常放行并留 error
+    （显式降级不静默）；worker 内的正则错误按不命中跳过（与同步版一致）。"""
+    import asyncio
+
+    pats = [str(p or "").strip() for p in (patterns or []) if str(p or "").strip()]
+
+    def _run() -> bool:
+        for pattern in pats:
+            try:
+                if re.search(pattern, text):
+                    return True
+            except re.error:
+                continue
+        return False
+
+    if not pats:
+        return False
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_run), timeout)
+    except asyncio.TimeoutError:
+        logger.error(
+            f"maisoul: 用户正则执行超时（>{timeout}s），已放行——请检查正则灾难回溯: {pats[:3]}"
+        )
+        return False
 
 
 def leading_ai_mention(text: str, bot_name: str, aliases: list[str]) -> str:

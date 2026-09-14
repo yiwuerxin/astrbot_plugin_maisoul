@@ -68,7 +68,7 @@ async def _generate_and_send(
     expr_block = await _select_expr_block(
         P, st, eff_cfg, platform, gid, provider, reason, is_group=is_group
     )
-    keyword_block = learning.keyword_reaction_block(eff_cfg, trigger_text)
+    keyword_block = await learning.keyword_reaction_block_safe(eff_cfg, trigger_text)
 
     user_message = prompt.build_final_user_message(
         st,

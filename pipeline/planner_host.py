@@ -1168,7 +1168,7 @@ async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
         if eco_extras
         else ""
     )
-    keyword_block = learning.keyword_reaction_block(eff_cfg, trigger_text)
+    keyword_block = await learning.keyword_reaction_block_safe(eff_cfg, trigger_text)
 
     reference = reply_reference or (f"当前思考：\n{reason}" if reason else "")
     user_message = prompt.build_final_user_message(

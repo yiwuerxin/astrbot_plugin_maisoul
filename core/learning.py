@@ -865,11 +865,8 @@ def jargon_reference_block(
     return "\n".join(lines)
 
 
-def keyword_reaction_block(cfg, match_text: str) -> str:
-    """最新用户消息命中关键词/正则规则 → 反应块（格式 = MaiBot 原文）。"""
-    match_text = str(match_text or "").strip()
-    if not match_text:
-        return ""
+def _keyword_reaction_matches(cfg, match_text: str) -> list[str]:
+    """关键词/正则规则的命中反应内核（keyword_reaction_block 的主体）。"""
     matched_reactions: list[str] = []
     for rule in cfg.get("keyword_rules") or []:
         if not isinstance(rule, dict):
@@ -902,10 +899,48 @@ def keyword_reaction_block(cfg, match_text: str) -> str:
                 replaced = replaced.replace(f"[{group_name}]", group_value or "")
             matched_reactions.append(replaced)
             break
-    if not matched_reactions:
-        return ""
+    return matched_reactions
+
+
+def _render_keyword_block(matched_reactions: list[str]) -> str:
     lines = "\n".join(f"- {r}" for r in matched_reactions)
     return f"【关键词反应】\n最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n{lines}\n"
+
+
+def keyword_reaction_block(cfg, match_text: str) -> str:
+    """最新用户消息命中关键词/正则规则 → 反应块（格式 = MaiBot 原文）。"""
+    match_text = str(match_text or "").strip()
+    if not match_text:
+        return ""
+    matched = _keyword_reaction_matches(cfg, match_text)
+    if not matched:
+        return ""
+    return _render_keyword_block(matched)
+
+
+async def keyword_reaction_block_safe(cfg, match_text: str) -> str:
+    """keyword_reaction_block 的异步安全版（v6.28.0，maisoul 扩展）：
+    用户正则经 to_thread+0.5s 超时兜底——灾难回溯正则不再挂死事件循环；
+    超时按无命中处理（漏一次反应优于整个 bot 卡死）并留 error。"""
+    import asyncio
+
+    match_text = str(match_text or "").strip()
+    if not match_text:
+        return ""
+    try:
+        matched = await asyncio.wait_for(
+            asyncio.to_thread(_keyword_reaction_matches, cfg, match_text),
+            0.5,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "maisoul: 正则反应规则执行超时（>0.5s），本轮按无命中处理——"
+            "请检查灾难回溯正则"
+        )
+        return ""
+    if not matched:
+        return ""
+    return _render_keyword_block(matched)
 
 
 # ---------------------------------------------------------------------- #

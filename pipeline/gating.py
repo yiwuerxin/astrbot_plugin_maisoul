@@ -112,7 +112,7 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
     # 不进缓存不进门控；指令类消息（escape）不检查，同 MaiBot 只查非命令候选。
     # v6.20.3：补 stop_event——只 return 不拦传播时，@机器人的违禁消息会被
     # 原生 LLM 阶段照常回复，"整条丢弃"语义名存实亡）
-    if trigger.hit_ban_filter(
+    if await trigger.hit_ban_filter_safe(
         text, P.config.get("ban_words"), P.config.get("ban_msgs_regex")
     ):
         logger.debug(f"maisoul: 消息命中过滤词，已丢弃: {text[:30]}")
