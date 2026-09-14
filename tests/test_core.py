@@ -2306,7 +2306,11 @@ def test_learning():
         and "来表达。" in blk,
         blk[:60],
     )
-    check("表达块: 条数≤5", blk.count("\n") <= 5)
+    check(
+        "表达块: 直注入整池≤10（v6.28.0 对齐 MaiBot 不截断）",
+        1 <= blk.count("\n") <= 10,
+        str(blk.count("\n")),
+    )
 
     tmp2 = pathlib.Path(tempfile.mkdtemp()) / "u.json"
     store2 = learning.LearningStore(path=tmp2)
@@ -2357,6 +2361,127 @@ def test_learning():
         "黑话排序: count 降序 + 首现优先",
         order == ["高频词", "同高频", "低频词"],
         str(order),
+    )
+
+    # v6.28.0：黑话生命周期（空含义占位 / count 累积 / 归一化命中）
+    tmp5 = pathlib.Path(tempfile.mkdtemp()) / "ph.json"
+    store5 = learning.LearningStore(path=tmp5)
+    check("黑话占位: 空含义可入库", store5.add_jargon("g", "nb", ""))
+    check(
+        "黑话占位: 空含义条目不注入",
+        learning.jargon_reference_block(store5, "g", ["这波太nb了"]) == "",
+    )
+    store5.add_jargon("g", "nb", "很牛")
+    _j5 = store5.jargons("g")[0]
+    check(
+        "黑话占位: 二次入库补含义且 count 累积",
+        _j5["count"] == 2 and _j5["meaning"] == "很牛",
+        str(_j5),
+    )
+    check(
+        "黑话归一: 大小写不敏感命中（lower+空白折叠）",
+        "nb：很牛" in learning.jargon_reference_block(store5, "g", ["太 NB 了吧"]),
+    )
+
+    # v6.28.0：审核闸闭环（AI 入库未点亮不注入，人工点亮后注入）
+    tmp4 = pathlib.Path(tempfile.mkdtemp()) / "gate.json"
+    store4 = learning.LearningStore(path=tmp4)
+    for i in range(12):
+        store4.add_expression("global", f"情境{i}", f"风格{i}", False)
+    check(
+        "审核闸: AI 入库未点亮不注入（checked=False）",
+        learning.expression_habits_block(store4, "global", True) == "",
+    )
+    store4.ensure_expression_ids()
+    for e in store4.all_expressions():
+        store4.review_expression(e["id"], "approve")
+    check(
+        "审核闸: 人工点亮后注入",
+        learning.expression_habits_block(store4, "global", True) != "",
+    )
+
+    # v6.28.0：学习条目过滤层（source_id/SELF/机器人名/越界/>20 整批丢弃）
+    _buf = [
+        {"name": "u", "sid": "u1", "text": "哈", "ts": 1.0},
+        {"name": "麦麦", "sid": "self", "text": "自己的话", "ts": 2.0},
+    ]
+    _items = [
+        {"situation": "好", "style": "用X", "source_id": "0"},
+        {"situation": "学自己", "style": "用Y", "source_id": "1"},
+        {"situation": "含名", "style": "麦麦风格", "source_id": "0"},
+        {"situation": "越界", "style": "用Z", "source_id": "9"},
+        {"situation": "非数字", "style": "用W", "source_id": "abc"},
+    ]
+    _flt = learning._filter_learned_expressions(_items, _buf, "麦麦", {"麦麦"})
+    check("过滤层: 只留合法条目", [f["situation"] for f in _flt] == ["好"])
+    check(
+        "过滤层: >20 整批丢弃（模型跑飞）",
+        learning._filter_learned_expressions(
+            [{"situation": "a", "style": "b", "source_id": "0"}] * 21,
+            _buf,
+            "麦麦",
+            {"麦麦"},
+        )
+        == [],
+    )
+    check(
+        "自身名硬闸: 子串口径（含名/被名含都拦）",
+        learning._is_self_related("麦麦子", {"麦麦"})
+        and learning._is_self_related("麦", {"麦麦"})
+        and not learning._is_self_related("yyds", {"麦麦"}),
+    )
+
+    # v6.28.0：抽样权重 min-max 归一（高频只 5 倍偏向，不再百倍垄断）
+    _ws = learning._compute_weights([{"count": 1}, {"count": 100}, {"count": 50}])
+    check(
+        "权重: min-max 归一 1~5",
+        abs(_ws[0] - 1.0) < 1e-9 and abs(_ws[1] - 5.0) < 1e-9 and 1.0 < _ws[2] < 5.0,
+        str(_ws),
+    )
+    check(
+        "权重: 等值全 1",
+        learning._compute_weights([{"count": 3}, {"count": 3}]) == [1.0, 1.0],
+    )
+
+    # v6.28.0：贪心 MMR（同簇让位异簇）
+    _scored = [
+        (0.9, {"emb": [1.0, 0.0], "situation": "同簇a"}),
+        (0.85, {"emb": [0.99, 0.14], "situation": "同簇a2"}),
+        (0.5, {"emb": [0.0, 1.0], "situation": "异簇b"}),
+    ]
+    _mmr = learning._greedy_mmr(_scored, 2)
+    check(
+        "MMR: 同簇让位异簇",
+        [m["situation"] for m in _mmr] == ["同簇a", "异簇b"],
+        str([m["situation"] for m in _mmr]),
+    )
+
+    # v6.28.0：装载期条目消毒（非法条目剔除、合法保留并落盘）
+    import json as _json5
+
+    _bad5 = pathlib.Path(tempfile.mkdtemp()) / "sanitize.json"
+    _bad5.write_text(
+        _json5.dumps(
+            {
+                "global": {
+                    "expressions": [
+                        {"situation": "s", "style": "t", "count": 1, "checked": False},
+                        {"situation": "坏", "count": "abc"},
+                    ],
+                    "jargons": [
+                        {"content": "ok", "meaning": "", "count": 1},
+                        {"content": ""},
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _store6 = learning.LearningStore(path=_bad5)
+    check(
+        "装载消毒: 非法条目剔除保留合法",
+        len(_store6.expressions("global")) == 1 and len(_store6.jargons("global")) == 1,
+        str(_store6.data),
     )
 
     # 防复读与提示词清理（v6.9.6）
@@ -2688,7 +2813,50 @@ def test_learning():
     check(
         "学习库校验: 合法结构通过",
         apivalid.validate_learning_payload(
+            {
+                "global": {
+                    "expressions": [
+                        {"situation": "s", "style": "t", "count": 1, "checked": False}
+                    ],
+                    "jargons": [{"content": "c", "meaning": "", "count": 1}],
+                }
+            }
+        )
+        is None,
+    )
+    # v6.28.0：条目级校验（坏 count/缺字段/错型拒绝——曾让注入管线持续崩溃）
+    check(
+        "学习库校验: 表达缺 style 拒绝",
+        apivalid.validate_learning_payload(
             {"global": {"expressions": [{"situation": "s"}], "jargons": []}}
+        )
+        is not None,
+    )
+    check(
+        "学习库校验: 坏 count 拒绝",
+        apivalid.validate_learning_payload(
+            {
+                "global": {
+                    "expressions": [{"situation": "s", "style": "t", "count": "abc"}],
+                    "jargons": [],
+                }
+            }
+        )
+        is not None,
+    )
+    check(
+        "学习库校验: 黑话缺 content 拒绝、空 meaning 合法",
+        apivalid.validate_learning_payload(
+            {"global": {"expressions": [], "jargons": [{"meaning": "x"}]}}
+        )
+        is not None
+        and apivalid.validate_learning_payload(
+            {
+                "global": {
+                    "expressions": [],
+                    "jargons": [{"content": "yyds", "meaning": "", "count": 1}],
+                }
+            }
         )
         is None,
     )
@@ -2705,7 +2873,14 @@ def test_learning():
         apivalid.validate_learning_payload({"global": {"expressions": "x"}})
         is not None,
     )
-    big = {"global": {"expressions": [{"situation": "x" * 100}] * 100000}}
+    big = {
+        "global": {
+            "expressions": [
+                {"situation": "x" * 100, "style": "y", "count": 1, "checked": False}
+            ]
+            * 100000
+        }
+    }
     check(
         "学习库校验: 体积超限拒绝", apivalid.validate_learning_payload(big) is not None
     )
@@ -4601,9 +4776,23 @@ def test_planner():
     from astrbot_plugin_maisoul.core import learning
 
     class _Prov:
+        """v6.28.0：MaiBot 现行 selector 语义——解析候选清单回首个条目 id。"""
+
+        async def text_chat(self, prompt, session_id=None, **kw):
+            import re as _re
+
+            m = _re.search(r"^(\d+): 情景=", prompt, _re.MULTILINE)
+            first_id = m.group(1) if m else "1"
+
+            class R:
+                completion_text = '{"selected_ids": [%s]}' % first_id
+
+            return R()
+
+    class _GarbageProv:
         async def text_chat(self, prompt, session_id=None, **kw):
             class R:
-                completion_text = '{"selected_situations": [1]}'
+                completion_text = "模型跑飞了这不是 JSON"
 
             return R()
 
@@ -4631,8 +4820,18 @@ def test_planner():
         )
     )
     check(
-        "表达选择失败回落直注入",
+        "表达选择: 子代理执行异常=直注入全池（对齐 selector 两态区分）",
         blk2.startswith("【表达习惯参考") and blk2.count("\n") >= 1,
+    )
+    blk_g = asyncio.run(
+        learning.select_expression_habits_block(
+            _GarbageProv(), store, "global", False, "- 12:00:00 u: hi", "麦麦"
+        )
+    )
+    check(
+        "表达选择: 解析失败=不注入（宁缺毋滥，v6.28.0）",
+        blk_g == "",
+        blk_g[:60],
     )
 
     check(

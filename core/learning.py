@@ -4,19 +4,23 @@
 1. 关键词反应（keyword_reaction）：最新用户消息命中 keyword_rules/regex_rules
    → final message 注入【关键词反应】块；正则用 [命名捕获组] 占位替换
 2. 表达习惯（expression）：学习库 {situation, style, count, checked}；
-   legacy 使用 = 加权抽样（库 ≥10 条才启用，高频 count>1 抽 5 + 全库抽 5，
-   去重）→ 注入【表达习惯参考，请视情况自然的使用】块
-   （MaiBot 的 LLM 二次选择路径未接，走其"直接注入"路径）
-   vector_intent 使用 = 嵌入模型按语义召回候选池（对齐 maisaka_
-   expression_selector._build_expression_candidate_pool：query 由回复信息
-   参考/Planner 推理构建，候选 embedding 文本 = 情景/风格两行原文；召回
-   为空或未配嵌入模型回落 legacy 抽样。MaiBot 的 kmeans 聚类加权
-   （item 0.875 + cluster 0.125）依赖其向量索引基建，maisoul 简化为
-   纯 item 余弦——文档记录的工程取舍）
-3. 黑话（jargon）：学习库 {content, meaning, count}；最近上下文消息文本命中
-   词条 → 注入【黑话参考】块（上限 10 条）
+   入库恒 checked=False 待人工审核（WebUI 点亮后才注入，对齐 MaiBot
+   checked 语义，v6.28.0）+ 学习条目过滤层（source_id/SELF/机器人名/
+   表情包标记，>20 整批丢弃）。legacy 使用 = 加权抽样（库 ≥10 条才启用，
+   高频 count>1 抽 5 + 全库抽 5 去重，权重 min-max 归一 1~5）→ LLM 选择
+   子代理（MaiBot 现行 selector 原文：selected_ids / 0~5 条 / 空数组=
+   不注入；执行异常/子代理缺失=直注入全池）→ 注入【表达习惯参考，请视
+   情况自然的使用】块
+   vector_intent 使用 = 嵌入模型按语义召回候选池 + 贪心 MMR 多样性重选
+   （对齐 maisaka_expression_selector 的簇+MMR 防同质化目标，JSON 小池
+   贪心实现）；召回为空或未配嵌入模型回落 legacy 抽样
+3. 黑话（jargon）：学习库 {content, meaning, count}；最近上下文消息文本
+   命中词条（lower+空白折叠归一）→ 注入【黑话参考】块（上限 10 条，
+   空含义占位不注入）。空含义占位 + count 阈值 [4,8,25,100] 再推断
+   （对齐 jargon_miner 生命周期，v6.28.0）
 
-学习器（发言后异步运行，provider 为 AstrBot 当前模型）：
+学习器（发言后异步运行，provider 为 AstrBot 当前模型；会话级三闸：
+互斥/30s 最小间隔/≥10 条可学消息，对齐 runtime 学习调度）：
 - learn_style.prompt / learn_jargon.prompt / jargon_inference_with_context.prompt /
   expression_evaluation.prompt 均为 MaiBot prompts/zh-CN 原文
 - expression_self_reflect：写入前让 AI 按四条基准检查（suitable/reason）
@@ -25,7 +29,8 @@
 
 存储：data_learning.json，按共享组键分库（默认 global）；文件存 AstrBot
 持久化目录 data/plugin_data/（卸载不删数据时幸存，坑 50），由 main.py
-显式传路径，_DATA_FILE 仅作离线默认。
+显式传路径，_DATA_FILE 仅作离线默认。条目级结构在装载与 WebUI 写入
+两处校验（apivalid），非法条目剔除/拒收（v6.28.0）。
 """
 
 import json
@@ -40,9 +45,24 @@ from . import apivalid
 _DATA_FILE = Path(__file__).resolve().parent.parent / "data_learning.json"
 
 MAX_JARGON_REFERENCE_MATCHES = 10  # MAX_JARGON_REFERENCE_MATCHES 原值
-MAX_SELECTED_EXPRESSIONS = 5  # 表达直注入条数上限（抽样池同 MaiBot 5+5）
+MAX_SELECTED_EXPRESSIONS = 5  # LLM 选择条数上限（MaiBot selector 硬截断同值）
 EXPRESSION_MIN_POOL = 10  # legacy：库不足 10 条不启用
 ASSISTANT_OPTIMIZATION_KEEP_COUNT = 3  # 优化上下文：自己发言保留条数
+EXPRESSION_MAX_LEARN_ITEMS = (
+    20  # 学习批次条数上限，超过=模型跑飞整批丢弃（对齐 expression_learner）
+)
+LEARN_MIN_INTERVAL_SECONDS = (
+    30  # 会话级学习最小间隔（对齐 runtime._min_extraction_interval）
+)
+LEARN_MIN_MESSAGES = (
+    10  # 发起学习所需的最少可学外部消息数（对齐 min_messages_for_extraction）
+)
+JARGON_REINFERENCE_THRESHOLDS = (
+    4,
+    8,
+    25,
+    100,
+)  # 空含义占位条目的再推断阈值（对齐 jargon_miner）
 
 _JARGON_HEADER = (
     "以下是聊天中可能出现的黑话/梗的背景注释，仅供你理解语境。"
@@ -167,31 +187,24 @@ def _suitable_from_review(review_raw: str) -> bool:
     return bool(m) and m.group(1).lower() == "true"
 
 
-# ---------------- expression_select.prompt 原文 ----------------
-EXPRESSION_SELECT_PROMPT = """{chat_observe_info}
+# ---------------- 表达选择子代理提示（v6.28.0 换代：MaiBot 现行 selector.py
+# _build_selector_prompt 内嵌原文——旧版 expression_select.prompt 模板已从
+# MaiBot prompts/ 移除；前 7 行逐字原文，聊天上下文段为 maisoul 单轮请求
+# 的内联适配（MaiBot 子代理以独立消息携带上下文）） ----------------
+EXPRESSION_SELECT_PROMPT = """你是 Maisaka 的表达方式选择子代理。
+你只负责根据下方真实聊天上下文，为这一次可见回复挑选最合适的表达方式。
+请只从下面候选中选择 0 到 {max_num} 条最适合当前语境的表达方式。
+优先考虑自然、贴合上下文、不生硬、不模板化。
+如果没有明显合适的，就返回空数组。
+严格只输出 JSON，对象格式为 {{"selected_ids":[123,456]}}。
 
-你的名字是{bot_name}{target_message}
+以下是真实聊天上下文：
+{chat_observe_info}
 {reply_reason_block}
+候选表达方式：
+{all_situations}"""
 
-以下是可选的表达情境：
-{all_situations}
-
-请你分析聊天内容的语境、情绪、话题类型，从上述情境中选择最适合当前聊天情境的内容，最多{max_num}个情境。
-考虑因素包括：
-1.聊天的情绪氛围
-2.话题类型
-3.情境与当前语境的匹配度
-{target_message_extra_block}
-
-请以JSON格式输出，只需要输出选中的情境编号：
-例如：
-{{
-    "selected_situations": [2, 3, 5, 7, 19]
-}}
-
-请严格按照JSON格式输出，不要包含其他内容："""
-
-MAX_SELECTED_EXPRESSIONS_LLM = 5  # expression_select 的 max_num（MaiBot 调用值）
+MAX_SELECTED_EXPRESSIONS_LLM = 5  # 选择子代理的 max_num（MaiBot 调用值）
 _EXPRESSION_SELECTION_SEMAPHORE = {"max_count": 0, "semaphore": None}
 
 
@@ -258,6 +271,33 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na**0.5 * nb**0.5)
 
 
+def _greedy_mmr(
+    scored: list[tuple[float, dict]], k: int, lam: float = 0.5
+) -> list[dict]:
+    """贪心 MMR 多样性重选（v6.28.0）：λ·相关性 − (1−λ)·与已选的最大相似度。
+
+    对齐 MaiBot「簇心召回 + MMR」的防同质化目标——纯余弦 top-K 会全挤在
+    同一语义簇（如全是问候场景）；JSON 小池无需建簇索引，候选两两余弦
+    直接贪心即可。scored 已按相关性降序。"""
+    if k >= len(scored):
+        return [e for _, e in scored]
+    remaining = list(scored)
+    selected: list[dict] = []
+    sel_vecs: list[list[float]] = []
+    while remaining and len(selected) < k:
+        best_i, best_v = 0, float("-inf")
+        for i, (sim, e) in enumerate(remaining):
+            vec = [float(x) for x in (e.get("emb") or [])]
+            max_sel = max((_cosine(vec, sv) for sv in sel_vecs), default=-1.0)
+            mmr = lam * sim - (1 - lam) * max_sel
+            if mmr > best_v:
+                best_v, best_i = mmr, i
+        _, e0 = remaining.pop(best_i)
+        selected.append(e0)
+        sel_vecs.append([float(x) for x in (e0.get("emb") or [])])
+    return selected
+
+
 async def _vector_recall_pool(
     store: "LearningStore",
     key: str,
@@ -267,12 +307,14 @@ async def _vector_recall_pool(
     query_text: str,
     pool_size: int,
 ) -> list[dict]:
-    """vector_intent 候选池：候选/查询嵌入 → 余弦排序取前 pool_size。
+    """vector_intent 候选池：候选/查询嵌入 → 余弦排序 → 贪心 MMR 取前 pool_size。
 
     候选向量缓存在学习库条目上（emb/emb_model/emb_fp），指纹（情景+风格）
     或嵌入模型变更时重算；查询向量维度与候选不一致按异常上抛（调用方回落
     legacy，对齐 select_candidates 的维度校验语义）。
     """
+    import asyncio
+
     texts, targets = [], []
     for e in pool:
         fp = f"{str(e.get('situation')).strip()}\n{str(e.get('style')).strip()}"
@@ -297,8 +339,8 @@ async def _vector_recall_pool(
             e["emb"] = [float(x) for x in vec]
             e["emb_model"] = embedding_model
             e["emb_fp"] = fp
-        # 嵌入缓存落盘失败只 warning（save 内处理），不影响本次召回
-        store.save()
+        # 嵌入缓存落盘移出事件循环（8MB 级 JSON 同步写会卡循环，v6.28.0）
+        await asyncio.to_thread(store.save)
     query_vec = (await embedding.get_embeddings([query_text]))[0]
     dim = len(query_vec)
     scored = []
@@ -314,7 +356,55 @@ async def _vector_recall_pool(
         )
     scored.sort(key=lambda t: t[0], reverse=True)
     limit = max(1, min(50, int(pool_size)))
-    return [e for _, e in scored[:limit]]
+    return _greedy_mmr(scored, limit)
+
+
+async def _llm_select_expressions(
+    provider,
+    store: "LearningStore",
+    candidates: list[dict],
+    chat_observe_info: str,
+    reply_reason: str,
+    model: str | None = None,
+) -> list[dict]:
+    """LLM 按语境选表达（MaiBot 现行 selector 语义，v6.28.0）：
+    selected_ids 按库内稳定 id 选择 0~5 条；解析失败/选空返回空列表——
+    宁缺毋滥，调用方据此不注入（不再回落直注入）。异常向上抛（调用方
+    区分「执行异常=直注入全池」与「解析失败=不注入」两态）。"""
+    if any(not isinstance(e.get("id"), int) for e in candidates):
+        store.ensure_expression_ids()
+    id_map = {e["id"]: e for e in candidates if isinstance(e.get("id"), int)}
+    if not id_map:
+        return []
+    candidate_lines = [
+        f"{e['id']}: 情景={e['situation']} | 风格={e['style']}"
+        for e in candidates
+        if isinstance(e.get("id"), int)
+    ]
+    prompt_text = EXPRESSION_SELECT_PROMPT.format(
+        max_num=MAX_SELECTED_EXPRESSIONS_LLM,
+        chat_observe_info=chat_observe_info or "（暂无聊天记录）",
+        reply_reason_block=f"\n{reply_reason}\n" if reply_reason else "",
+        all_situations="\n".join(candidate_lines),
+    )
+    resp = await provider.text_chat(
+        prompt=prompt_text, session_id="maisoul_expr_select", model=model
+    )
+    raw = str(getattr(resp, "completion_text", "") or "")
+    # 解析失败 = 不注入（返回空；对齐 _parse_selected_ids 捕获后返回 []）——
+    # 与网络/执行异常（向上抛，调用方直注入）严格区分
+    try:
+        seg = raw[raw.find("{") : raw.rfind("}") + 1]
+        parsed = json.loads(seg)
+    except Exception:
+        logger.info(f"maisoul: 表达选择输出解析失败，本轮不注入: {raw[:80]!r}")
+        return []
+    ids = [
+        int(x)
+        for x in (parsed.get("selected_ids") or [])
+        if str(x).strip().lstrip("-").isdigit()
+    ]
+    return [id_map[i] for i in ids if i in id_map][:MAX_SELECTED_EXPRESSIONS_LLM]
 
 
 async def select_expression_habits_block(
@@ -335,9 +425,10 @@ async def select_expression_habits_block(
     """表达习惯注入块：候选池（legacy 抽样 / vector_intent 语义召回）→
     LLM 按语境选择 → 注入块。
 
-    LLM 选择失败或无可选情境时回落"直接注入"（MaiBot 的另一条真实路径）；
-    vector_intent 未配嵌入模型 / query 为空 / 召回异常或为空时回落 legacy
-    抽样（对齐 _build_expression_candidate_pool 的回落语义）。
+    三态回落（v6.28.0 对齐 MaiBot selector）：子代理缺失/执行异常 =
+    直接注入全池（legacy ≤10 / vector ≤pool_size）；解析失败或选空 =
+    注入 0 条（宁缺毋滥——无关风格污染比缺席更伤语气）；vector_intent
+    未配嵌入模型 / query 为空 / 召回异常或为空时回落 legacy 抽样。
     """
     pool = [e for e in store.expressions(key) if not checked_only or e.get("checked")]
     if len(pool) < EXPRESSION_MIN_POOL:
@@ -374,38 +465,25 @@ async def select_expression_habits_block(
     if not candidates:
         return ""
 
-    selected = None
-    if provider is not None:
+    if provider is None:
+        selected = list(candidates)  # 子代理缺失 = MaiBot 的"直接注入"路径（全池）
+    else:
         try:
-            situations = "\n".join(
-                f"{i}. {e['situation']}" for i, e in enumerate(candidates, start=1)
+            selected = await _llm_select_expressions(
+                provider,
+                store,
+                candidates,
+                chat_observe_info,
+                reply_reason,
+                model=model,
             )
-            prompt_text = EXPRESSION_SELECT_PROMPT.format(
-                chat_observe_info=chat_observe_info,
-                bot_name=bot_name,
-                target_message="",
-                reply_reason_block=f"\n{reply_reason}\n" if reply_reason else "",
-                all_situations=situations,
-                max_num=MAX_SELECTED_EXPRESSIONS_LLM,
-                target_message_extra_block="",
-            )
-            resp = await provider.text_chat(
-                prompt=prompt_text, session_id="maisoul_expr_select", model=model
-            )
-            raw = str(getattr(resp, "completion_text", "") or "")
-            seg = raw[raw.find("{") : raw.rfind("}") + 1]
-            parsed = json.loads(seg)
-            ids = [
-                int(x)
-                for x in (parsed.get("selected_situations") or [])
-                if str(x).isdigit()
-            ]
-            selected = [candidates[i - 1] for i in ids if 1 <= i <= len(candidates)]
         except Exception:
-            selected = None
-
-    if not selected:
-        selected = candidates[:MAX_SELECTED_EXPRESSIONS]
+            logger.info(
+                "maisoul: 表达选择子代理执行异常，本轮直注入候选池", exc_info=True
+            )
+            selected = list(candidates)
+        if not selected:
+            return ""  # 解析失败/选空 = 不注入（宁缺毋滥，对齐 _parse_selected_ids）
     lines = [
         f"- 当\"{e['situation']}\"时，可以用\"{e['style']}\"来表达。" for e in selected
     ]
@@ -421,13 +499,16 @@ class LearningStore:
     def __init__(self, path: Path = _DATA_FILE):
         self.path = path
         self.data = self._load()
+        self._sanitize_entries()
 
     def _load(self) -> dict:
         """读库。损坏（解析失败 / 结构非法——含分库非对象等嵌套错型）时备份
         原文件为 .corrupt 后从空库启动——直接静默清零会无痕迹地丢掉全部学习
         数据。结构口径与 WebUI 写入共用 apivalid.validate_learning_payload：
         合法 JSON 但分库错型（如 {"global": []}）同样会让 _bucket().get 抛
-        AttributeError 打崩注入管线，一并视为损坏（Sourcery 审查）。"""
+        AttributeError 打崩注入管线，一并视为损坏（Sourcery 审查）。条目级
+        非法（坏 count/缺 situation 等，v6.28.0）剔除后落盘——此前它们会让
+        注入路径 int()/下标硬取崩溃，该会话持续无法发言。"""
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
@@ -437,7 +518,7 @@ class LearningStore:
             )
             self._backup_corrupt()
             return {}
-        err = apivalid.validate_learning_payload(data)
+        err = apivalid.validate_learning_payload(data, entry_level=False)
         if err is not None:
             logger.warning(
                 f"maisoul: 学习库结构非法（{err}），"
@@ -446,6 +527,28 @@ class LearningStore:
             self._backup_corrupt()
             return {}
         return data
+
+    def _sanitize_entries(self) -> None:
+        """条目级消毒（装载时，v6.28.0）：坏 count/缺 situation 等非法条目
+        剔除保留合法部分并落盘——此前它们会让注入路径 int()/下标硬取崩溃，
+        该会话持续无法发言；整库拒收会把一条坏条目放大成全部数据丢失。"""
+        dropped = 0
+        for bucket in self.data.values():
+            if not isinstance(bucket, dict):
+                continue
+            for field, checker in (
+                ("expressions", apivalid.expression_entry_error),
+                ("jargons", apivalid.jargon_entry_error),
+            ):
+                items = bucket.get(field)
+                if not isinstance(items, list):
+                    continue
+                kept = [e for e in items if checker(e) is None]
+                dropped += len(items) - len(kept)
+                bucket[field] = kept
+        if dropped:
+            logger.warning(f"maisoul: 学习库剔除非法条目 {dropped} 条（修复已落盘）")
+            self.save()
 
     def _backup_corrupt(self) -> None:
         try:
@@ -473,8 +576,12 @@ class LearningStore:
         return self._bucket(key).get("expressions") or []
 
     def add_expression(
-        self, key: str, situation: str, style: str, checked: bool
+        self, key: str, situation: str, style: str, checked: bool, persist: bool = True
     ) -> bool:
+        """入库/计数。persist=False 供学习循环攒批后单次落盘（to_thread）。
+
+        checked 语义（v6.28.0 对齐 MaiBot）：学习管线写入恒 False（待人工
+        审核，WebUI 点亮后才注入）；既有条目的人工通过不回退（OR 粘滞）。"""
         situation, style = situation.strip(), style.strip()
         if not situation or not style:
             return False
@@ -482,12 +589,14 @@ class LearningStore:
             if item.get("situation") == situation and item.get("style") == style:
                 item["count"] = int(item.get("count", 1)) + 1
                 item["checked"] = bool(item.get("checked")) or checked
-                self.save()
+                if persist:
+                    self.save()
                 return False
         self._bucket(key)["expressions"].append(
             {"situation": situation, "style": style, "count": 1, "checked": checked}
         )
-        self.save()
+        if persist:
+            self.save()
         return True
 
     # ---------------- 表达审核（WebUI 审核页） ---------------- #
@@ -597,21 +706,28 @@ class LearningStore:
     def jargons(self, key: str) -> list[dict]:
         return self._bucket(key).get("jargons") or []
 
-    def add_jargon(self, key: str, content: str, meaning: str) -> bool:
+    def add_jargon(
+        self, key: str, content: str, meaning: str, persist: bool = True
+    ) -> bool:
+        """入库/计数。meaning 可为空（v6.28.0 对齐 jargon_miner）：信息不足的
+        候选先空含义占位，count 到再推断阈值时由学习循环补含义；注入侧跳过
+        空含义条目。persist=False 供学习循环攒批单次落盘。"""
         content, meaning = content.strip(), (meaning or "").strip()
-        if not content or not meaning:
+        if not content:
             return False
         for item in self.jargons(key):
             if item.get("content") == content:
                 item["count"] = int(item.get("count", 1)) + 1
                 if meaning and meaning != item.get("meaning"):
                     item["meaning"] = meaning
-                self.save()
+                if persist:
+                    self.save()
                 return False
         self._bucket(key)["jargons"].append(
             {"content": content, "meaning": meaning, "count": 1}
         )
-        self.save()
+        if persist:
+            self.save()
         return True
 
 
@@ -656,29 +772,45 @@ def share_key(cfg, groups_field: str, platform: str, chat_id: str) -> str:
 # ---------------------------------------------------------------------- #
 # 注入块构建（格式 = MaiBot 原文）
 # ---------------------------------------------------------------------- #
+def _compute_weights(candidates: list[dict]) -> list[float]:
+    """抽样权重：count 做 min-max 线性归一到 1~5（对齐 learner_utils_old.
+    _compute_weights）。原始 count 直作权重会把 count=100 的条目放大百倍
+    垄断抽样（MaiBot 归一后只有 5 倍偏向，v6.28.0）。"""
+    counts = []
+    for c in candidates:
+        try:
+            v = float(c.get("count", 1))
+        except (TypeError, ValueError):
+            v = 1.0
+        counts.append(max(0.0, v))
+    lo, hi = min(counts), max(counts)
+    if hi <= lo:
+        return [1.0] * len(counts)
+    return [1.0 + 4.0 * (c - lo) / (hi - lo) for c in counts]
+
+
 def _weighted_sample(candidates: list[dict], n: int) -> list[dict]:
     if not candidates or n <= 0:
         return []
-    weights = [max(1, int(c.get("count", 1) or 1)) for c in candidates]
-    if sum(weights) <= 0:
-        return random.sample(candidates, min(n, len(candidates)))
-    picked, pool = [], list(candidates)
+    weights = _compute_weights(candidates)
+    picked, pool, w = [], list(candidates), list(weights)
     while pool and len(picked) < n:
-        chosen = random.choices(pool, weights=weights[: len(pool)], k=1)[0]
+        chosen = random.choices(pool, weights=w, k=1)[0]
         picked.append(chosen)
         idx = pool.index(chosen)
         pool.pop(idx)
-        weights.pop(idx)
+        w.pop(idx)
     return picked
 
 
 def expression_habits_block(store: LearningStore, key: str, checked_only: bool) -> str:
     """legacy 直接注入：库 ≥10 条才启用；候选池与 select 路径共用
-    _sample_legacy_pool（高频>1 抽 5 + 全库抽 5 去重），上限 5 条。"""
+    _sample_legacy_pool（高频>1 抽 5 + 全库抽 5 去重），整池注入 ≤10 条
+    （对齐 MaiBot 直注入不截断，v6.28.0——旧版截 5 丢候选）。"""
     pool = [e for e in store.expressions(key) if not checked_only or e.get("checked")]
     if len(pool) < EXPRESSION_MIN_POOL:
         return ""
-    candidates = _sample_legacy_pool(pool)[:MAX_SELECTED_EXPRESSIONS]
+    candidates = _sample_legacy_pool(pool)
     if not candidates:
         return ""
     lines = [
@@ -688,28 +820,36 @@ def expression_habits_block(store: LearningStore, key: str, checked_only: bool) 
     return "【表达习惯参考，请视情况自然的使用】\n" + "\n".join(lines)
 
 
+def _norm_text(s) -> str:
+    """黑话匹配归一化（对齐 jargon_context_matcher：lower + 空白折叠）——
+    英文缩写类黑话（nb/YYDS）命中不再受大小写影响（v6.28.0）。"""
+    return " ".join(str(s or "").lower().split())
+
+
 def jargon_reference_block(
     store: LearningStore,
     key: str,
     recent_texts: list[str],
     exclude: set | None = None,
-    matched_out: list | None = None,
+    matched_out: list[str] = None,
 ) -> str:
     """最近上下文文本机械命中词条 → 参考块（上限 10 条）。
 
     exclude：已注入过的词条（planner 轮间去重，对齐 jargon_context_matcher
     对历史黑话参考消息的去重）；matched_out：回填本次命中的词条原文。
+    空含义占位条目不注入（对齐 M 仅注入 is_jargon 且 meaning 非空）。
     排序：词条 count 降序 + 首现位置提前优先——MaiBot 的高频词表加权
     （高频基数 1000+出现次数×2）依赖其高频词学习器（已取舍未移植），此为近似。
     """
     scored: list[tuple[tuple[int, int], dict]] = []
+    normed = [_norm_text(t) for t in recent_texts or []]
     for item in store.jargons(key):
         content = str(item.get("content") or "").strip()
-        if not content or (exclude and content in exclude):
+        meaning = str(item.get("meaning") or "").strip()
+        if not content or not meaning or (exclude and content in exclude):
             continue
-        first_index = next(
-            (i for i, t in enumerate(recent_texts) if t and content in t), None
-        )
+        cn = _norm_text(content)
+        first_index = next((i for i, t in enumerate(normed) if cn and cn in t), None)
         if first_index is not None:
             count = int(item.get("count", 1) or 1)
             scored.append(((-count, first_index), item))
@@ -834,6 +974,70 @@ def _self_name_set(cfg) -> set[str]:
     return names
 
 
+def _filter_learned_expressions(
+    items: list, buffer: list[dict], bot_name: str, self_names: set[str]
+) -> list[dict]:
+    """学习条目过滤层（v6.28.0，对齐 expression_learner._filter_expressions）：
+    source_id 必须是数字且在窗口范围内、来源行不是机器人自发发言、情景/风格
+    不含 SELF 标记与机器人名、不含表情包/图片标记；批次 >20 条整批丢弃
+    （模型跑飞信号，此前截前 10 照单全收）。"""
+    if len(items) > EXPRESSION_MAX_LEARN_ITEMS:
+        return []
+    window = list(buffer)[-30:]  # 与 _build_chat_str 同窗
+    out: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        sid_raw = str(item.get("source_id") or "").strip()
+        if not sid_raw.isdigit():
+            continue
+        sid = int(sid_raw)
+        if sid < 0 or sid >= len(window):
+            continue
+        src = window[sid]
+        if str(src.get("sid")) == "self" or str(src.get("name")) == bot_name:
+            continue
+        situation = str(item.get("situation") or "").strip()
+        style = str(item.get("style") or "").strip()
+        if not situation or not style:
+            continue
+        blob = situation + style
+        if "SELF" in blob or "[表情包" in blob or "[图片" in blob:
+            continue
+        if any(n and n in blob for n in self_names):
+            continue
+        out.append({"situation": situation, "style": style})
+    return out
+
+
+def _is_self_related(content: str, self_names: set[str]) -> bool:
+    """机器人自身名硬闸（子串口径，v6.28.0：全等漏掉"麦麦子"这类变体——
+    含名或被名含都拦，对齐 jargon_learner 的昵称子串过滤）。"""
+    return any(n and (n in content or content in n) for n in self_names)
+
+
+async def _infer_jargon_meaning(
+    provider, content: str, bot_name: str, chat_str: str, model: str | None
+) -> str:
+    """单步含义推断（对齐 jargon_inference_with_context）：no_info/解析失败
+    返回空串（调用方按占位处理）。"""
+    infer_raw = await _llm(
+        provider,
+        JARGON_INFERENCE_PROMPT.format(
+            content=content, bot_name=bot_name, raw_content_list=chat_str
+        ),
+        model=model,
+    )
+    try:
+        seg = infer_raw[infer_raw.find("{") : infer_raw.rfind("}") + 1]
+        parsed = json.loads(seg)
+        if parsed.get("no_info"):
+            return ""
+        return str(parsed.get("meaning") or "")
+    except Exception:
+        return ""
+
+
 async def learn_from_chat(
     provider,
     cfg,
@@ -896,25 +1100,35 @@ async def _learn_from_chat_inner(
             raw = await _llm(
                 provider, LEARN_STYLE_PROMPT.format(chat_str=chat_str), model=model
             )
-            items = [x for x in _repair_json_array(raw) if isinstance(x, dict)]
+            items = _filter_learned_expressions(
+                [x for x in _repair_json_array(raw) if isinstance(x, dict)],
+                buffer,
+                bot_name,
+                self_names,
+            )
             added = 0
             for item in items[:10]:
-                situation = str(item.get("situation") or "")
-                style = str(item.get("style") or "")
-                checked = True
-                if cfg.get("expression_self_reflect", True) and situation and style:
+                # 审核闸（v6.28.0 对齐 MaiBot checked 语义）：AI 自查通过也仅
+                # 入库待审（checked=False），WebUI 人工点亮后才注入；
+                # 自查不通过直接不写库（对齐 expression_learner）
+                if cfg.get("expression_self_reflect", True):
                     criteria = "\n".join(
                         f"{i + 1}. {c}" for i, c in enumerate(_EXPRESSION_CRITERIA)
                     )
                     review_raw = await _llm(
                         provider,
                         EXPRESSION_EVALUATION_PROMPT.format(
-                            situation=situation, style=style, criteria_list=criteria
+                            situation=item["situation"],
+                            style=item["style"],
+                            criteria_list=criteria,
                         ),
                         model=model,
                     )
-                    checked = _suitable_from_review(review_raw)
-                if store.add_expression(key, situation, style, checked):
+                    if not _suitable_from_review(review_raw):
+                        continue
+                if store.add_expression(
+                    key, item["situation"], item["style"], False, persist=False
+                ):
                     added += 1
             summary.append(f"表达 +{added}")
     except Exception:
@@ -938,38 +1152,49 @@ async def _learn_from_chat_inner(
                 model=model,
             )
             items = [x for x in _repair_json_array(raw) if isinstance(x, dict)]
-            known = {j.get("content") for j in store.jargons(jkey)}
             added = 0
             for item in items[:10]:
                 content = str(item.get("content") or "").strip()
-                if not content or content in known:
+                if not content:
                     continue
-                # 硬闸（提示词之外）：机器人自身名/别名与指令永不入库——
-                # 生产实证 flash 模型会把自己的名字当黑话提取并幻觉解释
-                if content.startswith("/") or content in self_names:
+                # 硬闸（提示词之外）：指令与机器人自身名（子串口径）永不入库
+                if content.startswith("/") or _is_self_related(content, self_names):
                     continue
-                infer_raw = await _llm(
-                    provider,
-                    JARGON_INFERENCE_PROMPT.format(
-                        content=content, bot_name=bot_name, raw_content_list=chat_str
-                    ),
-                    model=model,
+                existing = next(
+                    (j for j in store.jargons(jkey) if j.get("content") == content),
+                    None,
                 )
-                meaning = ""
-                try:
-                    seg = infer_raw[infer_raw.find("{") : infer_raw.rfind("}") + 1]
-                    parsed = json.loads(seg)
-                    meaning = str(parsed.get("meaning") or "")
-                    if parsed.get("no_info"):
-                        meaning = ""
-                except Exception:
-                    meaning = ""
-                if store.add_jargon(jkey, content, meaning):
-                    added += 1
+                if existing is None:
+                    # 新词条：首轮推断；信息不足=no_info 空含义占位入库
+                    # （v6.28.0 对齐 jargon_miner——此前直接拒收，一次上下文
+                    # 不足的词条永远学不到）
+                    meaning = await _infer_jargon_meaning(
+                        provider, content, bot_name, chat_str, model
+                    )
+                    if store.add_jargon(jkey, content, meaning, persist=False):
+                        added += 1
+                else:
+                    # 已入库：count 累积（v6.28.0——此前跳过不加，count 恒 1，
+                    # 排序失效）；空含义占位条目到再推断阈值时补推断
+                    existing["count"] = int(existing.get("count", 1) or 1) + 1
+                    if (
+                        not str(existing.get("meaning") or "").strip()
+                        and existing["count"] in JARGON_REINFERENCE_THRESHOLDS
+                    ):
+                        meaning = await _infer_jargon_meaning(
+                            provider, content, bot_name, chat_str, model
+                        )
+                        if meaning:
+                            existing["meaning"] = meaning
             summary.append(f"黑话 +{added}")
     except Exception:
         # 终败：摘要回给发送链路提示，堆栈留这里（调用方只打 info 摘要）
         logger.warning("maisoul: 黑话学习终败（本轮跳过）", exc_info=True)
         summary.append("黑话学习失败")
 
+    # 攒批单次落盘（学习循环内全部 persist=False；to_thread 防 8MB 级同步
+    # 写卡事件循环，v6.28.0）
+    import asyncio
+
+    await asyncio.to_thread(store.save)
     return "、".join(summary) or "无新增"

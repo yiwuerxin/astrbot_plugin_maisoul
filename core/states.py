@@ -33,6 +33,10 @@ class GroupState:
     )  # msg_id → 对该目标说过的原文（防重复提醒用）
     last_fire_ts: float = 0.0
     pending_since_fire: int = 0
+    learn_busy: bool = (
+        False  # 学习会话互斥（同会话上一批未完成不叠批，对齐 runtime 会话级学习互斥）
+    )
+    last_learn_ts: float = 0.0  # 上次发起学习的时刻（30s 最小间隔闸）
     ext_intervals: deque = field(
         default_factory=lambda: deque(maxlen=360)
     )  # 外部消息时间戳（30min 采样窗最多 360 条）
