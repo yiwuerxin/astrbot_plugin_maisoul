@@ -59,7 +59,9 @@ _DECAY_PER_MINUTE = 0.10  # 每分钟 exp 衰减率（半衰期 ≈ 7 分钟）
 _MOMENTUM_UP = 1.01
 _MOMENTUM_DOWN = 0.99
 
-# §6.6 情绪-关系耦合增益表（MaiBot positive_feedback 原参数），索引 |pfb|：
+# §6.6 情绪-关系耦合增益表（maisoul 自定口径——MaiBot 无对应数值表，其
+# "情绪反馈"是 reply_effect 分类标签；原"MaiBot positive_feedback 原参数"注
+# 释为虚假声称，v6.28.0 修正），索引 |pfb|：
 # 连续同向情绪事件越多，心弦侧同向好感增量放大/异向缩小的系数越大
 FEEDBACK_GAIN: tuple[float, ...] = (1.0, 1.0, 1.1, 1.2, 1.4, 1.7, 1.9, 2.0)
 
