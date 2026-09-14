@@ -24,8 +24,10 @@ def select_reply_style(cfg) -> str:
         for s in (cfg.get("multiple_reply_style") or [])
         if str(s).strip()
     ]
+    # 0~1 小数量纲（v6.28.0 对齐 MaiBot official_configs le=1；旧百分比
+    # 配置由 main._migrate_probability_scale 迁移为小数）
     prob = float(cfg.get("multiple_probability", 0) or 0)
-    if candidates and prob > 0 and random.random() * 100 < prob:
+    if candidates and prob > 0 and random.random() < prob:
         style += f"\n本次临时风格（仅本次回复生效）：{random.choice(candidates)}"
     return style
 

@@ -331,6 +331,10 @@ async def _deliver_reply(
             emo_word = m.group(1)
         typing_mult = st.emotion.typing_multiplier()
     sent = await sender.send_humanlike(send, answer, eff_cfg, typing_mult=typing_mult)
+    if not sent:
+        # 空白回复（后处理总开关关时不兜底，v6.28.0）：无实际发言——不记
+        # 防重复/存在感账、不触发情绪累积与学习，对齐 MaiBot 发送前中止
+        return sent
     if emo_word and bool(
         eff_cfg.get("emotion_feedback_enable", False)
     ):  # §6.6 同向情绪累积：发送成功才计入——失败/取消的发言不算已表达的情绪

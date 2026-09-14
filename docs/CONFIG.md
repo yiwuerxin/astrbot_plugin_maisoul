@@ -45,7 +45,7 @@ talk_value_rules 条目：`{platform, item_id, rule_type:"group"|"private", time
 | personality | text | 人格设定（[personality].personality） |
 | behavior_style | text | 行为风格：Planner 使用的行动准则（只进 planner 系统提示词） |
 | reply_style | text | 表达风格：麦麦平时说话的风格（[personality].reply_style） |
-| multiple_reply_style / multiple_probability | list / int `0` | 备用表达风格彩票池 / 彩票概率 % |
+| multiple_reply_style / multiple_probability | list / float `0` | 备用表达风格彩票池 / 彩票概率（0~1 小数，v6.28.0 对齐 MaiBot 量纲；旧百分比自动迁移，15 → 0.15） |
 | group_chat_prompt | text | 群聊通用提示词 |
 | chat_prompts | list `[]` | 额外 Prompt，精确匹配多条拼接 |
 | chat_tools | list `["send_meme"]` | 暴露给聊天 LLM 的工具（MaiBot 等价物），弹窗从 AstrBot 注册表选取 |

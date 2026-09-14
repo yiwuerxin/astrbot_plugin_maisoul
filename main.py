@@ -110,6 +110,7 @@ class MaiSoulPlugin(Star):
 
     async def initialize(self):
         self._migrate_legacy_nicknames()
+        self._migrate_probability_scale()
         # Phase4：task_models 规范器接线（历史任意形态 → 全任务齐全，内存态；
         # 不写回配置文件——清洗结果只影响本次运行的候选链。v6.20.3 任务清单
         # 补入 embedding，嵌入绑定不再被每次加载剥掉）
@@ -164,6 +165,29 @@ class MaiSoulPlugin(Star):
             logger.info(f"maisoul: 旧 nicknames 已合并进 aliases → {merged}")
         except Exception:
             logger.debug("maisoul: 别名迁移保存失败（内存已生效）", exc_info=True)
+
+    def _migrate_probability_scale(self):
+        """v6.28.0 前 multiple_probability 是 0~100 百分比整数；现对齐 MaiBot 的
+        0~1 小数量纲。旧值 >1 一律折算为小数（15 → 0.15），折算后 ≤1 不再动
+        （幂等）；非数值配置属错误，完整暴露并重置为 0。"""
+        try:
+            val = float(self.config.get("multiple_probability", 0))
+        except (TypeError, ValueError):
+            logger.error(
+                "maisoul: multiple_probability 配置非数值，已重置为 0",
+                exc_info=True,
+            )
+            self.config["multiple_probability"] = 0
+            return
+        if val > 1:
+            self.config["multiple_probability"] = val / 100.0
+            try:
+                self.config.save_config()
+                logger.info(
+                    f"maisoul: multiple_probability 百分比量纲已迁移 {val} → {val / 100.0}"
+                )
+            except Exception:
+                logger.debug("maisoul: 概率迁移保存失败（内存已生效）", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # 门控钩子：聊天消息评分（低优先级 = 在其他被动插件之后运行；群聊+私聊全接管）  #

@@ -634,6 +634,10 @@ def test_postprocess():
     check(
         "总开关关: 原文直出", len(segs) == 1 and segs[0].text == "你好（心想：好累）呀"
     )
+    # v6.28.0：总开关关时空白回复不发送（对齐 MaiBot——呃呃兜底属后处理，
+    # 关后处理即不兜底；开关开时兜底行为不变，见下方"全为心声→呃呃"）
+    segs = postprocess.process_response_segments("  \n\n ", off)
+    check("总开关关: 空白回复不发送", segs == [], str(segs))
 
     cfg = {
         "enable_response_post_process": True,
@@ -881,8 +885,16 @@ def test_prompt():
     )
     sp2 = prompt.build_system_prompt(cfg, chat_id="99999", platform="qq")
     check("其他群不命中额外注意事项", "这个群聊游戏" not in sp2)
-    cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=100)
+    cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=1.0)
     check("风格彩票必中", "本次临时风格" in prompt.select_reply_style(cfg2))
+    # v6.28.0：概率对齐 MaiBot 0~1 小数量纲（random.random() < prob）
+    cfg0 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=0.0)
+    check("风格彩票 0 概率不中", "本次临时风格" not in prompt.select_reply_style(cfg0))
+    cfg_half = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=0.5)
+    hits = sum(
+        "本次临时风格" in prompt.select_reply_style(cfg_half) for _ in range(200)
+    )
+    check("风格彩票 0.5 概率量纲正确（0~1 而非百分比）", 40 < hits < 160, str(hits))
     # 预设对话（maisoul 扩展）：空配置不注入；条目渲染；缺边条目跳过；人格覆盖生效
     from astrbot_plugin_maisoul.core import personas as _personas_mod
 

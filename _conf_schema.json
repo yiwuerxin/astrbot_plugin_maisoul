@@ -61,8 +61,8 @@
     ]
   },
   "multiple_probability": {
-    "description": "随机启用备用风格的概率；0 表示不随机切换。",
-    "type": "int",
+    "description": "随机启用备用风格的概率（0~1 小数，对齐 MaiBot 量纲；旧百分比数值自动迁移，如 15 迁移为 0.15）；0 表示不随机切换。",
+    "type": "float",
     "default": 0
   },
   "group_chat_prompt": {
