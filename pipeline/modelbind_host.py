@@ -40,13 +40,27 @@ def _resolve_bound_model(P, cand: dict):
 
 
 def _pick_task_model(P, task: str, cfg):
-    """按策略选主候选（小任务子调用用：无降级链）。None = 跟随默认 Provider。"""
+    """按策略选主候选（小任务子调用用）。None = 跟随默认 Provider。
+
+    主候选解析失败（provider 删/改名）时顺延降级链重试而非静默回落默认
+    Provider（v6.28.0）——小任务（emoji/学习/嵌入）换模型=人格口径漂移且
+    原先无任何日志；与 _task_text_chat 的降级链同待遇，全部失效才回落。
+    """
     candidates = modelbind.task_model_candidates(cfg, task)
     if not candidates:
         return None
     strategy = modelbind.task_model_strategy(cfg, task)
-    pick = modelbind.pick_model(candidates, strategy, _task_model_rr, task)
-    return _resolve_bound_model(P, pick) if pick else None
+    chain = modelbind.build_model_chain(candidates, strategy, _task_model_rr, task)
+    for cand in chain:
+        resolved = _resolve_bound_model(P, cand)
+        if resolved is not None:
+            return resolved
+        logger.warning(
+            f"maisoul: 任务 {task} 绑定的 provider {cand.get('provider')} "
+            "不存在，尝试下一候选"
+        )
+    logger.warning(f"maisoul: 任务 {task} 绑定候选全部失效，本次跟随默认 Provider")
+    return None
 
 
 def _embedding_provider(P, eff_cfg):

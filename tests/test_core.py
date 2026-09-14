@@ -346,6 +346,55 @@ def test_trigger():
     )
     check("提及必回复开: 强制触发", fired)
 
+    # v6.28.0：静默消费（对齐 turn_scheduler 静默开轮清积压）——talk_value≤0
+    # 期间积压清零，规则切回正频率瞬间不用隔夜积压立即触发
+    st_s = make_state([("u", "m1", False)], pending=3, intervals=[1, 2])
+    fired_s, detail_s, _ = trigger.should_trigger(
+        st_s,
+        dict(BASE_CFG, talk_value=0),
+        at_bot=False,
+        mentioned=False,
+        text="m1",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
+    check(
+        "静默消费: 不触发且积压清零",
+        not fired_s and st_s.pending_since_fire == 0,
+        f"fired={fired_s} pending={st_s.pending_since_fire}",
+    )
+
+    # v6.28.0：频率反馈乘进 effective 频率，frequency 模式同享——安静群
+    # 反馈 ×5.0 → 0.2 的阈值从 5 条收到 1 条，单消息即触发；关闭时不变
+    st_q = make_state([("u", "早上好", False)], pending=1, intervals=[1, 2])
+    fired_q, detail_q, _ = trigger.should_trigger(
+        st_q,
+        dict(BASE_CFG, talk_value=0.2, freq_feedback_enable=True),
+        at_bot=False,
+        mentioned=False,
+        text="早上好",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
+    check("频率反馈: frequency 模式生效（安静群阈值收窄）", fired_q, detail_q)
+    st_c = make_state([("u", "早上好", False)], pending=1, intervals=[1, 2])
+    fired_c, _, _ = trigger.should_trigger(
+        st_c,
+        dict(BASE_CFG, talk_value=0.2),
+        at_bot=False,
+        mentioned=False,
+        text="早上好",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
+    check("频率反馈: 关闭时阈值不变（1/5 不触发）", not fired_c)
+
     # 必要性触发模式
     st = make_state(
         [("u", "麦麦，帮我看看这个", False)], pending=1, intervals=[1, 2, 3]
@@ -599,9 +648,203 @@ def test_scoring():
     ).score
     check("存在感惩罚生效", noisy < quiet, f"{noisy} < {quiet}")
 
+    # v6.28.0：打字拟人总时长上限（maisoul 扩展，MaiBot 同病无上限）
+    from astrbot_plugin_maisoul.core import sender as _sender_mod
+
+    check(
+        "打字上限: 逐段钳制预算耗尽归零",
+        _sender_mod.cap_total_delay([10.0, 25.0, 5.0], 30.0) == [10.0, 20.0, 0.0],
+        str(_sender_mod.cap_total_delay([10.0, 25.0, 5.0], 30.0)),
+    )
+    check(
+        "打字上限: 预算内不动",
+        _sender_mod.cap_total_delay([1.0, 2.0], 30.0) == [1.0, 2.0],
+    )
+
+    # v6.28.0：用户正则超时防护（灾难回溯挂死事件循环的兜底）
+    from astrbot_plugin_maisoul.core import sanitize as _sanitize_mod
+    import time as _time_mod
+
+    check(
+        "正则防护: 正常命中",
+        asyncio.run(_sanitize_mod.safe_regex_any([r"微信\d+"], "加微信123", 0.5)),
+    )
+    check(
+        "正则防护: 未命中放行",
+        not asyncio.run(_sanitize_mod.safe_regex_any([r"x{9,}"], "普通消息", 0.5)),
+    )
+    # (a+)+$ 回溯爆炸（26 个 a 后跟 b，约 2^25 步、后台线程数秒内自了）——
+    # 超时兜底返回 False 且确实等了超时窗；线程不可取消是 asyncio.to_thread
+    # 的边界，输入规模刻意压在有界档防测试自身钉死 CPU
+    _t0 = _time_mod.time()
+    _r = asyncio.run(_sanitize_mod.safe_regex_any([r"(a+)+$"], "a" * 26 + "b", 0.5))
+    _elapsed = _time_mod.time() - _t0
+    check(
+        "正则防护: 灾难回溯超时放行且不挂死",
+        _r is False and _elapsed >= 0.4,
+        f"r={_r} elapsed={_elapsed:.2f}",
+    )
+    from astrbot_plugin_maisoul.core import learning as _learning_mod
+
+    check(
+        "关键词反应: 异步安全版与同步版同构",
+        asyncio.run(
+            _learning_mod.keyword_reaction_block_safe(
+                {"keyword_rules": [{"keywords": ["游戏"], "reaction": "聊聊"}]},
+                "最近在玩什么游戏",
+            )
+        )
+        == _learning_mod.keyword_reaction_block(
+            {"keyword_rules": [{"keywords": ["游戏"], "reaction": "聊聊"}]},
+            "最近在玩什么游戏",
+        )
+        != "",
+    )
+
+    # PR #41 评审修复回归：正则黑名单（超时一次后同 pattern 秒回不再起线程）
+    _sanitize_mod._REGEX_TIMEOUT_BLACKLIST.clear()
+    asyncio.run(_sanitize_mod.safe_regex_any([r"(a+)+$"], "a" * 26 + "b", 0.5))
+    _t1 = _time_mod.time()
+    _r2 = asyncio.run(_sanitize_mod.safe_regex_any([r"(a+)+$"], "a" * 26 + "b", 0.5))
+    _fast = _time_mod.time() - _t1
+    check(
+        "正则黑名单: 肇事 pattern 二次调用即时跳过",
+        _r2 is False and _fast < 0.2,
+        f"r={_r2} elapsed={_fast:.2f}",
+    )
+    check(
+        "正则黑名单: 未拉黑 pattern 不受影响",
+        asyncio.run(_sanitize_mod.safe_regex_any([r"好"], "好吗", 0.5)),
+    )
+    _sanitize_mod._REGEX_TIMEOUT_BLACKLIST.clear()
+
+    # PR #41 评审修复回归：打断快照悬空 tool_call 补占位回执
+    from astrbot_plugin_maisoul.core import planner as _pl_mod
+
+    _dangling = [
+        {"role": "user", "content": "m"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "wait", "arguments": "{}"},
+                }
+            ],
+        },
+    ]
+    _n = _pl_mod.repair_dangling_tool_calls(_dangling)
+    check(
+        "悬空修复: 缺回执补占位 tool 轮",
+        _n == 1
+        and _dangling[-1]["role"] == "tool"
+        and _dangling[-1]["tool_call_id"] == "c1",
+        str(_dangling[-1]),
+    )
+    _ok_ctx = [
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c2", "content": "r"},
+    ]
+    check("悬空修复: 已配对不动", _pl_mod.repair_dangling_tool_calls(_ok_ctx) == 0)
+
+    # v6.28.0（A10）：TASKS 三处同源护栏（坑 62——改一漏二完全隐形）
+    import json as _json10
+    import re as _re10
+    from pathlib import Path as _P10
+    from astrbot_plugin_maisoul.core import modelbind as _mb10
+
+    _root10 = _P10(__file__).resolve().parent.parent
+    _schema10 = _json10.loads(
+        (_root10 / "_conf_schema.json").read_text(encoding="utf-8")
+    )
+    _schema_tasks = [
+        e.get("task")
+        for e in _schema10["task_models"]["default"]
+        if isinstance(e, dict)
+    ]
+    _js10 = (_root10 / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    _m10 = _re10.search(r"MD_TASKS\s*=\s*\[(.*?)\n\]", _js10, _re10.S)
+    _js_tasks = _re10.findall(r"key:\s*'([^']+)'", _m10.group(1)) if _m10 else []
+    check(
+        "TASKS 护栏: schema 默认值 = modelbind.TASKS",
+        set(_schema_tasks) == set(_mb10.TASKS),
+        f"{sorted(_schema_tasks)} vs {sorted(_mb10.TASKS)}",
+    )
+    check(
+        "TASKS 护栏: 页面 MD_TASKS = modelbind.TASKS",
+        set(_js_tasks) == set(_mb10.TASKS),
+        f"{sorted(_js_tasks)} vs {sorted(_mb10.TASKS)}",
+    )
+
     check("频率0.1倍率0.55", abs(scoring.freq_factor(0.1) - 0.55) < 1e-9)
     check("压力: 4/4无闲置=50", scoring.pressure_score(4, 4, False) == 50)
     check("压力: 超阈值对数封顶", scoring.pressure_score(400, 4, False) == 100)
+
+    # v6.28.0：批次评分（对齐 turn_gates 对 pending_messages 整批评）
+    st_b = make_state([("u", "x", False)], pending=0)
+    r_b = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text="那句话",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+        batch_texts=["麦麦你觉得呢"],
+    )
+    check(
+        "批次: 批内提及拿 80 档", "提及" in r_b.detail and r_b.score >= 80, r_b.detail
+    )
+
+    _long45 = "这" * 45
+    r_l1 = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text=_long45,
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+    )
+    r_l3 = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text=_long45,
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+        batch_texts=[_long45, _long45],
+    )
+    check(
+        "批次: 长度按拼接全文计（3×45=135 加满 +5+10，单条 45 只 +5）",
+        r_l3.score - r_l1.score == 10,
+        f"{r_l3.score} vs {r_l1.score}",
+    )
+
+    r_sr = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text="哈哈",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+        batch_texts=["哈哈"],
+    )
+    check("批次: 全批短反应 −25", "短反应" in r_sr.detail, r_sr.detail)
+    r_sr2 = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text="哈哈",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+        batch_texts=["九个字的消息不算短反应哈"],
+    )
+    check(
+        "批次: 任一条 >8 字即非短反应批次",
+        "短反应" not in r_sr2.detail,
+        r_sr2.detail,
+    )
 
 
 def test_text_rules():
@@ -634,6 +877,10 @@ def test_postprocess():
     check(
         "总开关关: 原文直出", len(segs) == 1 and segs[0].text == "你好（心想：好累）呀"
     )
+    # v6.28.0：总开关关时空白回复不发送（对齐 MaiBot——呃呃兜底属后处理，
+    # 关后处理即不兜底；开关开时兜底行为不变，见下方"全为心声→呃呃"）
+    segs = postprocess.process_response_segments("  \n\n ", off)
+    check("总开关关: 空白回复不发送", segs == [], str(segs))
 
     cfg = {
         "enable_response_post_process": True,
@@ -881,8 +1128,100 @@ def test_prompt():
     )
     sp2 = prompt.build_system_prompt(cfg, chat_id="99999", platform="qq")
     check("其他群不命中额外注意事项", "这个群聊游戏" not in sp2)
-    cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=100)
+    cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=1.0)
     check("风格彩票必中", "本次临时风格" in prompt.select_reply_style(cfg2))
+    # v6.28.0：概率对齐 MaiBot 0~1 小数量纲（random.random() < prob）
+    # v6.28.0：目标消息块（对齐 _build_target_message_block 原文）+ 防重复
+    # 提醒按目标 msg_id 锚定（此前锚 buffer 末条：对旧目标连续 reply 漏提醒）
+    from astrbot_plugin_maisoul.core.states import GroupState as _GS
+
+    st_t = _GS()
+    st_t.buffer.append(
+        {
+            "name": "张三",
+            "sid": "u1",
+            "msg_id": "m1",
+            "text": "在吗",
+            "reply_bot": False,
+            "at_bot": False,
+            "ts": time.time(),
+        }
+    )
+    st_t.buffer.append(
+        {
+            "name": "李四",
+            "sid": "u2",
+            "msg_id": "m2",
+            "text": "新消息",
+            "reply_bot": False,
+            "at_bot": False,
+            "ts": time.time(),
+        }
+    )
+    _tcfg = {"bot_name": "麦麦", "enable_context_optimization": False}
+    msg_t = prompt.build_final_user_message(st_t, _tcfg, "", "", target_msg_id="m1")
+    check(
+        "目标块: 原文格式（对齐 MaiBot）",
+        "你想要回复的消息是 张三 发送的 msg_id为 m1 的消息，你这次要回复的就是这条目标消息，不要把其他历史消息当成当前回复对象。"
+        in msg_t
+        and "- 发言内容：在吗" in msg_t,
+        msg_t[:200],
+    )
+    st_t.buffer.append(
+        {
+            "name": "麦麦",
+            "sid": "self",
+            "msg_id": "sm1",
+            "text": "我自己说的",
+            "reply_bot": False,
+            "at_bot": False,
+            "ts": time.time(),
+        }
+    )
+    msg_self = prompt.build_final_user_message(st_t, _tcfg, "", "", target_msg_id="sm1")
+    check(
+        "目标块: 自发目标走补充说明变体（原文）",
+        "你想要补充说明你自己（麦麦） 发送的 msg_id为 sm1 的消息" in msg_self
+        and "- 你之前的发言内容：我自己说的" in msg_self,
+        msg_self[:160],
+    )
+    check(
+        "目标块: 无目标不渲染",
+        "你想要回复的消息是"
+        not in prompt.build_final_user_message(st_t, _tcfg, "", ""),
+    )
+    st_t.record_self_reply("m1", ["刚回过"], "麦麦")
+    msg_t2 = prompt.build_final_user_message(st_t, _tcfg, "", "", target_msg_id="m1")
+    check(
+        "防重复: 按目标锚点注入提醒（旧锚末条会漏）",
+        "你刚刚已经回复过这条消息" in msg_t2 and "刚回过" in msg_t2,
+        msg_t2[-120:],
+    )
+    msg_t3 = prompt.build_final_user_message(st_t, _tcfg, "", "", target_msg_id="m2")
+    check(
+        "防重复: 目标不同不误提醒",
+        "你刚刚已经回复过这条消息" not in msg_t3,
+    )
+
+    # v6.28.0：合成事件空壳消息面（后台自发轮生态注入修复的core面）
+    from astrbot_plugin_maisoul.core import bridge as _bridge_mod
+
+    _se = _bridge_mod.SyntheticEvent("qq:GroupMessage:123")
+    check(
+        "合成事件: 空壳消息面齐备",
+        _se.message_str == ""
+        and _se.get_messages() == []
+        and _se.message_obj.message == []
+        and _se.message_obj.sender.user_id == "",
+    )
+
+    cfg0 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=0.0)
+    check("风格彩票 0 概率不中", "本次临时风格" not in prompt.select_reply_style(cfg0))
+    cfg_half = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=0.5)
+    hits = sum(
+        "本次临时风格" in prompt.select_reply_style(cfg_half) for _ in range(200)
+    )
+    check("风格彩票 0.5 概率量纲正确（0~1 而非百分比）", 40 < hits < 160, str(hits))
     # 预设对话（maisoul 扩展）：空配置不注入；条目渲染；缺边条目跳过；人格覆盖生效
     from astrbot_plugin_maisoul.core import personas as _personas_mod
 
@@ -2181,7 +2520,11 @@ def test_learning():
         and "来表达。" in blk,
         blk[:60],
     )
-    check("表达块: 条数≤5", blk.count("\n") <= 5)
+    check(
+        "表达块: 直注入整池≤10（v6.28.0 对齐 MaiBot 不截断）",
+        1 <= blk.count("\n") <= 10,
+        str(blk.count("\n")),
+    )
 
     tmp2 = pathlib.Path(tempfile.mkdtemp()) / "u.json"
     store2 = learning.LearningStore(path=tmp2)
@@ -2232,6 +2575,127 @@ def test_learning():
         "黑话排序: count 降序 + 首现优先",
         order == ["高频词", "同高频", "低频词"],
         str(order),
+    )
+
+    # v6.28.0：黑话生命周期（空含义占位 / count 累积 / 归一化命中）
+    tmp5 = pathlib.Path(tempfile.mkdtemp()) / "ph.json"
+    store5 = learning.LearningStore(path=tmp5)
+    check("黑话占位: 空含义可入库", store5.add_jargon("g", "nb", ""))
+    check(
+        "黑话占位: 空含义条目不注入",
+        learning.jargon_reference_block(store5, "g", ["这波太nb了"]) == "",
+    )
+    store5.add_jargon("g", "nb", "很牛")
+    _j5 = store5.jargons("g")[0]
+    check(
+        "黑话占位: 二次入库补含义且 count 累积",
+        _j5["count"] == 2 and _j5["meaning"] == "很牛",
+        str(_j5),
+    )
+    check(
+        "黑话归一: 大小写不敏感命中（lower+空白折叠）",
+        "nb：很牛" in learning.jargon_reference_block(store5, "g", ["太 NB 了吧"]),
+    )
+
+    # v6.28.0：审核闸闭环（AI 入库未点亮不注入，人工点亮后注入）
+    tmp4 = pathlib.Path(tempfile.mkdtemp()) / "gate.json"
+    store4 = learning.LearningStore(path=tmp4)
+    for i in range(12):
+        store4.add_expression("global", f"情境{i}", f"风格{i}", False)
+    check(
+        "审核闸: AI 入库未点亮不注入（checked=False）",
+        learning.expression_habits_block(store4, "global", True) == "",
+    )
+    store4.ensure_expression_ids()
+    for e in store4.all_expressions():
+        store4.review_expression(e["id"], "approve")
+    check(
+        "审核闸: 人工点亮后注入",
+        learning.expression_habits_block(store4, "global", True) != "",
+    )
+
+    # v6.28.0：学习条目过滤层（source_id/SELF/机器人名/越界/>20 整批丢弃）
+    _buf = [
+        {"name": "u", "sid": "u1", "text": "哈", "ts": 1.0},
+        {"name": "麦麦", "sid": "self", "text": "自己的话", "ts": 2.0},
+    ]
+    _items = [
+        {"situation": "好", "style": "用X", "source_id": "0"},
+        {"situation": "学自己", "style": "用Y", "source_id": "1"},
+        {"situation": "含名", "style": "麦麦风格", "source_id": "0"},
+        {"situation": "越界", "style": "用Z", "source_id": "9"},
+        {"situation": "非数字", "style": "用W", "source_id": "abc"},
+    ]
+    _flt = learning._filter_learned_expressions(_items, _buf, "麦麦", {"麦麦"})
+    check("过滤层: 只留合法条目", [f["situation"] for f in _flt] == ["好"])
+    check(
+        "过滤层: >20 整批丢弃（模型跑飞）",
+        learning._filter_learned_expressions(
+            [{"situation": "a", "style": "b", "source_id": "0"}] * 21,
+            _buf,
+            "麦麦",
+            {"麦麦"},
+        )
+        == [],
+    )
+    check(
+        "自身名硬闸: 子串口径（含名/被名含都拦）",
+        learning._is_self_related("麦麦子", {"麦麦"})
+        and learning._is_self_related("麦", {"麦麦"})
+        and not learning._is_self_related("yyds", {"麦麦"}),
+    )
+
+    # v6.28.0：抽样权重 min-max 归一（高频只 5 倍偏向，不再百倍垄断）
+    _ws = learning._compute_weights([{"count": 1}, {"count": 100}, {"count": 50}])
+    check(
+        "权重: min-max 归一 1~5",
+        abs(_ws[0] - 1.0) < 1e-9 and abs(_ws[1] - 5.0) < 1e-9 and 1.0 < _ws[2] < 5.0,
+        str(_ws),
+    )
+    check(
+        "权重: 等值全 1",
+        learning._compute_weights([{"count": 3}, {"count": 3}]) == [1.0, 1.0],
+    )
+
+    # v6.28.0：贪心 MMR（同簇让位异簇）
+    _scored = [
+        (0.9, {"emb": [1.0, 0.0], "situation": "同簇a"}),
+        (0.85, {"emb": [0.99, 0.14], "situation": "同簇a2"}),
+        (0.5, {"emb": [0.0, 1.0], "situation": "异簇b"}),
+    ]
+    _mmr = learning._greedy_mmr(_scored, 2)
+    check(
+        "MMR: 同簇让位异簇",
+        [m["situation"] for m in _mmr] == ["同簇a", "异簇b"],
+        str([m["situation"] for m in _mmr]),
+    )
+
+    # v6.28.0：装载期条目消毒（非法条目剔除、合法保留并落盘）
+    import json as _json5
+
+    _bad5 = pathlib.Path(tempfile.mkdtemp()) / "sanitize.json"
+    _bad5.write_text(
+        _json5.dumps(
+            {
+                "global": {
+                    "expressions": [
+                        {"situation": "s", "style": "t", "count": 1, "checked": False},
+                        {"situation": "坏", "count": "abc"},
+                    ],
+                    "jargons": [
+                        {"content": "ok", "meaning": "", "count": 1},
+                        {"content": ""},
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _store6 = learning.LearningStore(path=_bad5)
+    check(
+        "装载消毒: 非法条目剔除保留合法",
+        len(_store6.expressions("global")) == 1 and len(_store6.jargons("global")) == 1,
+        str(_store6.data),
     )
 
     # 防复读与提示词清理（v6.9.6）
@@ -2563,7 +3027,50 @@ def test_learning():
     check(
         "学习库校验: 合法结构通过",
         apivalid.validate_learning_payload(
+            {
+                "global": {
+                    "expressions": [
+                        {"situation": "s", "style": "t", "count": 1, "checked": False}
+                    ],
+                    "jargons": [{"content": "c", "meaning": "", "count": 1}],
+                }
+            }
+        )
+        is None,
+    )
+    # v6.28.0：条目级校验（坏 count/缺字段/错型拒绝——曾让注入管线持续崩溃）
+    check(
+        "学习库校验: 表达缺 style 拒绝",
+        apivalid.validate_learning_payload(
             {"global": {"expressions": [{"situation": "s"}], "jargons": []}}
+        )
+        is not None,
+    )
+    check(
+        "学习库校验: 坏 count 拒绝",
+        apivalid.validate_learning_payload(
+            {
+                "global": {
+                    "expressions": [{"situation": "s", "style": "t", "count": "abc"}],
+                    "jargons": [],
+                }
+            }
+        )
+        is not None,
+    )
+    check(
+        "学习库校验: 黑话缺 content 拒绝、空 meaning 合法",
+        apivalid.validate_learning_payload(
+            {"global": {"expressions": [], "jargons": [{"meaning": "x"}]}}
+        )
+        is not None
+        and apivalid.validate_learning_payload(
+            {
+                "global": {
+                    "expressions": [],
+                    "jargons": [{"content": "yyds", "meaning": "", "count": 1}],
+                }
+            }
         )
         is None,
     )
@@ -2580,7 +3087,14 @@ def test_learning():
         apivalid.validate_learning_payload({"global": {"expressions": "x"}})
         is not None,
     )
-    big = {"global": {"expressions": [{"situation": "x" * 100}] * 100000}}
+    big = {
+        "global": {
+            "expressions": [
+                {"situation": "x" * 100, "style": "y", "count": 1, "checked": False}
+            ]
+            * 100000
+        }
+    }
     check(
         "学习库校验: 体积超限拒绝", apivalid.validate_learning_payload(big) is not None
     )
@@ -4086,7 +4600,8 @@ def test_planner():
         r_timeout,
     )
 
-    # v6.9.8：本轮上下文折叠
+    # v6.9.8：本轮上下文折叠（v6.28.0 语义修正：只折 assistant/tool 输出块，
+    # 用户消息永不折叠——对齐 MaiBot 折叠对象=模型输出单元）
     ctx = [{"role": "user", "content": f"历史{i}"} for i in range(3)]
     start = len(ctx)
     for r in range(6):  # 6 轮 user/assistant
@@ -4094,21 +4609,38 @@ def test_planner():
         ctx.append({"role": "assistant", "content": f"第{r}轮分析"})
     P.fold_old_turns(ctx, start)
     turn_part = ctx[start:]
-    check("折叠: 超过 3 组触发折叠", len(turn_part) <= 7, str(len(turn_part)))
+    _users_kept = [
+        m
+        for m in turn_part
+        if m.get("role") == "user" and "轮输入" in m.get("content", "")
+    ]
+    check(
+        "折叠: 用户消息全部保留",
+        len(_users_kept) == 6 and turn_part[-1]["content"] == "第5轮分析",
+        str(len(_users_kept)),
+    )
+    _assistants = [m for m in turn_part if m.get("role") == "assistant"]
+    check(
+        "折叠: 只保留最近 3 个输出块",
+        [m["content"] for m in _assistants] == ["第3轮分析", "第4轮分析", "第5轮分析"],
+        str([m["content"] for m in _assistants]),
+    )
+    _folded_msg = next(
+        m for m in turn_part if str(m.get("content", "")).startswith("[已折叠")
+    )
     check(
         "折叠: 前缀原文与摘要行",
-        turn_part[0]["content"].startswith("[已折叠的历史工具调用]\n- user: ")
-        and "- assistant: 第0轮分析" in turn_part[0]["content"],
-        turn_part[0]["content"][:100],
+        _folded_msg["content"].startswith("[已折叠的历史工具调用]\n- assistant: ")
+        and "- assistant: 第0轮分析" in _folded_msg["content"]
+        and "- assistant: 第2轮分析" in _folded_msg["content"],
+        _folded_msg["content"][:100],
     )
-    check("折叠: 最近 3 组完整保留", turn_part[-1]["content"] == "第5轮分析")
     ctx2 = [{"role": "user", "content": "只有一组"}]
     P.fold_old_turns(ctx2, 0)
     check("折叠: 未超限不动", ctx2 == [{"role": "user", "content": "只有一组"}])
 
-    # v6.20.3：折叠边界不得拆散 assistant(tool_calls)/tool 配对——按条数切
-    # 边界落在 tool 回执上时，保留区开头是孤儿 tool 轮（配对 assistant 已被
-    # 折进摘要），OpenAI 类 Provider 协议校验会拒收整轮请求
+    # v6.20.3→v6.28.0：折叠不拆散 assistant(tool_calls)/tool 配对——整块折叠
+    # 天然保配对；用户消息穿插在块之间也不进摘要
     ctx3 = [{"role": "user", "content": "历史0"}, {"role": "user", "content": "历史1"}]
     start3 = len(ctx3)
     for r3i in range(4):
@@ -4118,14 +4650,12 @@ def test_planner():
         ctx3.append(
             {"role": "tool", "tool_call_id": f"t{r3i}", "content": f"结果{r3i}"}
         )
-    ctx3.append({"role": "user", "content": "新消息1"})
-    ctx3.append({"role": "user", "content": "新消息2"})
-    ctx3.append({"role": "user", "content": "新消息3"})
+        ctx3.append({"role": "user", "content": f"新消息{r3i}"})
     P.fold_old_turns(ctx3, start3)
     kept3 = ctx3[start3:]
     check(
         "折叠: 边界不拆散 tool 配对",
-        kept3 and kept3[0].get("role") != "tool" and len(kept3) <= 8,
+        kept3 and kept3[0].get("role") != "tool",
         str([m.get("role") for m in kept3]),
     )
     _pair_ids = {
@@ -4137,6 +4667,61 @@ def test_planner():
             m.get("tool_call_id") in _pair_ids for m in kept3 if m.get("role") == "tool"
         ),
         str([m.get("tool_call_id") for m in kept3 if m.get("role") == "tool"]),
+    )
+    _folded3 = next(m for m in kept3 if str(m.get("content", "")).startswith("[已折叠"))
+    check(
+        "折叠: 用户消息不进摘要",
+        "新消息" not in _folded3["content"],
+        _folded3["content"][:120],
+    )
+    check(
+        "折叠: 穿插用户消息仍全部在",
+        sum(
+            1
+            for m in kept3
+            if m.get("role") == "user"
+            and str(m.get("content", "")).startswith("新消息")
+        )
+        == 4,
+        str([m.get("content", "")[:10] for m in kept3 if m.get("role") == "user"]),
+    )
+
+    # v6.28.0：carry 增长上限（折叠 + 聊天消息按窗截尾 + 周期性注入不滚动）
+    carry = [
+        {"role": "user", "content": f'<message msg_id="m{i}">\n消息{i}'}
+        for i in range(5)
+    ]
+    for r in range(4):
+        carry.append(
+            {
+                "role": "assistant",
+                "content": f"分析{r}",
+                "tool_calls": [{"id": f"c{r}"}],
+            }
+        )
+        carry.append({"role": "tool", "tool_call_id": f"c{r}", "content": f"结果{r}"})
+    carry.append({"role": "user", "content": "时间：2026-01-01 00:00:00"})
+    carry.append(
+        {"role": "user", "content": "以下是聊天中可能出现的黑话注释（周期注入）"}
+    )
+    P.bound_carry_contexts(carry, 3)
+    _carry_msgs = [m for m in carry if str(m.get("content", "")).startswith("<message")]
+    check(
+        "carry: 聊天消息按窗截尾",
+        len(_carry_msgs) == 3
+        and _carry_msgs[-1]["content"].startswith('<message msg_id="m4"'),
+        str(len(_carry_msgs)),
+    )
+    check(
+        "carry: 周期性注入轮被清出",
+        not any("黑话" in str(m.get("content", "")) for m in carry),
+        str([str(m.get("content", ""))[:16] for m in carry]),
+    )
+    check(
+        "carry: 时间行保留、旧输出块折叠",
+        any(str(m.get("content", "")).startswith("时间：") for m in carry)
+        and sum(1 for m in carry if m.get("role") == "assistant") == 3,
+        str([m.get("role") for m in carry]),
     )
 
     # v6.13.4/5：历史分析跨轮回灌 + 部署版消息格式（对齐 MaiBot 会话历史——
@@ -4291,6 +4876,54 @@ def test_planner():
     ps2 = P.PlannerState()
     check("wait: 非等待状态恢复无效", ps2.resume_from_wait() is False)
 
+    # v6.28.0：wait 记账字段 + 唤醒回执 + sleeper 取消 + 活跃工具清等待链
+    psW = P.PlannerState()
+    psW.try_enter_wait(cfg, 45)
+    check(
+        "wait: 记录起始时刻与申请秒数",
+        psW.wait_requested == 45 and psW.wait_started_ts > 0,
+    )
+    _rx = psW.build_wake_receipt()
+    check(
+        "wait: 唤醒回执=有新消息版原文",
+        _rx.startswith("等待已结束，实际等待 ")
+        and "原计划等待 45.0 秒" in _rx
+        and "期间收到了新的用户输入" in _rx,
+        _rx,
+    )
+
+    class _FakeTask:
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    psW2 = P.PlannerState()
+    psW2.try_enter_wait(cfg, 30)
+    _ft = _FakeTask()
+    psW2.wait_resume_task = _ft
+    ok_wake = psW2.resume_from_wait("测试回执")
+    check(
+        "wait: 唤醒取消到期 sleeper 并带回执",
+        ok_wake
+        and _ft.cancelled
+        and psW2.wait_resume_task is None
+        and psW2.carry_receipt == "测试回执",
+    )
+    psW2.cancel_wait_resume()
+    check("wait: 空句柄取消不炸", psW2.wait_resume_task is None)
+
+    psN = P.PlannerState()
+    psN.consecutive_wait_count = 3
+    P.note_active_tool(psN)
+    check("wait: 非 wait 工具清等待链（v6.28.0）", psN.consecutive_wait_count == 0)
+    check(
+        "carry: 新建状态快照为空",
+        P.PlannerState().carry_contexts is None
+        and P.PlannerState().carry_wait_call_id == ""
+        and P.PlannerState().carry_receipt == "",
+    )
+
     bcfg = {
         "no_action_backoff_base_seconds": 15,
         "no_action_backoff_cap_seconds": 300,
@@ -4357,9 +4990,23 @@ def test_planner():
     from astrbot_plugin_maisoul.core import learning
 
     class _Prov:
+        """v6.28.0：MaiBot 现行 selector 语义——解析候选清单回首个条目 id。"""
+
+        async def text_chat(self, prompt, session_id=None, **kw):
+            import re as _re
+
+            m = _re.search(r"^(\d+): 情景=", prompt, _re.MULTILINE)
+            first_id = m.group(1) if m else "1"
+
+            class R:
+                completion_text = '{"selected_ids": [%s]}' % first_id
+
+            return R()
+
+    class _GarbageProv:
         async def text_chat(self, prompt, session_id=None, **kw):
             class R:
-                completion_text = '{"selected_situations": [1]}'
+                completion_text = "模型跑飞了这不是 JSON"
 
             return R()
 
@@ -4387,8 +5034,18 @@ def test_planner():
         )
     )
     check(
-        "表达选择失败回落直注入",
+        "表达选择: 子代理执行异常=直注入全池（对齐 selector 两态区分）",
         blk2.startswith("【表达习惯参考") and blk2.count("\n") >= 1,
+    )
+    blk_g = asyncio.run(
+        learning.select_expression_habits_block(
+            _GarbageProv(), store, "global", False, "- 12:00:00 u: hi", "麦麦"
+        )
+    )
+    check(
+        "表达选择: 解析失败=不注入（宁缺毋滥，v6.28.0）",
+        blk_g == "",
+        blk_g[:60],
     )
 
     check(

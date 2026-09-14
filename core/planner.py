@@ -186,39 +186,145 @@ def build_wait_completed_message(
 
 
 FOLDED_TOOL_HISTORY_PREFIX = "[已折叠的历史工具调用]"
-TURN_CONTEXT_KEEP_COUNT = (
-    6  # 保留最近 3 组 user/assistant（对齐 ASSISTANT_OPTIMIZATION_KEEP_COUNT=3）
-)
+# 保留最近 3 个 assistant/tool 输出块（对齐上游 _trim_assistant_history_to_latest
+# 的 keep=3 输出单元口径——旧版的 6 条消息≈3 组是近似，v6.28.0 改按块计）
+TURN_CONTEXT_KEEP_BLOCKS = 3
 
 
 def fold_old_turns(
-    contexts: list[dict], turn_start: int, keep: int = TURN_CONTEXT_KEEP_COUNT
+    contexts: list[dict], turn_start: int, keep: int = TURN_CONTEXT_KEEP_BLOCKS
 ) -> None:
-    """本轮循环产生的旧轮次折叠（对齐 _build_trimmed_assistant_tool_user_message：
-    保留最近 3 组 user/assistant，更早的一次性折叠为「[已折叠的历史工具调用]」摘要。
-    MaiBot 保留工具调用详情且超 1024 字符转 Complex 消息；maisoul 无该基建，
-    精简为逐条摘要文本——防长循环 contexts 无限膨胀。单趟折叠（while 逐对重折
-    会在折叠块自身上 1 换 1 死循环）。
-    边界对齐配对（v6.20.3）：折叠区终点落在 tool 回执上时，其配对的
-    assistant(tool_calls) 已进折叠区，保留区开头会出现孤儿 tool 轮——OpenAI
-    类 Provider 的协议校验会拒收整轮请求。终点回退到配对 assistant 之前，
-    让整对一起保留（keep 是软上限，配对完整性优先）。"""
-    excess = len(contexts) - turn_start - keep
-    if excess <= 0:
+    """旧轮次折叠——只折 assistant/tool 输出块（v6.28.0 语义修正）。
+
+    对齐 MaiBot _trim_assistant_history_to_latest 的折叠对象：模型输出单元
+    及其工具结果。用户聊天消息（排水进来的 <message>、黑话参考、补问轮）
+    是会话历史本体，永不折叠——旧版按条数全区折叠会把循环中期进来的
+    用户消息误折进「历史工具调用」摘要。块按输出单元切分：每个 assistant 轮
+    开一个新块、其后的 tool 回执归属该块（连续多轮输出不被并块），user 轮
+    结束当前块。保留最近 keep 个输出块，更早的块单趟一次性折成单条摘要
+    （坑 34）；整块折叠天然不拆散 assistant(tool_calls)/tool 配对（旧版
+    逐条回退防线不再需要）。"""
+    blocks: list[list[int]] = []  # [start, end) 输出块（assistant 起、tool 随）
+    cur: list[int] | None = None
+    for i in range(turn_start, len(contexts)):
+        role = contexts[i].get("role")
+        if role == "assistant":
+            cur = [i, i + 1]
+            blocks.append(cur)
+        elif role == "tool" and cur is not None:
+            cur[1] = i + 1
+        else:
+            cur = None
+    if len(blocks) <= keep:
         return
-    fold_end = turn_start + excess
-    while fold_end > turn_start and contexts[fold_end].get("role") == "tool":
-        fold_end -= 1
+    fold_blocks = blocks[: len(blocks) - keep]
+    fold_msgs = [m for s, e in fold_blocks for m in contexts[s:e]]
     lines = [
         f"- {m.get('role')}: " + " ".join(str(m.get("content") or "").split())[:80]
-        for m in contexts[turn_start:fold_end]
+        for m in fold_msgs
     ]
-    contexts[turn_start:fold_end] = [
+    # 区间内的用户消息原位保留（次序不变），摘要插在首个被折叠块的位置
+    kept_user = [
+        m
+        for m in contexts[fold_blocks[0][0] : fold_blocks[-1][1]]
+        if m.get("role") not in ("assistant", "tool")
+    ]
+    contexts[fold_blocks[0][0] : fold_blocks[-1][1]] = [
         {
             "role": "user",
             "content": FOLDED_TOOL_HISTORY_PREFIX + "\n" + "\n".join(lines),
-        }
+        },
+        *kept_user,
     ]
+
+
+def bound_carry_contexts(contexts: list[dict], context_limit: int) -> None:
+    """继承 contexts（carry）的增长上限：折叠旧输出块 + 聊天消息按窗截尾。
+
+    carry 跨循环滚动（对齐 MaiBot 工具结果即写会话历史、按窗裁切选取），
+    不设上限会随会话生命无限增长：
+    - 输出块折叠走 fold_old_turns（整表范围）；
+    - <message> 聊天轮只保留最近 context_limit 条（user 轮独立删除安全，
+      不存在配对问题）；
+    - 黑话参考/补问等周期性注入轮不随 carry 滚动（MaiBot 的
+      ReferenceMessage 亦不进持久历史，count_in_context=False）。"""
+    fold_old_turns(contexts, 0)
+    contexts[:] = [
+        m
+        for m in contexts
+        if not (
+            m.get("role") == "user"
+            and not (
+                str(m.get("content") or "").startswith("<message")
+                or str(m.get("content") or "").startswith("时间：")
+                or str(m.get("content") or "").startswith(FOLDED_TOOL_HISTORY_PREFIX)
+            )
+        )
+    ]
+    if context_limit <= 0:
+        # 窗口为 0 的部署语义是"不看历史"：聊天轮全清，其余保留
+        contexts[:] = [
+            m
+            for m in contexts
+            if not (
+                m.get("role") == "user"
+                and str(m.get("content") or "").startswith("<message")
+            )
+        ]
+        return
+    chat_idx = [
+        i
+        for i, m in enumerate(contexts)
+        if m.get("role") == "user"
+        and str(m.get("content") or "").startswith("<message")
+    ]
+    drop = (
+        set(chat_idx[: len(chat_idx) - context_limit])
+        if len(chat_idx) > context_limit
+        else set()
+    )
+    if drop:
+        for i in sorted(drop, reverse=True):
+            del contexts[i]
+
+
+def repair_dangling_tool_calls(contexts: list[dict]) -> int:
+    """给缺回执的 tool_call 补占位 tool 轮（PR #41 评审补强），返回修复数。
+
+    planner 打断有 llm_in_flight 守卫（只落在 LLM await 点，assistant 轮
+    未入列），但插件卸载/热重载的 cancel_and_wait_all 无此守卫——cancel 可
+    落在工具执行中，此时快照尾部带着已入列的 assistant(tool_calls) 而回执
+    未入；同进程热重载后 StateManager 不清理，下轮请求会被严格网关以协议
+    错误拒收（正是 error 出口丢弃快照防的形态）。"""
+    answered = {
+        m.get("tool_call_id")
+        for m in contexts
+        if isinstance(m, dict) and m.get("role") == "tool"
+    }
+    repaired = 0
+    for m in contexts:
+        for tc in m.get("tool_calls") or []:
+            cid = tc.get("id")
+            if cid and cid not in answered:
+                contexts.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": cid,
+                        "content": "（被打断，未执行）",
+                    }
+                )
+                repaired += 1
+    return repaired
+
+
+def note_active_tool(pl: "PlannerState") -> None:
+    """非 wait 工具执行后的连续等待计数清零（v6.28.0）。
+
+    对齐 MaiBot reasoning_engine「任何非 wait 工具执行即重置等待链」：
+    maisoul 此前只在 reply 后清零——wait 满 3 次进入休息后，若后续循环
+    只走 no_action/send_emoji/查询类工具而不 reply，计数永停在上限，
+    之后每次 wait 立即"休息"，等待-观察节奏被永久锁死。"""
+    pl.consecutive_wait_count = 0
 
 
 def build_history_contexts(
@@ -553,6 +659,16 @@ class PlannerState:
     umo: str = ""  # wait 恢复续轮所需的发送上下文
     platform: str = ""
     is_group: bool = True
+    # v6.28.0 contexts 继承（对齐 MaiBot 工具结果即写 _chat_history、跨 turn
+    # 存活）：自然出口/打断/ wait 分支把 contexts 快照留在 carry_contexts，
+    # 续轮（wait 到期/唤醒/后继轮/打断重启/新触发）从快照续跑而非从 buffer
+    # 重建——wait 前经 deferred 工具查到的资料不再随循环结束丢失
+    carry_contexts: list | None = None
+    carry_wait_call_id: str = ""  # 快照尾部挂起的 wait 工具调用 id（回执配对）
+    carry_receipt: str = ""  # 待注入的 wait 完成回执（到期/唤醒路径设置）
+    wait_started_ts: float = 0.0  # 本次 wait 起始时刻（唤醒回执的 elapsed 口径）
+    wait_requested: int = 0  # 本次 wait 申请秒数（唤醒回执的原计划段）
+    wait_resume_task: object = None  # wait 到期续轮睡眠任务句柄（可取消，防幽灵复活）
 
     # ---------------- wait 状态机（对齐 _try_enter_wait_state） ----------------
     def begin_cycle(self) -> int:
@@ -592,18 +708,41 @@ class PlannerState:
             return False, self.consecutive_wait_count, maximum
         self.consecutive_wait_count += 1
         self.agent_state = "wait"
-        self.wait_until = time.time() + max(0, seconds)
+        self.wait_started_ts = time.time()
+        self.wait_requested = max(0, seconds)
+        self.wait_until = self.wait_started_ts + max(0, seconds)
         return True, self.consecutive_wait_count, maximum
 
     def in_wait(self) -> bool:
         return self.agent_state == "wait" and time.time() < self.wait_until
 
-    def resume_from_wait(self) -> bool:
-        """主动触发（@/提及必回）从 wait 恢复运行（对齐 _resume_from_wait_for_proactive_trigger）。"""
+    def cancel_wait_resume(self) -> None:
+        """取消挂起的 wait 到期续轮任务（唤醒/新 wait 替换时）。
+
+        sleeper 只在到期后才自守卫，不取消会积累长命睡眠任务（seconds 是
+        模型可控且无上限的参数）；句柄亦作为 LRU 淘汰的活跃信号。"""
+        if self.wait_resume_task is not None:
+            self.wait_resume_task.cancel()
+            self.wait_resume_task = None
+
+    def build_wake_receipt(self) -> str:
+        """唤醒路径的 wait 完成回执（有新消息版——唤醒由消息触发）。"""
+        started = self.wait_started_ts or time.time()
+        requested = float(self.wait_requested) if self.wait_requested else None
+        return build_wait_completed_message(time.time() - started, requested, True)
+
+    def resume_from_wait(self, receipt: str = "") -> bool:
+        """主动触发（@/提及必回/私聊新消息）从 wait 恢复运行。
+
+        receipt 非空时作为完成回执带入续轮（对齐上游唤醒路径为挂起的 wait
+        调用补工具结果消息的语义，v6.28.0）；到期续轮任务一并取消。"""
         if self.agent_state != "wait":
             return False
+        self.cancel_wait_resume()
         self.agent_state = "idle"
         self.wait_until = 0.0
+        if receipt:
+            self.carry_receipt = receipt
         return True
 
     # ---------------- 空闲退避（对齐 IdleBackoffController） ----------------
@@ -710,7 +849,9 @@ def build_planner_toolset(deps) -> "object":
         FunctionTool(
             name="send_emoji",
             description="发送一个表情包来表达情绪，参与聊天。",
-            parameters={"type": "object", "properties": {}},
+            # required:[] 不可省（v6.28.0）：MaiBot 工具规范化层显式补空数组，
+            # 缺省时 DeepSeek 等严格校验网关会报 null is not of type "array" 400
+            parameters={"type": "object", "properties": {}, "required": []},
             handler=_send_emoji,
         )
     )

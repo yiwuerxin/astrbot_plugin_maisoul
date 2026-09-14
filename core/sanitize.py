@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from astrbot.api import logger
+
 # 引用/转发占位（QQ OneBot 常见形态 + 通用文案形态）
 _REPLY_PREFIX_RE = re.compile(
     r"^\s*(?:\[CQ:reply[^\]]*\]|\[回复[^\]]*\]|\[引用[^\]]*\]|<reply>[^<]*</reply>)\s*"
@@ -32,6 +34,59 @@ def sanitize_text(text: str) -> str:
     t = _REPLY_PREFIX_RE.sub("", t, count=1)
     t = _FORWARD_RE.sub("[转发消息]", t)
     return t.strip()
+
+
+# 超时肇事正则的进程级黑名单（PR #41 评审补强）：wait_for 超时只是放弃等待，
+# to_thread 的线程不可取消、灾难回溯会继续占线程烧 CPU；不拦的话持续消息下
+# 每条再起新线程堆积。黑名单后同 pattern 直接跳过；修改配置后需重载/重启生效
+_REGEX_TIMEOUT_BLACKLIST: set[str] = set()
+
+
+def regex_blacklist() -> set[str]:
+    """当前黑名单视图（learning 等处的同步过滤用）。"""
+    return _REGEX_TIMEOUT_BLACKLIST
+
+
+def blacklist_regexes(patterns) -> None:
+    for p in patterns or []:
+        p = str(p or "").strip()
+        if p:
+            _REGEX_TIMEOUT_BLACKLIST.add(p)
+
+
+async def safe_regex_any(patterns, text: str, timeout: float = 0.5) -> bool:
+    """用户配置正则的安全执行（maisoul 扩展，v6.28.0）：灾难回溯正则会把
+    事件循环挂死整个 bot——to_thread + 超时兜底。超时放行并留 error（显式
+    降级不静默），肇事批次整体拉黑（线程不可取消，后续消息直接跳过，防
+    线程堆积）；worker 内的正则错误按不命中跳过（与同步版一致）。"""
+    import asyncio
+
+    pats = [
+        str(p or "").strip()
+        for p in (patterns or [])
+        if str(p or "").strip() and str(p or "").strip() not in _REGEX_TIMEOUT_BLACKLIST
+    ]
+    if not pats:
+        return False
+
+    def _run() -> bool:
+        for pattern in pats:
+            try:
+                if re.search(pattern, text):
+                    return True
+            except re.error:
+                continue
+        return False
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_run), timeout)
+    except asyncio.TimeoutError:
+        blacklist_regexes(pats)
+        logger.error(
+            f"maisoul: 用户正则执行超时（>{timeout}s），已放行并拉黑本批 pattern"
+            f"（本进程内跳过，修复配置后重载生效）: {pats[:3]}"
+        )
+        return False
 
 
 def leading_ai_mention(text: str, bot_name: str, aliases: list[str]) -> str:

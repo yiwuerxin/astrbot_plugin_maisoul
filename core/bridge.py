@@ -225,15 +225,51 @@ class SyntheticEvent:
     def get_sender_name(self):
         return ""
 
+    # 空壳消息面（v6.28.0）：生态插件的 on_llm_request 钩子普遍读消息链/
+    # 消息文本/发送者定位会话——后台自发轮（wait 续轮/followup）只有合成
+    # 事件，缺这些属性会让注入 handler 抛 AttributeError 整批静默失败
+    # （恰是主动开口、注入价值最高的时刻）。空数据让守卫了空链的插件
+    # 自然跳过注入，不伪造内容。
+    @property
+    def message_str(self) -> str:
+        return ""
+
+    @property
+    def message_obj(self):
+        return SimpleNamespace(
+            message=[],
+            raw_message="",
+            session_id=self.unified_msg_origin,
+            self_id="",
+            sender=SimpleNamespace(
+                user_id=self.get_sender_id(), nickname=self.get_sender_name()
+            ),
+        )
+
+    def get_messages(self):
+        return []
+
 
 def _result_text(r) -> str:
+    """工具产物 → 文本。
+
+    铁律：对象转文本边界只取 .text / str 本体，禁止 str() 整对象——
+    pydantic repr（type=<ComponentType...> 之类）会灌进管家桥二轮上下文
+    占用截断位（v6.28.0）。无法转文本的产物丢弃并留 error 日志。
+    """
     contents = getattr(r, "content", None)
     if contents:
         texts = [str(getattr(c, "text", "") or "") for c in contents]
         joined = "\n".join(t for t in texts if t)
         if joined:
             return joined
-    return str(r or "")
+    if isinstance(r, str):
+        return r
+    text = getattr(r, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text
+    logger.error(f"maisoul: 工具返回无法转文本的产物（{type(r).__name__}），已丢弃该段")
+    return ""
 
 
 async def call_llm_tool(

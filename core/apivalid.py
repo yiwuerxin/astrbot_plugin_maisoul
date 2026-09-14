@@ -43,11 +43,51 @@ def validate_config_payload(schema, payload: dict, current) -> tuple[dict, str |
     return accepted, None
 
 
-def validate_learning_payload(payload) -> str | None:
+def _count_ok(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+
+
+def expression_entry_error(entry) -> str | None:
+    """表达条目级校验（v6.28.0）：situation/style 非空字符串、count 非负
+    数字、checked 布尔。非法条目会让注入路径 int()/下标硬取崩溃。"""
+    if not isinstance(entry, dict):
+        return "表达条目必须是对象"
+    for f in ("situation", "style"):
+        v = entry.get(f)
+        if not isinstance(v, str) or not v.strip():
+            return f"表达条目缺少非空 {f}"
+    if not _count_ok(entry.get("count", 1)):
+        return "表达条目 count 必须是非负数字"
+    ck = entry.get("checked", False)
+    if not isinstance(ck, bool):
+        return "表达条目 checked 必须是布尔"
+    return None
+
+
+def jargon_entry_error(entry) -> str | None:
+    """黑话条目级校验（v6.28.0）：content 非空字符串、meaning 字符串（可为
+    空=待推断占位）、count 非负数字。"""
+    if not isinstance(entry, dict):
+        return "黑话条目必须是对象"
+    v = entry.get("content")
+    if not isinstance(v, str) or not v.strip():
+        return "黑话条目缺少非空 content"
+    m = entry.get("meaning", "")
+    if not isinstance(m, str):
+        return "黑话条目 meaning 必须是字符串（可为空=待推断占位）"
+    if not _count_ok(entry.get("count", 1)):
+        return "黑话条目 count 必须是非负数字"
+    return None
+
+
+def validate_learning_payload(payload, *, entry_level: bool = True) -> str | None:
     """学习库结构校验：dict[共享组键] = {expressions: list, jargons: list}。
 
-    通过返回 None，否则返回中文错误信息。条目字段内部不强校验（注入路径
-    均以 .get 容错），只挡会把运行时打崩的顶层形态。
+    通过返回 None，否则返回中文错误信息。v6.28.0 起条目级结构一并校验
+    （坏 count/缺 situation 的条目曾让注入管线持续崩溃、该会话无法发言）；
+    entry_level=False 只查顶层形态——LearningStore 装载用（随后对非法条目
+    剔除保留合法部分，整库拒收会把一条坏条目放大成全部学习数据丢失），
+    WebUI 写入用默认的整包拒收。
     """
     import json
 
@@ -56,10 +96,18 @@ def validate_learning_payload(payload) -> str | None:
     for key, bucket in payload.items():
         if not isinstance(bucket, dict):
             return f"分库 {key} 必须是对象"
-        for field in ("expressions", "jargons"):
+        for field, checker in (
+            ("expressions", expression_entry_error),
+            ("jargons", jargon_entry_error),
+        ):
             v = bucket.get(field)
             if v is not None and not isinstance(v, list):
                 return f"分库 {key}.{field} 必须是数组"
+            if entry_level:
+                for idx, entry in enumerate(v or []):
+                    err = checker(entry)
+                    if err is not None:
+                        return f"分库 {key}.{field}[{idx}]：{err}"
     try:
         # 与 LearningStore.save 的落盘格式同构（indent=1）——用紧凑式测量会
         # 低估磁盘体积约两成，贴近上限的载荷落盘后超限（Sourcery 审查）

@@ -251,11 +251,15 @@ def _merge_segments_to_max_count(segments, max_count):
 def process_response_segments(text: str, cfg) -> list[ProcessedResponseSegment]:
     """LLM 原始回复 → 待发送段列表。cfg 为 maisoul 配置视图（含主配置键）。"""
     bot_name = str(cfg.get("bot_name") or "麦麦").strip() or "麦麦"
+    if not cfg.get("enable_response_post_process", True):
+        # v6.28.0：总开关关时空白回复不发送（对齐 MaiBot——"呃呃"兜底本身
+        # 属后处理产物，关后处理即不兜底，发送侧拿到空段列表自然放弃）
+        if not str(text or "").strip():
+            return []
+        return [ProcessedResponseSegment(text)]
+
     if not str(text or "").strip():
         return [ProcessedResponseSegment("呃呃")]
-
-    if not cfg.get("enable_response_post_process", True):
-        return [ProcessedResponseSegment(text)]
 
     if cfg.get("splitter_enable_kaomoji_protection", False):
         protected_text, kaomoji_mapping = protect_kaomoji(text)

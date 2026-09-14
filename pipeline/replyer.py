@@ -68,7 +68,7 @@ async def _generate_and_send(
     expr_block = await _select_expr_block(
         P, st, eff_cfg, platform, gid, provider, reason, is_group=is_group
     )
-    keyword_block = learning.keyword_reaction_block(eff_cfg, trigger_text)
+    keyword_block = await learning.keyword_reaction_block_safe(eff_cfg, trigger_text)
 
     user_message = prompt.build_final_user_message(
         st,
@@ -77,6 +77,7 @@ async def _generate_and_send(
         style,
         expression_habits=expr_block,
         keyword_reaction=keyword_block,
+        target_msg_id=_msg_id(event),
     )
     if bool(eff_cfg.get("emotion_enable", False)):  # P-B：要求模型行首给情绪标签
         user_message += (
@@ -193,7 +194,10 @@ def _schedule_learning(
     """发言后异步学习表达/黑话（对齐 MaiBot 学习器：失败不影响发言）。
 
     is_group：学习规则按 group/private 匹配（v6.20.3 贯通——此前漏传恒按
-    group 匹配，私聊 learn=False 规则失效）。"""
+    group 匹配，私聊 learn=False 规则失效）。
+    学习触发闸三件套（v6.28.0，对齐 runtime 学习调度）：① 会话级互斥——
+    同会话上一批未完成不叠批（重复学习同一窗口虚增 count + 重复账单）；
+    ② 30s 最小间隔——学习 LLM 不再与聊天 1:1 放大；③ ≥10 条可学外部消息。"""
     try:
         _, learn_expr = learning.learning_flags(
             eff_cfg, "expression_learning_list", platform, gid, is_group
@@ -203,8 +207,19 @@ def _schedule_learning(
         )
         if not (learn_expr or learn_jargon):
             return
-        snapshot_cfg = dict(eff_cfg)
+        now = time.time()
+        if st.learn_busy:
+            logger.debug(f"maisoul[{gid}] 学习跳过：同会话上一批未完成")
+            return
+        if now - st.last_learn_ts < learning.LEARN_MIN_INTERVAL_SECONDS:
+            return
         snapshot_buf = list(st.buffer)[-30:]
+        learnable = sum(1 for m in snapshot_buf if str(m.get("sid")) != "self")
+        if learnable < learning.LEARN_MIN_MESSAGES:
+            return
+        st.learn_busy = True
+        st.last_learn_ts = now
+        snapshot_cfg = dict(eff_cfg)
         learn_bind = _pick_task_model(P, "learner", snapshot_cfg)
 
         async def _run():
@@ -223,6 +238,8 @@ def _schedule_learning(
                     logger.info(f"maisoul[{gid}] 学习: {summary}")
             except Exception:
                 logger.debug("maisoul: 学习任务失败", exc_info=True)
+            finally:
+                st.learn_busy = False
 
         P._spawn(_run(), name=f"learning:{gid}")
     except Exception:
@@ -331,6 +348,10 @@ async def _deliver_reply(
             emo_word = m.group(1)
         typing_mult = st.emotion.typing_multiplier()
     sent = await sender.send_humanlike(send, answer, eff_cfg, typing_mult=typing_mult)
+    if not sent:
+        # 空白回复（后处理总开关关时不兜底，v6.28.0）：无实际发言——不记
+        # 防重复/存在感账、不触发情绪累积与学习，对齐 MaiBot 发送前中止
+        return sent
     if emo_word and bool(
         eff_cfg.get("emotion_feedback_enable", False)
     ):  # §6.6 同向情绪累积：发送成功才计入——失败/取消的发言不算已表达的情绪

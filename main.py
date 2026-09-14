@@ -1,4 +1,4 @@
-"""astrbot_plugin_maisoul v6.27.2 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
+"""astrbot_plugin_maisoul v6.28.0 —— 麦麦(MaiBot)发言流水线深度复刻 + 管家桥
 
 main.py 只做注册/生命周期/钩子薄壳（M7 拆分）；管线逻辑在 pipeline/ 包：
 - pipeline/gating        门控：逃生舱/过滤词/双模式分发/空窗补偿
@@ -39,7 +39,7 @@ _RUNTIME_DATA_FILES = (
 
 
 @register(
-    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.27.2"
+    "astrbot_plugin_maisoul", "meng", "麦麦发言流水线深度复刻+管家桥+多人格", "6.28.0"
 )
 class MaiSoulPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -110,6 +110,7 @@ class MaiSoulPlugin(Star):
 
     async def initialize(self):
         self._migrate_legacy_nicknames()
+        self._migrate_probability_scale()
         # Phase4：task_models 规范器接线（历史任意形态 → 全任务齐全，内存态；
         # 不写回配置文件——清洗结果只影响本次运行的候选链。v6.20.3 任务清单
         # 补入 embedding，嵌入绑定不再被每次加载剥掉）
@@ -117,7 +118,7 @@ class MaiSoulPlugin(Star):
             self.config.get("task_models")
         )
         logger.info(
-            f"maisoul v6.27.2 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
+            f"maisoul v6.28.0 已加载：模式={self.config['mode']} bot={self.config['bot_name']} "
             f"触发模式={self.config.get('reply_trigger_mode', 'frequency')} "
             f"talk_value={self.config.get('talk_value', 1.0)} "
             f"错字={'开' if self.config.get('typo_enable', True) else '关'} 管家桥="
@@ -164,6 +165,46 @@ class MaiSoulPlugin(Star):
             logger.info(f"maisoul: 旧 nicknames 已合并进 aliases → {merged}")
         except Exception:
             logger.debug("maisoul: 别名迁移保存失败（内存已生效）", exc_info=True)
+
+    def _migrate_probability_scale(self):
+        """v6.28.0 前 multiple_probability 是 0~100 百分比整数；现对齐 MaiBot 的
+        0~1 小数量纲。一次性迁移（PR #41 评审修正）：未打标记时全部 >0 旧值
+        统一 /100——旧 0.5（=0.5%）→ 0.005 语义保真，">1 才折算"的旧方案会让
+        (0,1] 区间的旧值被新量纲消费侧静默放大百倍；打标落盘后不再动。打标后
+        新出现的 >1 值视为用户按旧量纲新填，折算并提示；非数值配置属错误，
+        完整暴露并重置为 0。"""
+        try:
+            val = float(self.config.get("multiple_probability", 0))
+        except (TypeError, ValueError):
+            logger.error(
+                "maisoul: multiple_probability 配置非数值，已重置为 0",
+                exc_info=True,
+            )
+            self.config["multiple_probability"] = 0
+            return
+        if not self.config.get("probability_scale_migrated"):
+            self.config["probability_scale_migrated"] = True
+            if val > 0:
+                self.config["multiple_probability"] = val / 100.0
+            try:
+                self.config.save_config()
+                logger.info(
+                    "maisoul: multiple_probability 百分比量纲已一次性迁移"
+                    f"（{val} → {self.config['multiple_probability']}）"
+                )
+            except Exception:
+                logger.debug("maisoul: 概率迁移保存失败（内存已生效）", exc_info=True)
+            return
+        if val > 1:
+            self.config["multiple_probability"] = val / 100.0
+            try:
+                self.config.save_config()
+                logger.warning(
+                    f"maisoul: multiple_probability={val} 超出 0~1 量纲，"
+                    f"已按百分比折算为 {val / 100.0}（新量纲直接填小数即可）"
+                )
+            except Exception:
+                logger.debug("maisoul: 概率折算保存失败（内存已生效）", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # 门控钩子：聊天消息评分（低优先级 = 在其他被动插件之后运行；群聊+私聊全接管）  #
@@ -239,4 +280,4 @@ class MaiSoulPlugin(Star):
         await self._registry.cancel_and_wait_all(timeout=5.0)
         await self.monitor.stop_writer()  # M10：冲刷残余事件后再关连接池
         self.monitor.close()
-        logger.info("maisoul v6.27.2 已卸载")
+        logger.info("maisoul v6.28.0 已卸载")

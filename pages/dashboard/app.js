@@ -7,7 +7,7 @@ let FB = null;
 let maisoulTab = 'core';
 function setMsTab(t){collect();maisoulTab=t;render('maisoul')}
 const TITLES = {overview:'概览',maisoul:'麦麦设置',personamgr:'人格管理',rhythm:'发言节奏',learn:'学习',bridge:'管家桥',observe:'麦麦观察',models:'模型管理',exprv:'表达审核'};
-const PAGE_VERSION = 'v6.27.2';
+const PAGE_VERSION = 'v6.28.0';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -144,7 +144,7 @@ function render(p){
         panel('lottery','随机风格彩票','备用说话风格；触发后只影响本次回复。',
           `<div id="mrs">${(S.multiple_reply_style||[]).map((t,i)=>styleItem(i,t)).join('')}</div>
            ${smBtn('outline','plus','添加备用风格','onclick="addStyle()"')}`+
-          field('触发概率（multiple_probability）','随机启用备用风格的概率；0 表示不随机切换。',slider('multiple_probability',S.multiple_probability??0,0,100,1,'%'))
+          field('触发概率（multiple_probability）','随机启用备用风格的概率（0~1 小数，对齐 MaiBot 量纲；旧百分比数值自动迁移，如 15 迁移为 0.15）；0 表示不随机切换。',slider('multiple_probability',S.multiple_probability??0,0,1,0.05,''))
         ),
         panel('kwr','关键词反应','命中关键词后，给麦麦追加一段固定反应提示。正则用命名捕获组，reaction 里 <code>[名字]</code> 会被替换为匹配内容。',
           `<div class="lab"><span>关键词规则（keyword_rules）</span></div>

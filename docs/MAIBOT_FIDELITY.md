@@ -15,9 +15,9 @@
 
 ## 2. 已复刻范围
 
-**核心管线**：三件套 prompt 结构（maisaka_replyer）与输出指令原文；触发门控全套（frequency 的 ceil(1/f)+空窗补偿+强制触发；reply_necessity 档位制评分——噪声清洗/问句正则/叫别的AI抑制/短反应惩罚/压力分/存在感惩罚/频率倍率）；talk_value 动态规则（目标×时间优先级）；回复后处理管线（括号心声清除/呃呃/超长默认回复/分句规则+概率合并/条数上限/合并/颜文字保护）；拼音字频错字引擎（同音字/声调/整词替换+纠正消息）；打字延迟（×typing_speed）；同目标防重复；额外 Prompt 精确匹配多条拼接。
+**核心管线**：三件套 prompt 结构（maisaka_replyer）与输出指令原文；触发门控全套（frequency 的 ceil(1/f)+空窗补偿+强制触发；reply_necessity 档位制评分——噪声清洗/问句正则/叫别的AI抑制/短反应惩罚/压力分/存在感惩罚/频率倍率，**整批评分**（v6.28.0：combined 长度/批次级短反应/批内任一提及拿 80 档，对齐 turn_gates 的 pending_messages 整评判）；强制触发武装态（独立模式生成中的 @ 一次性武装补轮，对齐 _arm_forced_turn）；静默消费（talk_value≤0 清积压，对齐 turn_scheduler）；频率窗口反馈乘进 effective talk_value（阈值与倍率同吃、倍率 0.5 下限，对齐 _talk_frequency_adjust 结构））；talk_value 动态规则（目标×时间优先级）；回复后处理管线（括号心声清除/呃呃/超长默认回复/分句规则+概率合并/条数上限/合并/颜文字保护；总开关关时空白回复不发送）；拼音字频错字引擎（同音字/声调/整词替换+纠正消息）；打字延迟（×typing_speed）；同目标防重复（**按 reply 目标 msg_id 锚定**，v6.28.0）；目标消息块（_build_target_message_block 原文，v6.28.0）；reply 工具回执原文格式（v6.28.0）；额外 Prompt 精确匹配多条拼接。
 
-**聊天学习子系统**（core/learning.py）：表达学习（learn_style.prompt 原文 + expression_evaluation 四条基准自查 + legacy 随手抽样注入【表达习惯参考】，库满 10 条启用；LLM 二次选择路径未接，走"直接注入"路径）；黑话学习（learn_jargon.prompt 原文 + jargon_inference_with_context 含义推断，上下文命中注入【黑话参考】）；关键词反应（keyword_rules/regex_rules + [命名捕获组] 替换）；优化上下文（自己的旧发言只保留最近 3 条）。学习库按共享组分库，WebUI「学习」页可视化管理。
+**聊天学习子系统**（core/learning.py）：表达学习（learn_style.prompt 原文 + expression_evaluation 四条基准自查（不通过不写库）+ 学习条目过滤层（source_id 数字/窗口内/非 SELF 来源、不含机器人名与表情包标记、>20 条整批丢弃）+ **入库恒 checked=False 待人工审核**（WebUI 点亮后注入，对齐 MaiBot checked 语义）+ LLM 选择子代理（**MaiBot 现行 selector 原文**：selected_ids 按库内 id 选 0~5 条、空数组=不注入；执行异常/子代理缺失=直注入全池）+ 抽样权重 min-max 归一 1~5 + 向量召回贪心 MMR）；黑话学习（learn_jargon.prompt 原文 + jargon_inference_with_context 含义推断 + 空含义占位 + count 累积 + 阈值 [4,8,25,100] 再推断 + 匹配 lower/空白折叠归一 + 自身名子串硬闸，上下文命中注入【黑话参考】、自发消息不参与命中）；关键词反应（keyword_rules/regex_rules + [命名捕获组] 替换，正则经超时兜底）；优化上下文（自己的旧发言只保留最近 3 条）。学习触发三闸（会话互斥/30s 最小间隔/≥10 条可学消息，对齐 runtime 学习调度）。学习库按共享组分库（JSON，工程差异见 §8.7），条目级校验+装载期消毒，WebUI「学习」页可视化管理。
 
 **Planner 决策层**（mode=planner）：见 §4。
 
@@ -37,12 +37,13 @@
 
 ## 4. Planner 决策层规格（对标 maisaka）
 
-系统提示词 = `maisaka_chat.prompt` 逐字原文（已用 MaiBot 容器原文 diff 验证一致），**裁去 tool_search/deferred tools/view_forward_message 三行**——工具集里没有这些工具时悬空引用会诱导模型调用"未知工具"；将来把 AstrBot 工具以 deferred+tool_search 接进 planner 时连工具一起恢复原文。**有意扩展（差异标注）：系统提示词补「@名字」释义一句**（maisaka 原文没有，配套 At 文本化，坑 63）。工具声明 = builtin_tool 原文。
+系统提示词 = `maisaka_chat.prompt` 逐字原文（已用 MaiBot 容器原文 diff 验证一致），**裁去 query_memory 行与 view_forward_message 行**（v6.28.0 修正口径：tool_search 与 deferred tools 两行随工具池接入保留——旧版"裁三行"的描述已过时）。**有意扩展（差异标注）：系统提示词补「@名字」释义一句**（maisaka 原文没有，配套 At 文本化，坑 63）。工具声明 = builtin_tool 原文。
 
 - **agent 循环**：MAX_INTERNAL_ROUNDS=10，多轮工具调用，工具结果回填下一轮，contexts 跨轮累积。
 - **工具集（可见 4 个）**：reply（msg_id/set_quote/reply_reference/reply_style 枚举——篇幅由 Planner 参数指定）、wait（连续上限 max_consecutive_wait_count=3，超限=对话休息；期间新消息不提前打断）、send_emoji（声明无参数=MaiBot 原样，执行桥接 send_meme 两步制）、tool_search。fetch_history 不暴露（MaiBot focus 模式专属，部署版未开）。
 - **分工铁律：planner 唯一干活者、replyer 纯嘴**。管家与生态工具全部进 deferred 池（tool_search 发现后下一轮可用；打分表 1000/300/200/100/25/10、返回文案、`<system-reminder>` 模板均为 MaiBot 原文；提醒只进当次请求不进 contexts 历史；discovered_tools 会话级）。replyer 不带 func_tool（independent/native 模式例外，管家桥留 replyer 侧）。
-- **WAIT/RUNNING 状态机**：群聊 wait 不唤醒，@/提及必回主动触发恢复；思考打断 planner_interrupt_max_consecutive_count=0 默不打断（开启后仅 planner LLM 请求在途可打断、连续计数自然完成才清零——对齐上游 PlannerInterruptController 的 idle/limit 语义，v6.27.1）；运行中被推迟的门控命中消息由后继轮兜底（对齐 _internal_turn_queue 排队令牌：打断是快路径、令牌是慢路径，v6.27.2）；空闲指数退避（base15×2^n 封顶 300、起点 2、积压 6 绕过、reply 重置）；wait 到期有积压自动续轮并注入完成回执（build_wait_completed_message 原文；无积压不续轮会让异步工具后的循环静默死亡，坑 26）。
+- **WAIT/RUNNING 状态机**：群聊 wait 不唤醒，**@/提及必回主动触发恢复（有意偏离：上游群聊 wait 态 @ 也不唤醒、等 wait 到期；maisoul 认为被点名后的响应延迟上界不应是 wait 秒数，机制依据=强制触发语义）**；连续 wait 计数在**任何非 wait 工具执行后/no_action 出口/wait 休息**清零（v6.28.0 对齐 reasoning_engine:2099——旧版只在 reply 后清，wait 满 3 休息后不 reply 的循环会把计数永停上限、等待节奏永久锁死）；退避只在四种 idle 原因计数（no_action/wait 休息/正常 wait 暂停，私聊 reset；max_rounds/interrupted/error 重置——v6.28.0 对齐 idle_backoff 口径），退避到期自动重评（对齐 _defer_message_turn_check，v6.28.0——被退避的 @ 不再搁置到下一条消息）；思考打断 planner_interrupt_max_consecutive_count=0 默不打断（开启后仅 planner LLM 请求在途可打断、连续计数自然完成才清零——对齐上游 PlannerInterruptController 的 idle/limit 语义，v6.27.1）；运行中被推迟的门控命中消息由后继轮兜底（对齐 _internal_turn_queue 排队令牌：打断是快路径、令牌是慢路径，v6.27.2）；空闲指数退避（base15×2^n 封顶 300、起点 2、积压 6 绕过、reply 重置）；wait 到期必续轮并注入完成回执（build_wait_completed_message 原文；有积压与否只切换回执文案，坑 26）。
+- **contexts 跨循环继承（v6.28.0，对齐 MaiBot 工具结果即写 _chat_history、跨 turn 存活）**：自然出口/wait 分支/打断把 contexts 快照留在 PlannerState.carry_contexts，续轮（wait 到期/唤醒/后继轮/打断重启/新触发）从快照续跑而非从 buffer 重建——deferred 查资料+wait 组合不再随循环结束丢资料；wait 完成回执以 **role=tool 与快照尾部的 wait 调用配对**（部署 dump 实测形态；旧版降级 user 文本轮的理由"跨轮重建无配对 tool_use"随继承失效），wait 休息路径就地上限文案配对、error 出口丢弃快照防半成品配对；继承上限 bound_carry_contexts（输出块折叠+聊天消息按窗截尾+周期注入不滚动）。打断继承依赖 cancel 先于新循环 spawn 的 call_soon FIFO 次序。
 - **请求结构**（坑 53 口径，验收=diff 部署请求 dump）：
   - 消息渲染 = 部署版 `planner_messages.build_planner_prefix` 原文：`<message msg_id="…" [quote="…"] time="…" user="…" [group_card="…"] [is_self_message="true"]>\n内容`（无闭合标签）。
   - 全部聊天消息（含自发消息，带 is_self_message）进 **user 轮**；只有 planner 分析进 assistant 轮。
@@ -53,7 +54,7 @@
 - **工具轮协议结构**（坑 55）：assistant 轮始终存在（带 tool_calls，正文块仅可见正文非空时），工具结果进 `{"role":"tool","tool_call_id":…}` 轮；wait 回执跨轮重建后无配对 tool_use，维持 user 文本轮（孤儿 tool_result 会被协议校验拒收）。
 - **本轮上下文折叠**：保留最近 3 组 user/assistant，更早一次性折叠为「[已折叠的历史工具调用]」摘要——列表内联折叠必须单趟（while 逐对重折会死循环，坑 34）。
 - **防复读**：本轮思考与上轮 difflib 相似度 >0.9 → 替换固定反思文本（PLANNER_REFLECT_ON_REPEAT）。
-- **黑话参考注 planner 每轮（exclude/matched_out 轮间去重）、表达习惯注 replyer**——位置不可颠倒（坑 33）。
+- **黑话参考注 planner 每轮（exclude/matched_out 轮间去重、仅他人消息参与命中、匹配 lower+空白折叠归一）、表达习惯注 replyer**——位置不可颠倒（坑 33）。
 - **token 用量**：LLMResponse.usage（input_other+input_cached=输入、output=输出）逐轮累计进 planner.finalized。
 - **模型名上报**：`_task_text_chat` 经 `used` 参数上报成功调用实际服务的 `{"model", "provider"}`（按次覆盖、空回落 provider.get_model；降级链以最终成功者为准）；planner.model_name=整循环去重拼接，request.messages[].model_name 逐轮标注（仅进监控副本不回灌）。
 - **识图门控分岔**（坑 38）：Planner 决策轮看 `enable_image_context`（默认关）；replyer 生成轮读 AstrBot 模型条目 `modalities` 的「图像」勾选——`modelbind.provider_supports_image` 口径逐字对齐框架 `astr_main_agent._provider_supports_modality`（**空列表=迁移遗留未配置=不限制=支持；缺失/非 list=不支持**），判定入口 `modelbind_host.replyer_image_capable`（绑定链**全部**候选都勾才算支持；无绑定=当前默认 Provider）。模型能力单一事实来源是 AstrBot 的勾选，不读 sanitize_context_by_modalities。
@@ -115,7 +116,14 @@
 2. **黑话高频词提示未移植**：依赖 MaiBot 独立高频词学习器（属已取舍的学习器家族）。
 3. **引用回复（部分接通）**：reply 工具 set_quote（默认 true）与独立模式 enable_reply_quote 已接——首段 MessageChain 挂 `Reply(id=目标消息id)`。**错字纠正 quote_previous 未接**：引用对象是自己刚发的消息，而 context.send_message 只返回 bool 拿不到 message_id（坑 21），维持普通文本发送。
 4. **focus/注意力漂移/情景分析子代理**：未移植（见 §4）。
-5. **maisoul 独有扩展（MaiBot 之外的加项）**：预设对话（preset_dialogues 注入【预设对话】块，人格可覆盖）、多人格、管家桥（call_maid 桥+单轮回填）、independent/native 模式、逃生舱（escape_at_wake）、总开关、native 三件套注入、情绪 VA 模型+频率窗口反馈（见 ARCHITECTURE.md §5/§6）。
+5. **maisoul 独有扩展（MaiBot 之外的加项）**：预设对话（preset_dialogues 注入【预设对话】块，人格可覆盖）、多人格、管家桥（call_maid 桥+单轮回填）、independent/native 模式、逃生舱（escape_at_wake）、总开关、native 三件套注入、情绪 VA 模型+频率窗口反馈（见 ARCHITECTURE.md §5/§6）、防注入声明（anti_injection，默认开）、发送队列降级（send_queue_demotion，默认关）、识图上下文开关（enable_image_context/image_context_max_num——MaiBot visual 家族的门控分岔等价物，见 §4）。
+6. **v6.28.0 自创增强（不对标但有明确机制依据，登记备查）**：
+   - **打字拟人总时长上限 30s**（cap_total_delay）：MaiBot 同病无上限，超长回复+低 typing_speed 会阻塞发送路径分钟级；
+   - **用户正则超时防护**（sanitize.safe_regex_any / hit_ban_filter_safe / keyword_reaction_block_safe，to_thread+0.5s）：灾难回溯正则会挂死事件循环整个 bot，MaiBot 无此防线；
+   - **决策轮情绪元信息**（planner 尾部一行，emotion_enable 开）：MaiBot 决策前记忆/人物注入位的轻量等价——好感/情绪开始影响开口意愿，心弦在场时经方向②自动充实；随尾部注入只在当次请求出现；
+   - **学习库装载期条目消毒**：MaiBot 由 pydantic 模型天然获得，JSON 存储须自建（apivalid 条目级校验同源）；
+   - **表达选择子代理执行异常=直注入全池 / 解析失败=不注入**的两态区分、向量召回贪心 MMR（借 MaiBot 簇+MMR 的防同质化目标，JSON 小池自创实现）。
+7. **情绪-关系耦合增益表**：maisoul 自定口径（MaiBot 无对应数值表——其"情绪反馈"是 reply_effect 分类标签，见 ARCHITECTURE.md §5）。
 6. **用户明示同意的取舍**：A_memorix→livingmemory、偷表情→stealer、行为/高频词学习、聊天回想、世界书/好感度（见 §3 表）。
-7. **工程差异（行为一致）**：错字引擎 jieba 词典进程内缓存；学习器为发言后异步任务（受 max_expression_learner 信号量约束）而非逐消息队列。
+7. **工程差异（行为一致）**：错字引擎 jieba 词典进程内缓存；学习器为发言后异步任务（受 max_expression_learner 信号量约束）而非逐消息队列；学习库 JSON 按共享组分库（MaiBot 为 SQL 表——关联字段面有损，行为等价，v6.28.0 起补条目级校验）；监控 writer 有界队列批量落库（MaiBot 逐条）；monitor 非数字载荷宽容回落（MaiBot 抛错）。
 8. **@他人文本化带 QQ 号后缀（有意偏离，机制性优于原版）**：MaiBot `process_at_component` 对 @他人只输出名字（群卡片>昵称>ID）；maisoul 渲染为 `@昵称(QQ号)`——与 AstrBot 原生 message_str 的 @他人渲染同款格式。机制依据：① **QQ 号是跨改名稳定的身份锚点**——成员改名后模型仍能把 `@新名字(同一QQ号)` 与历史 `@旧名字(同一QQ号)` 关联为同一人；② **消除撞名同形**——他人昵称与 bot_name 相同时，MaiBot 格式下 @bot 与 @他人在上下文里完全同形，模型无法区分归属（曾致 planner 把 @他人的寒暄误读为对自己点名并产生"已回应过"的错误记忆）；③ 提及判定层 `mention._AT_RENDERED_RE` 本就剥除该 token 格式，零误命中成本。门控行为不受影响（被@判定以 At 段 qq 精确匹配为唯一权威）。

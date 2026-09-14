@@ -133,8 +133,13 @@ def presence_penalty(st: GroupState) -> int:
 
 
 def score_content(
-    cleaned: str, is_direct: bool, bot_names: list[str]
+    cleaned: str,
+    is_direct: bool,
+    bot_names: list[str],
+    short_reaction: bool | None = None,
 ) -> tuple[int, list[str]]:
+    """内容分。short_reaction 显式传入时覆盖默认判定（批次口径由调用方算，
+    对齐 turn_gates 的批次级短反应：任一条 >8 字即非短反应批次）。"""
     score, reasons = 0, []
     if is_question(cleaned):
         score += 15
@@ -151,7 +156,7 @@ def score_content(
         score += 5
     if len(cleaned) >= 120:
         score += 10
-    if cleaned in SHORT_REACTIONS:
+    if cleaned in SHORT_REACTIONS if short_reaction is None else short_reaction:
         score -= 25
         reasons.append("短反应")
     return score, reasons
@@ -176,22 +181,43 @@ def evaluate(
     aliases: list[str],
     bot_name: str,
     frequency: float,
-    feedback_factor: float = 1.0,
+    batch_texts: list[str] | None = None,
     feedback_note: str = "",
 ) -> NecessityResult:
     """必要性触发模式的评分入口（阈值固定 80 = REPLY_NECESSITY_TRIGGER_SCORE）。
-    aliases 即 MaiBot alias_names。"""
+
+    aliases 即 MaiBot alias_names。batch_texts：上次发言以来的整批外部消息
+    （对齐 turn_gates 对 pending_messages 整批评）——提及档批内任一命中即
+    80 档；内容分按拼接全文算长度；短反应按批次判定（任一条 >8 字即非
+    短反应批次，全批 ∈ SHORT_REACTIONS 才 −25）。
+    frequency 传已含频率窗口反馈的 effective 值（v6.28.0 对齐 MaiBot
+    _talk_frequency_adjust 结构：阈值与倍率同吃一个乘数，倍率天然带 0.5
+    下限——不再在倍率外侧另乘反馈，消除最坏 ×0.1 的双重压制）。"""
+    _name = str(bot_name or "麦麦")
     if at_bot:
         rel, rel_reason = 100, "@"
-    elif mention.is_mentioned(text, str(bot_name or "麦麦"), aliases):
+    elif mention.is_mentioned(text, _name, aliases) or any(
+        mention.is_mentioned(str(t or ""), _name, aliases) for t in (batch_texts or [])
+    ):
         rel, rel_reason = 80, "提及"
     else:
         rel, rel_reason = 0, "普通"
     is_direct = rel > 0
 
-    cleaned = strip_noise(text)
-    bot_names = [str(bot_name or "麦麦"), *[str(n) for n in (aliases or [])]]
-    content, reasons = score_content(cleaned, is_direct, bot_names)
+    cleaned_list = [strip_noise(t) for t in [text, *(batch_texts or [])]]
+    cleaned_list = [c for c in cleaned_list if c]
+    combined = "".join(cleaned_list)
+    # 批次级短反应（对齐 turn_gates：任一条 >8 字即非短反应；全批 ∈ 词表才罚）
+    _short = (
+        bool(cleaned_list)
+        and all(len(c) <= 8 for c in cleaned_list)
+        and all(c in SHORT_REACTIONS for c in cleaned_list)
+    )
+    bot_names = [_name, *[str(n) for n in (aliases or [])]]
+    content, reasons = score_content(
+        combined, is_direct, bot_names, short_reaction=_short
+    )
+    cleaned = combined  # 档位文案/篇幅判定沿用拼接全文
 
     avg_interval = st.avg_external_interval()
     idle_reached = bool(
@@ -202,8 +228,8 @@ def evaluate(
     penalty = presence_penalty(st)
 
     raw = rel + content + pressure - penalty
-    # P-E：频率窗口反馈乘数叠加进频率倍率（开关关闭时恒 1.0，行为不变）
-    factor = freq_factor(frequency) * feedback_factor
+    # P-E：频率窗口反馈已乘进 frequency（见 docstring），此处只算基础倍率
+    factor = freq_factor(frequency)
     final = max(0, int(round(raw * factor)))
 
     parts = [f"最终={final}", f"原始={raw}", f"档位={rel}({rel_reason})"]

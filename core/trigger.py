@@ -7,7 +7,7 @@
 
 强制触发绕过普通阈值：@ 且 inevitable_at_reply（默认开）、
 昵称提及且 mentioned_bot_reply（默认关）。
-talk_value ≤ 0 为静默接收（不触发）。
+talk_value ≤ 0 为静默接收（不触发，且静默消费积压计数）。
 
 talk_value 规则（enable_talk_value_rules + talk_value_rules）：
   [{platform, item_id, rule_type(group/private), time("HH:MM-HH:MM"或"*"), value}]
@@ -192,6 +192,33 @@ def hit_ban_filter(text: str, words, regexes) -> bool:
     return False
 
 
+async def hit_ban_filter_safe(text: str, words, regexes) -> bool:
+    """hit_ban_filter 的异步安全版（v6.28.0）：正则部分经 sanitize.
+    safe_regex_any 超时兜底——管理员配灾难回溯正则不再把事件循环挂死
+    整个 bot；子串部分线性安全保持同步直查。"""
+    from . import sanitize as _sanitize
+
+    text = str(text or "")
+    if not text:
+        return False
+    for word in words or []:
+        word = str(word or "")
+        if word and word in text:
+            return True
+    return await _sanitize.safe_regex_any(regexes, text)
+
+
+def batch_texts_since_fire(st: GroupState) -> list[str]:
+    """上次发言以来的整批外部消息文本（对齐 turn_gates 的 pending_messages）。
+
+    必要性模式的批次评分素材：combined 长度/批次短反应/批内提及命中。"""
+    return [
+        str(m.get("text") or "")
+        for m in st.buffer
+        if float(m.get("ts") or 0) > st.last_fire_ts and str(m.get("sid")) != "self"
+    ]
+
+
 def should_trigger(
     st: GroupState,
     cfg,
@@ -205,16 +232,27 @@ def should_trigger(
     chat_id: str,
     now: float | None = None,
     is_group: bool = True,
+    batch_texts: list[str] | None = None,
 ) -> tuple[bool, str, scoring.NecessityResult | None]:
     """总门控。返回 (是否触发, 日志明细, 必要性评分结果或 None)。"""
     now = time.time() if now is None else now
     talk_value = effective_talk_value(cfg, platform, chat_id, now, is_group)
     mode = str(cfg.get("reply_trigger_mode") or "frequency")
-    threshold = message_trigger_threshold(mode, talk_value)
+    # 频率窗口反馈乘进 effective 频率（v6.28.0，对齐 MaiBot _talk_frequency_adjust
+    # 结构）：threshold 与必要性倍率同吃一个乘数——此前反馈只乘在倍率外侧
+    # 且 frequency 模式完全不生效；静默判定仍看基础 talk_value（反馈不改变
+    # 显式配置的静默语义）
+    fb_factor, fb_note = freqfeedback.frequency_feedback_factor(st, cfg)
+    eff_freq = talk_value * fb_factor
+    threshold = message_trigger_threshold(mode, eff_freq)
     pending = st.pending_since_fire
     freq_detail = f"[频率: {talk_value:.3f}][模式: {mode}][{pending}/{threshold} 消息]"
 
     if talk_value <= 0:
+        # 静默消费（v6.28.0，对齐 turn_scheduler 静默开轮清积压）：消息照常进
+        # 历史（buffer），但积压计数清零——动态规则把频率切回正值的瞬间，
+        # 不会拿静默期攒下的隔夜积压立即触发
+        st.pending_since_fire = 0
         return False, f"{freq_detail} 判定=静默接收", None
 
     forced = (at_bot and cfg.get("inevitable_at_reply", True)) or (
@@ -224,31 +262,29 @@ def should_trigger(
         reason = "@" if at_bot else "提及"
         detail = f"{freq_detail} 判定=强制触发({reason}必回复)"
         if mode == "reply_necessity":
-            fb_factor, fb_note = freqfeedback.frequency_feedback_factor(st, cfg)
             result = scoring.evaluate(
                 st,
                 at_bot=at_bot,
                 text=text,
                 aliases=aliases,
-                feedback_factor=fb_factor,
+                frequency=eff_freq,
+                batch_texts=batch_texts,
                 feedback_note=fb_note,
                 bot_name=bot_name,
-                frequency=talk_value,
             )
             return True, detail, result
         return True, detail, None
 
     if mode == "reply_necessity":
-        fb_factor, fb_note = freqfeedback.frequency_feedback_factor(st, cfg)
         result = scoring.evaluate(
             st,
             at_bot=at_bot,
             text=text,
             aliases=aliases,
-            feedback_factor=fb_factor,
+            frequency=eff_freq,
+            batch_texts=batch_texts,
             feedback_note=fb_note,
             bot_name=bot_name,
-            frequency=talk_value,
         )
         fired = result.score >= TRIGGER_SCORE
         decision = "进入生成" if fired else "等待更多消息"

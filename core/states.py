@@ -33,11 +33,18 @@ class GroupState:
     )  # msg_id → 对该目标说过的原文（防重复提醒用）
     last_fire_ts: float = 0.0
     pending_since_fire: int = 0
+    learn_busy: bool = (
+        False  # 学习会话互斥（同会话上一批未完成不叠批，对齐 runtime 会话级学习互斥）
+    )
+    last_learn_ts: float = 0.0  # 上次发起学习的时刻（30s 最小间隔闸）
     ext_intervals: deque = field(
         default_factory=lambda: deque(maxlen=360)
     )  # 外部消息时间戳（30min 采样窗最多 360 条）
     last_ext_ts: float = 0.0
     firing: bool = False
+    forced_armed: bool = (
+        False  # 独立模式生成飞行中到达的强制触发（@）——一次性武装，生成结束补轮（对齐 _arm_forced_turn）
+    )
     defer_task: object = (
         None  # 空窗补偿到点重查任务（对齐 runtime._defer_message_turn_check）
     )
@@ -199,7 +206,15 @@ class StateManager:
                 continue
             pl = st.planner
             if (
-                (pl is not None and pl.agent_state != "idle")
+                (
+                    pl is not None
+                    and (
+                        pl.agent_state != "idle"
+                        # 挂有 wait 到期续轮任务 = 有定时器会在淘汰后的游离对象上
+                        # 复活整个循环（v6.28.0），视同活跃
+                        or pl.wait_resume_task is not None
+                    )
+                )
                 or st.firing
                 or st.defer_task is not None
             ):
