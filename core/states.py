@@ -199,7 +199,15 @@ class StateManager:
                 continue
             pl = st.planner
             if (
-                (pl is not None and pl.agent_state != "idle")
+                (
+                    pl is not None
+                    and (
+                        pl.agent_state != "idle"
+                        # 挂有 wait 到期续轮任务 = 有定时器会在淘汰后的游离对象上
+                        # 复活整个循环（v6.28.0），视同活跃
+                        or pl.wait_resume_task is not None
+                    )
+                )
                 or st.firing
                 or st.defer_task is not None
             ):

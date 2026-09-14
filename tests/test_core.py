@@ -4098,7 +4098,8 @@ def test_planner():
         r_timeout,
     )
 
-    # v6.9.8：本轮上下文折叠
+    # v6.9.8：本轮上下文折叠（v6.28.0 语义修正：只折 assistant/tool 输出块，
+    # 用户消息永不折叠——对齐 MaiBot 折叠对象=模型输出单元）
     ctx = [{"role": "user", "content": f"历史{i}"} for i in range(3)]
     start = len(ctx)
     for r in range(6):  # 6 轮 user/assistant
@@ -4106,21 +4107,38 @@ def test_planner():
         ctx.append({"role": "assistant", "content": f"第{r}轮分析"})
     P.fold_old_turns(ctx, start)
     turn_part = ctx[start:]
-    check("折叠: 超过 3 组触发折叠", len(turn_part) <= 7, str(len(turn_part)))
+    _users_kept = [
+        m
+        for m in turn_part
+        if m.get("role") == "user" and "轮输入" in m.get("content", "")
+    ]
+    check(
+        "折叠: 用户消息全部保留",
+        len(_users_kept) == 6 and turn_part[-1]["content"] == "第5轮分析",
+        str(len(_users_kept)),
+    )
+    _assistants = [m for m in turn_part if m.get("role") == "assistant"]
+    check(
+        "折叠: 只保留最近 3 个输出块",
+        [m["content"] for m in _assistants] == ["第3轮分析", "第4轮分析", "第5轮分析"],
+        str([m["content"] for m in _assistants]),
+    )
+    _folded_msg = next(
+        m for m in turn_part if str(m.get("content", "")).startswith("[已折叠")
+    )
     check(
         "折叠: 前缀原文与摘要行",
-        turn_part[0]["content"].startswith("[已折叠的历史工具调用]\n- user: ")
-        and "- assistant: 第0轮分析" in turn_part[0]["content"],
-        turn_part[0]["content"][:100],
+        _folded_msg["content"].startswith("[已折叠的历史工具调用]\n- assistant: ")
+        and "- assistant: 第0轮分析" in _folded_msg["content"]
+        and "- assistant: 第2轮分析" in _folded_msg["content"],
+        _folded_msg["content"][:100],
     )
-    check("折叠: 最近 3 组完整保留", turn_part[-1]["content"] == "第5轮分析")
     ctx2 = [{"role": "user", "content": "只有一组"}]
     P.fold_old_turns(ctx2, 0)
     check("折叠: 未超限不动", ctx2 == [{"role": "user", "content": "只有一组"}])
 
-    # v6.20.3：折叠边界不得拆散 assistant(tool_calls)/tool 配对——按条数切
-    # 边界落在 tool 回执上时，保留区开头是孤儿 tool 轮（配对 assistant 已被
-    # 折进摘要），OpenAI 类 Provider 协议校验会拒收整轮请求
+    # v6.20.3→v6.28.0：折叠不拆散 assistant(tool_calls)/tool 配对——整块折叠
+    # 天然保配对；用户消息穿插在块之间也不进摘要
     ctx3 = [{"role": "user", "content": "历史0"}, {"role": "user", "content": "历史1"}]
     start3 = len(ctx3)
     for r3i in range(4):
@@ -4130,14 +4148,12 @@ def test_planner():
         ctx3.append(
             {"role": "tool", "tool_call_id": f"t{r3i}", "content": f"结果{r3i}"}
         )
-    ctx3.append({"role": "user", "content": "新消息1"})
-    ctx3.append({"role": "user", "content": "新消息2"})
-    ctx3.append({"role": "user", "content": "新消息3"})
+        ctx3.append({"role": "user", "content": f"新消息{r3i}"})
     P.fold_old_turns(ctx3, start3)
     kept3 = ctx3[start3:]
     check(
         "折叠: 边界不拆散 tool 配对",
-        kept3 and kept3[0].get("role") != "tool" and len(kept3) <= 8,
+        kept3 and kept3[0].get("role") != "tool",
         str([m.get("role") for m in kept3]),
     )
     _pair_ids = {
@@ -4149,6 +4165,61 @@ def test_planner():
             m.get("tool_call_id") in _pair_ids for m in kept3 if m.get("role") == "tool"
         ),
         str([m.get("tool_call_id") for m in kept3 if m.get("role") == "tool"]),
+    )
+    _folded3 = next(m for m in kept3 if str(m.get("content", "")).startswith("[已折叠"))
+    check(
+        "折叠: 用户消息不进摘要",
+        "新消息" not in _folded3["content"],
+        _folded3["content"][:120],
+    )
+    check(
+        "折叠: 穿插用户消息仍全部在",
+        sum(
+            1
+            for m in kept3
+            if m.get("role") == "user"
+            and str(m.get("content", "")).startswith("新消息")
+        )
+        == 4,
+        str([m.get("content", "")[:10] for m in kept3 if m.get("role") == "user"]),
+    )
+
+    # v6.28.0：carry 增长上限（折叠 + 聊天消息按窗截尾 + 周期性注入不滚动）
+    carry = [
+        {"role": "user", "content": f'<message msg_id="m{i}">\n消息{i}'}
+        for i in range(5)
+    ]
+    for r in range(4):
+        carry.append(
+            {
+                "role": "assistant",
+                "content": f"分析{r}",
+                "tool_calls": [{"id": f"c{r}"}],
+            }
+        )
+        carry.append({"role": "tool", "tool_call_id": f"c{r}", "content": f"结果{r}"})
+    carry.append({"role": "user", "content": "时间：2026-01-01 00:00:00"})
+    carry.append(
+        {"role": "user", "content": "以下是聊天中可能出现的黑话注释（周期注入）"}
+    )
+    P.bound_carry_contexts(carry, 3)
+    _carry_msgs = [m for m in carry if str(m.get("content", "")).startswith("<message")]
+    check(
+        "carry: 聊天消息按窗截尾",
+        len(_carry_msgs) == 3
+        and _carry_msgs[-1]["content"].startswith('<message msg_id="m4"'),
+        str(len(_carry_msgs)),
+    )
+    check(
+        "carry: 周期性注入轮被清出",
+        not any("黑话" in str(m.get("content", "")) for m in carry),
+        str([str(m.get("content", ""))[:16] for m in carry]),
+    )
+    check(
+        "carry: 时间行保留、旧输出块折叠",
+        any(str(m.get("content", "")).startswith("时间：") for m in carry)
+        and sum(1 for m in carry if m.get("role") == "assistant") == 3,
+        str([m.get("role") for m in carry]),
     )
 
     # v6.13.4/5：历史分析跨轮回灌 + 部署版消息格式（对齐 MaiBot 会话历史——
@@ -4302,6 +4373,54 @@ def test_planner():
     check("wait: 主动触发恢复", ps.resume_from_wait() and ps.agent_state == "idle")
     ps2 = P.PlannerState()
     check("wait: 非等待状态恢复无效", ps2.resume_from_wait() is False)
+
+    # v6.28.0：wait 记账字段 + 唤醒回执 + sleeper 取消 + 活跃工具清等待链
+    psW = P.PlannerState()
+    psW.try_enter_wait(cfg, 45)
+    check(
+        "wait: 记录起始时刻与申请秒数",
+        psW.wait_requested == 45 and psW.wait_started_ts > 0,
+    )
+    _rx = psW.build_wake_receipt()
+    check(
+        "wait: 唤醒回执=有新消息版原文",
+        _rx.startswith("等待已结束，实际等待 ")
+        and "原计划等待 45.0 秒" in _rx
+        and "期间收到了新的用户输入" in _rx,
+        _rx,
+    )
+
+    class _FakeTask:
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    psW2 = P.PlannerState()
+    psW2.try_enter_wait(cfg, 30)
+    _ft = _FakeTask()
+    psW2.wait_resume_task = _ft
+    ok_wake = psW2.resume_from_wait("测试回执")
+    check(
+        "wait: 唤醒取消到期 sleeper 并带回执",
+        ok_wake
+        and _ft.cancelled
+        and psW2.wait_resume_task is None
+        and psW2.carry_receipt == "测试回执",
+    )
+    psW2.cancel_wait_resume()
+    check("wait: 空句柄取消不炸", psW2.wait_resume_task is None)
+
+    psN = P.PlannerState()
+    psN.consecutive_wait_count = 3
+    P.note_active_tool(psN)
+    check("wait: 非 wait 工具清等待链（v6.28.0）", psN.consecutive_wait_count == 0)
+    check(
+        "carry: 新建状态快照为空",
+        P.PlannerState().carry_contexts is None
+        and P.PlannerState().carry_wait_call_id == ""
+        and P.PlannerState().carry_receipt == "",
+    )
 
     bcfg = {
         "no_action_backoff_base_seconds": 15,
