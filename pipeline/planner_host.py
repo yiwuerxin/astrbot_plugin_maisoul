@@ -45,7 +45,12 @@ def _schedule_planner(
     cfg = P.config
 
     if is_group and pl.should_delay(cfg, st.pending_since_fire):
-        logger.debug(f"maisoul[{gid}] planner: 空闲退避中，延迟处理")
+        # 退避到期自动重评（v6.28.0，对齐 idle_backoff.should_delay →
+        # runtime._defer_message_turn_check）：退避窗内到达的门控命中消息
+        # 不再被静默吞掉——安静群被退避的单条 @ 此前会搁置到下一条消息
+        delay = max(0.0, pl.backoff_until - time.time())
+        _schedule_backoff_recheck(P, event, st, gid, is_group, delay)
+        logger.debug(f"maisoul[{gid}] planner: 空闲退避中，已排期 {delay:.1f}s 后重评")
         return done
     if pl.agent_state == "wait":
         if (not is_group) and not trigger.effective_talk_value(
@@ -54,8 +59,11 @@ def _schedule_planner(
             logger.info(
                 f"maisoul[{gid}] planner: 私聊 wait 期间收到新消息，结束等待并进入 Planner"
             )
-            pl.resume_from_wait()
-        elif forced and pl.resume_from_wait():
+            # 唤醒回执（v6.28.0）：上游三条唤醒路径都为挂起的 wait 调用补
+            # 完成回执，maisoul 此前只有 timeout 有——被唤醒的 wait 调用在
+            # 模型视角永远悬空
+            pl.resume_from_wait(pl.build_wake_receipt())
+        elif forced and pl.resume_from_wait(pl.build_wake_receipt()):
             logger.info(f"maisoul[{gid}] planner: 主动触发从 wait 恢复")
         else:
             return done
@@ -153,14 +161,16 @@ async def _planner_cycle(
     st,
     is_group: bool = True,
     send_fn=None,
-    initial_feedback: str = "",
     event: AstrMessageEvent | None = None,
     gen: int = 0,
 ):
     """一轮 Planner：最多 MAX_INTERNAL_ROUNDS 轮工具循环（对齐 reasoning_engine）。
 
-    initial_feedback：wait 到期续轮时的完成回执（对齐 wait 完成工具结果消息），
-    前置注入首轮 user 内容。
+    v6.28.0 contexts 继承：有上一循环快照（carry）时从快照续跑——wait 到期/
+    唤醒/后继轮/打断重启/新触发一视同仁，工具结果跨循环存活（对齐 MaiBot
+    工具结果即写 _chat_history）；wait 完成回执以 role=tool 与快照尾部的
+    wait 调用配对（对齐部署 dump 实测形态）。冷启动（无快照）才从
+    buffer+analysis_log 重建。
     """
     pl = st.planner_state()
     # 事件解析链：本轮入参 > PlannerState.last_event（wait 续轮复用）> 每周期一个合成事件。
@@ -208,6 +218,7 @@ async def _planner_cycle(
     repair_pending = False
 
     system_prompt = ""  # no_provider 提前 finalize 时未构建（Sourcery：未定义读取）
+    contexts: list[dict] | None = None  # 同上：提前 finalize 时快照守卫用
 
     def finalize(reason: str, detail: str = "") -> None:
         natural = reason != "interrupted"
@@ -215,6 +226,10 @@ async def _planner_cycle(
             # 自然完成清零连续打断计数（对齐上游 unbind(interrupted=False)）；
             # 循环所有出口都经 finalize，集中清零防路径遗漏（v6.27.1）
             pl.mark_turn_completed(gen)
+            # v6.28.0 快照：自然出口把 contexts 留给后继轮/新触发继承
+            # （wait 分支的快照在分支内自带 wait_call_id，这里只覆写列表）
+            if contexts is not None:
+                pl.carry_contexts = list(contexts)
         P.monitor.emit_planner_finalized(
             session_id=gid,
             cycle_id=cycle_id,
@@ -301,20 +316,67 @@ async def _planner_cycle(
         # 选取窗口放大一倍，避免逐条追加导致前缀缓存失效）
         base_limit = int(eff_cfg.get(context_key, 40 if is_group else 60))
         context_limit = max(base_limit, base_limit * 2)
-        all_buf = list(st.buffer)
-        _, history_buf = planner.split_pending(all_buf, pl.last_cycle_ts)
-        # 历史段 = 聊天记录 + 历史 planner 分析按时间交错（对齐 MaiBot 会话
-        # 历史：全部聊天消息含自发消息进 user 轮 <message> 前缀，分析作为
-        # assistant 轮回灌，输出格式由此自我强化，坑 52/53）；窗口在合并流
-        # 上截取。pending 切分走 split_pending（判定与 fetch_chat_history
-        # 排除集共用同一实现，防口径漂移——v6.20.1）
-        contexts, history_msgs = planner.build_history_contexts(
-            history_buf,
-            pl.analysis_log,
-            context_limit,
-            is_group,
-        )
-        history_count = len(history_msgs)
+        # v6.28.0 contexts 继承：有快照续跑（工具结果/分析/已见消息存活），
+        # 无快照才冷启动重建。快照消费即清（None），异常中断不会残留半份
+        carry = pl.carry_contexts
+        pl.carry_contexts = None
+        wait_call_id = pl.carry_wait_call_id
+        pl.carry_wait_call_id = ""
+        receipt = pl.carry_receipt
+        pl.carry_receipt = ""
+        if carry is not None:
+            contexts = list(carry)
+            planner.bound_carry_contexts(contexts, context_limit)
+            # wait/间隙内记录的自发消息既不在快照也不进 pending
+            # （split_pending 归 history 侧）——按水位补渲染，防自发发言
+            # 在续轮上下文里失踪；外部新消息仍走 _drain_pending 常规排水
+            for m in list(st.buffer):
+                if (
+                    str(m.get("sid")) == "self"
+                    and float(m.get("ts") or 0) > pl.last_cycle_ts
+                ):
+                    contexts.append(
+                        {
+                            "role": "user",
+                            "content": planner.render_planner_message(m, is_group),
+                        }
+                    )
+            if receipt:
+                if wait_call_id:
+                    # 回执配对 role=tool（对齐部署 dump：assistant(tool_calls=wait)
+                    # 之后是配对的 tool 完成回执——旧版降级 user 文本轮的理由
+                    # （跨轮重建无配对 tool_use）随 contexts 继承失效，v6.28.0）
+                    contexts.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": wait_call_id,
+                            "content": receipt,
+                        }
+                    )
+                else:
+                    # 兜底：快照丢失但回执仍在（如状态被淘汰后重建）——user 文本
+                    contexts.append({"role": "user", "content": receipt})
+            history_count = sum(
+                1
+                for c in contexts
+                if c.get("role") == "user"
+                and str(c.get("content") or "").startswith("<message")
+            )
+        else:
+            all_buf = list(st.buffer)
+            _, history_buf = planner.split_pending(all_buf, pl.last_cycle_ts)
+            # 历史段 = 聊天记录 + 历史 planner 分析按时间戳交错（对齐 MaiBot 会话
+            # 历史：全部聊天消息含自发消息进 user 轮 <message> 前缀，分析作为
+            # assistant 轮回灌，输出格式由此自我强化，坑 52/53）；窗口在合并流
+            # 上截取。pending 切分走 split_pending（判定与 fetch_chat_history
+            # 排除集共用同一实现，防口径漂移——v6.20.1）
+            contexts, history_msgs = planner.build_history_contexts(
+                history_buf,
+                pl.analysis_log,
+                context_limit,
+                is_group,
+            )
+            history_count = len(history_msgs)
         # 黑话参考（对齐 _refresh_jargon_reference_message：planner 侧每轮
         # 机械匹配刷新，已注入词条轮间去重；replyer 侧不再注入）
         use_jargon, _ = learning.learning_flags(
@@ -323,9 +385,8 @@ async def _planner_cycle(
         jargon_key = learning.share_key(eff_cfg, "jargon_groups", platform, gid)
         jargon_recent = [m.get("text") or "" for m in list(st.buffer)[-context_limit:]]
         injected_jargons: set[str] = set()
-        # wait 回执等一次性前置（跨轮重建后无配对的 tool_use，维持 user 文本轮，
-        # 对齐差异记录于坑 55）
-        tool_feedback = initial_feedback
+        # wait 回执已在种子段以 role=tool 配对注入（v6.28.0），不再走
+        # user 文本轮前置
         turn_start = len(contexts)  # 本轮循环产生的消息起点（折叠用）
 
         for round_index in range(planner.MAX_INTERNAL_ROUNDS):
@@ -337,7 +398,6 @@ async def _planner_cycle(
             if (
                 not pending
                 and round_index > 0
-                and not tool_feedback
                 and not tail_is_tool
                 and not repair_pending
             ):
@@ -354,11 +414,8 @@ async def _planner_cycle(
                     f"待处理消息 {len(pending)} 条",
                     agent_state=pl.agent_state,
                 )
-            # 工具回执/新消息/黑话参考各进独立 user 轮（对齐部署版请求结构：
+            # 新消息/黑话参考各进独立 user 轮（对齐部署版请求结构：
             # 历史末尾依次是消息 → ReferenceMessage → 注入 → 时间 → 注意事项）
-            if tool_feedback:
-                contexts.append({"role": "user", "content": tool_feedback})
-                tool_feedback = ""
             for m in pending:
                 contexts.append(
                     {
@@ -582,6 +639,9 @@ async def _planner_cycle(
                     continue
                 if is_group:
                     pl.record_idle_cycle(eff_cfg)
+                # planner_no_tool_end 出口清等待链（对齐上游 stop_state 清零，
+                # v6.28.0——防 wait 满 3 休息后不 reply 的循环把计数永停上限）
+                planner.note_active_tool(pl)
                 logger.info(
                     f"maisoul[{gid}] planner: 无动作结束"
                     + (f"（模型陈述：{analysis[:120]}）" if analysis else "（无输出）")
@@ -612,7 +672,22 @@ async def _planner_cycle(
                 )
                 tool_started = time.time()
                 if name == "reply":
-                    result = await deps.on_reply(args)
+                    try:
+                        result = await deps.on_reply(args)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        # 对齐 MaiBot reasoning_engine（回复工具未生成可见消息
+                        # 时告警后继续下一轮循环）：reply 失败只是失败的工具
+                        # 结果，模型可见回执可重试——不再让单次 replyer 异常
+                        # 终止整个决策循环（v6.28.0）
+                        logger.warning(
+                            f"maisoul[{gid}] planner reply 失败，继续下一轮",
+                            exc_info=True,
+                        )
+                        result = (
+                            f"回复生成失败：{e}（本次未发言，可重试或改用其他方式）"
+                        )
                     tool_records.append(
                         {
                             "tool_call_id": f"{cycle_id}-{round_index}-{i}",
@@ -655,10 +730,29 @@ async def _planner_cycle(
                         }
                     )
                     logger.info(f"maisoul[{gid}] planner wait: {message}")
+                    _wait_call_id = f"{cycle_id}-{round_index}-{i}"
                     if "休息" in message:
-                        pl.record_idle_cycle(eff_cfg)
+                        # wait_limit_rest 出口：清等待链（上游同款清零点）+
+                        # 计入退避（私聊不退避，对齐 idle_backoff 私聊 reset）
+                        pl.consecutive_wait_count = 0
+                        if is_group:
+                            pl.record_idle_cycle(eff_cfg)
                         pl.set_idle_if_current(gen)
+                        # 休息无续轮：上限文案即该 wait 调用的最终 tool 回执
+                        # （就地配对——carry 里悬空的 tool_calls 会被严格网关
+                        # 以协议错误拒收，v6.28.0）
+                        contexts.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": _wait_call_id,
+                                "content": str(message),
+                            }
+                        )
                     else:
+                        # 正常 wait（上游 tool_pause:wait）同样计入退避——
+                        # maisoul 此前只记 no_action/休息，等待链会绕开退避
+                        if is_group:
+                            pl.record_idle_cycle(eff_cfg)
                         # wait 到期必续轮（坑 26）：调度到期回执再跑一轮——
                         # 缺失会让会话挂在 wait 直到下一条消息才动
                         _schedule_wait_resume(
@@ -671,6 +765,11 @@ async def _planner_cycle(
                         # 续轮自带排水，令牌让位（双开后继轮会抢跑置 running，
                         # _resume 的 wait 态检查失效、回执丢失，坑 26 同族）
                         pl.followup_armed = False
+                    # v6.28.0 快照：contexts 尾部即本次 wait 的 assistant
+                    # (tool_calls) 轮——正常 wait 留 call_id 给续轮配对回执
+                    # （休息路径已就地配对，不再挂起）
+                    pl.carry_contexts = list(contexts)
+                    pl.carry_wait_call_id = "" if "休息" in message else _wait_call_id
                     _monitor_stage(
                         P,
                         gid,
@@ -697,6 +796,7 @@ async def _planner_cycle(
                     )
                     # 工具结果进 tool 轮（anthropic 源转 tool_result 块并合并
                     # 连续 tool 轮，对齐 MaiBot 的 ToolResultMessage，坑 55）
+                    planner.note_active_tool(pl)  # 非 wait 工具即清等待链（v6.28.0）
                     contexts.append(
                         {
                             "role": "tool",
@@ -720,6 +820,7 @@ async def _planner_cycle(
                         }
                     )
                     logger.info(f"maisoul[{gid}] planner tool_search: {result[:80]}")
+                    planner.note_active_tool(pl)  # 非 wait 工具即清等待链（v6.28.0）
                     contexts.append(
                         {
                             "role": "tool",
@@ -761,6 +862,7 @@ async def _planner_cycle(
                     logger.info(
                         f"maisoul[{gid}] planner deferred {name}: {str(result)[:80]}"
                     )
+                    planner.note_active_tool(pl)  # 非 wait 工具即清等待链（v6.28.0）
                     contexts.append(
                         {
                             "role": "tool",
@@ -781,6 +883,7 @@ async def _planner_cycle(
                         "summary": "未知工具",
                     }
                 )
+                planner.note_active_tool(pl)  # 尝试过行动同样清等待链（v6.28.0）
                 contexts.append(
                     {
                         "role": "tool",
@@ -788,6 +891,10 @@ async def _planner_cycle(
                         "content": "未知工具（若是 deferred 工具，请先调用 tool_search 发现它）",
                     }
                 )
+        if not end_reason:
+            # max_rounds = 干满轮数的活跃循环，非空闲——退避复位（对齐
+            # idle_backoff 非 idle 原因一律 reset，v6.28.0）
+            pl.reset_backoff()
         pl.set_idle_if_current(gen)
         _monitor_stage(
             P, gid, monitor.STAGE_WAITING, "本轮处理结束", agent_state=pl.agent_state
@@ -802,6 +909,14 @@ async def _planner_cycle(
             "收到外部中断信号",
             agent_state=pl.agent_state,
         )
+        if contexts is not None:
+            # 打断快照（v6.28.0）：cancel 先于新循环 spawn 调度（call_soon
+            # FIFO），本 handler 先于新循环首步执行——被打断循环已积累的
+            # 上下文（工具结果/分析）由新循环继承，不再随 cancel 丢弃
+            pl.carry_contexts = list(contexts)
+        if pl.cycle_gen == gen:
+            # 打断=活跃循环（上游 planner_interrupted 非 idle 原因），退避复位
+            pl.reset_backoff()
         finalize("interrupted")
         pl.set_idle_if_current(gen)
         raise
@@ -810,6 +925,12 @@ async def _planner_cycle(
             P, gid, monitor.STAGE_ERROR, str(e)[:80], agent_state=pl.agent_state
         )
         finalize("error", str(e)[:120])
+        # error 出口丢弃快照（v6.28.0）：异常点可能停在 assistant(tool_calls)
+        # 已入上下文而 tool 回执未入的中间态——carry 出去会被严格网关以
+        # 协议错误拒收；宁丢上下文不冒协议险
+        pl.carry_contexts = None
+        pl.carry_wait_call_id = ""
+        pl.reset_backoff()  # error 非 idle 原因（对齐上游 reset 口径，v6.28.0）
         logger.error("maisoul planner 循环异常", exc_info=True)
         pl.set_idle_if_current(gen)
 
@@ -853,53 +974,116 @@ def _schedule_wait_resume(P, st, cfg, gid: str, seconds: int):
     旧写法只在 pending>0 时续轮——MaiBot 的 timeout 触发无论有无新消息都会
     带「等待已超时…请基于现有上下文继续下一轮思考」回执续轮，让模型消化
     等待期间的工具结果（如管家异步任务）后再决定动作。
+    v6.28.0：睡眠任务句柄存 PlannerState——新 wait 替换/唤醒时可取消（seconds
+    是模型可控且无上限的参数，不取消会积累长命 sleeper），句柄同时作为 LRU
+    淘汰的活跃信号（防淘汰后 sleeper 在游离状态对象上复活整个循环）。
     """
     import asyncio
 
+    pl = st.planner_state()
+    pl.cancel_wait_resume()
+
     async def _resume():
-        armed_at = time.time()
-        await asyncio.sleep(max(0, seconds))
         pl = st.planner_state()
-        if pl.agent_state == "wait" and time.time() >= pl.wait_until:
-            elapsed = time.time() - armed_at
-            has_new = st.pending_since_fire > 0
-            receipt = planner.build_wait_completed_message(elapsed, seconds, has_new)
-            gen = pl.begin_cycle()  # M3：续轮换代，旧代退出不得回写（换代即清令牌）
-            pl.agent_state = "running"
-            # wait 续轮也是新循环：自增计数器并上报阶段（对齐 _schedule_planner
-            # 的 79-87 行）——此前续轮直呼 _planner_cycle 不自增，与原循环共用
-            # cycle_id，推理过程页出现两个"循环#N"（用户实报：两个循环1）
-            cycle_id = P._cycle_counter.get(gid, 0) + 1
-            P._cycle_counter[gid] = cycle_id
-            logger.info(f"maisoul[{gid}] planner: wait 续轮启动决策循环 {cycle_id}")
-            _monitor_stage(
-                P,
-                gid,
-                monitor.STAGE_LOOP_START,
-                f"循环 {cycle_id}",
-                agent_state=pl.agent_state,
-            )
-            # v6.20.3：续轮循环挂上 running_task——内联 await 会让
-            # planner_interrupt 的 cancel 打在已完成的旧任务上（no-op），
-            # 打断机制对 wait 续轮静默失效
-            running = asyncio.current_task()
-            if running is not None:
-                pl.running_task = running
-            await _planner_cycle(
-                P,
-                getattr(pl, "umo", ""),
-                getattr(pl, "platform", ""),
-                gid,
-                st,
-                getattr(pl, "is_group", True),
-                initial_feedback=receipt,
-                gen=gen,
-            )
+        try:
+            armed_at = time.time()
+            await asyncio.sleep(max(0, seconds))
+            if pl.agent_state == "wait" and time.time() >= pl.wait_until:
+                elapsed = time.time() - armed_at
+                has_new = st.pending_since_fire > 0
+                # 回执经 carry 通道进续轮种子段，以 role=tool 与快照尾部的
+                # wait 调用配对（v6.28.0，对齐部署 dump 形态）
+                pl.carry_receipt = planner.build_wait_completed_message(
+                    elapsed, seconds, has_new
+                )
+                gen = pl.begin_cycle()  # M3：续轮换代，旧代退出不得回写（换代即清令牌）
+                pl.agent_state = "running"
+                # wait 续轮也是新循环：自增计数器并上报阶段（对齐 _schedule_planner
+                # 的 79-87 行）——此前续轮直呼 _planner_cycle 不自增，与原循环共用
+                # cycle_id，推理过程页出现两个"循环#N"（用户实报：两个循环1）
+                cycle_id = P._cycle_counter.get(gid, 0) + 1
+                P._cycle_counter[gid] = cycle_id
+                logger.info(f"maisoul[{gid}] planner: wait 续轮启动决策循环 {cycle_id}")
+                _monitor_stage(
+                    P,
+                    gid,
+                    monitor.STAGE_LOOP_START,
+                    f"循环 {cycle_id}",
+                    agent_state=pl.agent_state,
+                )
+                # v6.20.3：续轮循环挂上 running_task——内联 await 会让
+                # planner_interrupt 的 cancel 打在已完成的旧任务上（no-op），
+                # 打断机制对 wait 续轮静默失效
+                running = asyncio.current_task()
+                if running is not None:
+                    pl.running_task = running
+                await _planner_cycle(
+                    P,
+                    getattr(pl, "umo", ""),
+                    getattr(pl, "platform", ""),
+                    gid,
+                    st,
+                    getattr(pl, "is_group", True),
+                    gen=gen,
+                )
+        finally:
+            # 只清自己的句柄：新 wait 已把 wait_resume_task 换成新任务时不动
+            _self = asyncio.current_task()
+            if _self is not None and pl.wait_resume_task is _self:
+                pl.wait_resume_task = None
 
     try:
-        return P._spawn(_resume(), name=f"wait_resume:{gid}")
+        pl.wait_resume_task = P._spawn(_resume(), name=f"wait_resume:{gid}")
+        return pl.wait_resume_task
     except Exception:
+        pl.wait_resume_task = None
         logger.debug("maisoul: wait 恢复调度失败", exc_info=True)
+
+
+def _schedule_backoff_recheck(P, event, st, gid: str, is_group: bool, delay: float):
+    """退避到期自动重评（v6.28.0，对齐 idle_backoff.should_delay →
+    runtime._defer_message_turn_check 的到点重查）。
+
+    退避命中时消息不再被静默吞掉：到期重跑 should_trigger，达标即开轮；
+    未达标则交还空窗补偿重查链（gating._maybe_defer_recheck）继续排期。
+    句柄复用 st.defer_task——与空窗重查同一"到点重评"语义，新排期互相顶替。"""
+    import asyncio
+
+    st.cancel_defer()
+
+    async def _recheck():
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        st.defer_task = None
+        pl = st.planner_state()
+        if pl.agent_state in ("running", "wait") or st.firing:
+            return
+        fired, detail, _ = trigger.should_trigger(
+            st,
+            P.config,
+            at_bot=False,
+            mentioned=False,
+            text="",
+            aliases=[],
+            bot_name=str(P.config["bot_name"]),
+            platform=str(event.get_platform_name() or ""),
+            chat_id=gid,
+            is_group=is_group,
+        )
+        if not fired:
+            logger.debug(f"maisoul[{gid}] 退避到期重查未达标：{detail}")
+            from .gating import (
+                _maybe_defer_recheck,
+            )  # 局部导入防环（gating 已 import 本模块）
+
+            _maybe_defer_recheck(P, event, st, gid, is_group)
+            return
+        logger.info(f"maisoul[{gid}] 退避到期触发（{detail}）")
+        await _schedule_planner(P, event, st, gid, False, is_group)
+
+    st.defer_task = P._registry.spawn(_recheck(), name=f"backoff_recheck:{gid}")
 
 
 async def _planner_execute_reply(P, deps, reason: str, args: dict) -> str:
