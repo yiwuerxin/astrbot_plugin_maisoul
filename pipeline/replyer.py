@@ -77,6 +77,7 @@ async def _generate_and_send(
         style,
         expression_habits=expr_block,
         keyword_reaction=keyword_block,
+        target_msg_id=_msg_id(event),
     )
     if bool(eff_cfg.get("emotion_enable", False)):  # P-B：要求模型行首给情绪标签
         user_message += (

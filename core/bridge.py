@@ -225,6 +225,30 @@ class SyntheticEvent:
     def get_sender_name(self):
         return ""
 
+    # 空壳消息面（v6.28.0）：生态插件的 on_llm_request 钩子普遍读消息链/
+    # 消息文本/发送者定位会话——后台自发轮（wait 续轮/followup）只有合成
+    # 事件，缺这些属性会让注入 handler 抛 AttributeError 整批静默失败
+    # （恰是主动开口、注入价值最高的时刻）。空数据让守卫了空链的插件
+    # 自然跳过注入，不伪造内容。
+    @property
+    def message_str(self) -> str:
+        return ""
+
+    @property
+    def message_obj(self):
+        return SimpleNamespace(
+            message=[],
+            raw_message="",
+            session_id=self.unified_msg_origin,
+            self_id="",
+            sender=SimpleNamespace(
+                user_id=self.get_sender_id(), nickname=self.get_sender_name()
+            ),
+        )
+
+    def get_messages(self):
+        return []
+
 
 def _result_text(r) -> str:
     """工具产物 → 文本。

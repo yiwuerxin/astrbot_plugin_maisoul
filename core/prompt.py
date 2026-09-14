@@ -207,6 +207,7 @@ def build_final_user_message(
     keyword_reaction: str = "",
     reference_override: str = "",
     is_group: bool = True,
+    target_msg_id: str = "",
 ) -> str:
     """复刻 _build_final_user_message 的段结构。
 
@@ -215,6 +216,10 @@ def build_final_user_message(
     _build_reply_reference_lines：显式 reference（planner reply 工具的
     reply_reference）优先；style 为 reply 工具的 reply_style 参数。
     keyword_reaction 位置对齐 MaiBot（在结尾指令前）。
+    target_msg_id（v6.28.0）：本次回复的目标消息——渲染 MaiBot
+    _build_target_message_block 原文的目标消息块（planner 路径=reply 工具
+    的 msg_id，独立模式=触发消息），防重复提醒同以它为锚（此前锚 buffer
+    末条，对旧目标连续 reply 漏提醒、目标不同误提醒）。
     """
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     bot_name = str(cfg.get("bot_name") or "麦麦")
@@ -230,6 +235,38 @@ def build_final_user_message(
     # 对齐 MaiBot processed_plain_text），重复标注无增益
     transcript = "\n".join(f"{m['name']}: {m['text']}" for m in buf)
 
+    # 目标消息块（v6.28.0，对齐 _build_target_message_block 原文）
+    target_block = ""
+    anchor_id = str(target_msg_id or "").strip()
+    trec = None
+    if anchor_id:
+        trec = next(
+            (m for m in reversed(buf) if str(m.get("msg_id") or "") == anchor_id),
+            None,
+        )
+    if trec is not None:
+        tcontent = (
+            " ".join(str(trec.get("text") or "").split())[:300] or "[无可见文本内容]"
+        )
+        if str(trec.get("sid")) == "self":
+            target_block = (
+                f"你想要补充说明你自己（{bot_name}） 发送的 msg_id为 {anchor_id} 的消息，"
+                "你可以在这条目标消息的基础上补充发言，不要把你自己的发言当成别人的发言。\n"
+                f"- 你之前的发言内容：{tcontent}"
+            )
+        else:
+            t_lines = [
+                f"你想要回复的消息是 {trec.get('name')} 发送的 msg_id为 {anchor_id} 的消息，"
+                "你这次要回复的就是这条目标消息，不要把其他历史消息当成当前回复对象。",
+            ]
+            tquote = ",".join(
+                q.strip() for q in str(trec.get("quote") or "").split(",") if q.strip()
+            )
+            if tquote:
+                t_lines.append(f"- quote={tquote}")
+            t_lines.append(f"- 发言内容：{tcontent}")
+            target_block = "\n".join(t_lines)
+
     reference = reference_override.strip() or (
         f"当前思考：\n{reason}" if reason else ""
     )
@@ -243,10 +280,12 @@ def build_final_user_message(
         elif style not in REPLY_STYLE_INSTRUCTIONS:
             reference += f"\n本次回复篇幅要求：{style}。"
 
-    # 同目标防重复提醒 —— MaiBot reply 工具 _DUPLICATE_TARGET_REPLY_REMINDER_TEMPLATE 原文
+    # 同目标防重复提醒 —— MaiBot reply 工具 _DUPLICATE_TARGET_REPLY_REMINDER_TEMPLATE 原文；
+    # 锚 = 本次回复目标（无目标时回落 buffer 末条，兼容旧调用）
     dup_reminder = ""
-    if buf and st.recently_replied(buf[-1].get("msg_id", "")):
-        prev = str(st.reply_by_target.get(buf[-1].get("msg_id", "")) or "").strip()
+    dup_anchor = anchor_id or (buf[-1].get("msg_id", "") if buf else "")
+    if dup_anchor and st.recently_replied(dup_anchor):
+        prev = str(st.reply_by_target.get(dup_anchor) or "").strip()
         if not prev:
             prev = "（刚才的发言）"
         dup_reminder = (
@@ -261,6 +300,8 @@ def build_final_user_message(
         sections.append(expression_habits.strip())
     if jargon_reference:
         sections.append(jargon_reference.strip())
+    if target_block:
+        sections.append(target_block)
     if reference:
         sections.append(f"【回复信息参考】\n{reference}")
     if dup_reminder:

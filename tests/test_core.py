@@ -1001,6 +1001,90 @@ def test_prompt():
     cfg2 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=1.0)
     check("风格彩票必中", "本次临时风格" in prompt.select_reply_style(cfg2))
     # v6.28.0：概率对齐 MaiBot 0~1 小数量纲（random.random() < prob）
+    # v6.28.0：目标消息块（对齐 _build_target_message_block 原文）+ 防重复
+    # 提醒按目标 msg_id 锚定（此前锚 buffer 末条：对旧目标连续 reply 漏提醒）
+    from astrbot_plugin_maisoul.core.states import GroupState as _GS
+
+    st_t = _GS()
+    st_t.buffer.append(
+        {
+            "name": "张三",
+            "sid": "u1",
+            "msg_id": "m1",
+            "text": "在吗",
+            "reply_bot": False,
+            "at_bot": False,
+            "ts": time.time(),
+        }
+    )
+    st_t.buffer.append(
+        {
+            "name": "李四",
+            "sid": "u2",
+            "msg_id": "m2",
+            "text": "新消息",
+            "reply_bot": False,
+            "at_bot": False,
+            "ts": time.time(),
+        }
+    )
+    _tcfg = {"bot_name": "麦麦", "enable_context_optimization": False}
+    msg_t = prompt.build_final_user_message(st_t, _tcfg, "", "", target_msg_id="m1")
+    check(
+        "目标块: 原文格式（对齐 MaiBot）",
+        "你想要回复的消息是 张三 发送的 msg_id为 m1 的消息，你这次要回复的就是这条目标消息，不要把其他历史消息当成当前回复对象。"
+        in msg_t
+        and "- 发言内容：在吗" in msg_t,
+        msg_t[:200],
+    )
+    st_t.buffer.append(
+        {
+            "name": "麦麦",
+            "sid": "self",
+            "msg_id": "sm1",
+            "text": "我自己说的",
+            "reply_bot": False,
+            "at_bot": False,
+            "ts": time.time(),
+        }
+    )
+    msg_self = prompt.build_final_user_message(st_t, _tcfg, "", "", target_msg_id="sm1")
+    check(
+        "目标块: 自发目标走补充说明变体（原文）",
+        "你想要补充说明你自己（麦麦） 发送的 msg_id为 sm1 的消息" in msg_self
+        and "- 你之前的发言内容：我自己说的" in msg_self,
+        msg_self[:160],
+    )
+    check(
+        "目标块: 无目标不渲染",
+        "你想要回复的消息是"
+        not in prompt.build_final_user_message(st_t, _tcfg, "", ""),
+    )
+    st_t.record_self_reply("m1", ["刚回过"], "麦麦")
+    msg_t2 = prompt.build_final_user_message(st_t, _tcfg, "", "", target_msg_id="m1")
+    check(
+        "防重复: 按目标锚点注入提醒（旧锚末条会漏）",
+        "你刚刚已经回复过这条消息" in msg_t2 and "刚回过" in msg_t2,
+        msg_t2[-120:],
+    )
+    msg_t3 = prompt.build_final_user_message(st_t, _tcfg, "", "", target_msg_id="m2")
+    check(
+        "防重复: 目标不同不误提醒",
+        "你刚刚已经回复过这条消息" not in msg_t3,
+    )
+
+    # v6.28.0：合成事件空壳消息面（后台自发轮生态注入修复的core面）
+    from astrbot_plugin_maisoul.core import bridge as _bridge_mod
+
+    _se = _bridge_mod.SyntheticEvent("qq:GroupMessage:123")
+    check(
+        "合成事件: 空壳消息面齐备",
+        _se.message_str == ""
+        and _se.get_messages() == []
+        and _se.message_obj.message == []
+        and _se.message_obj.sender.user_id == "",
+    )
+
     cfg0 = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=0.0)
     check("风格彩票 0 概率不中", "本次临时风格" not in prompt.select_reply_style(cfg0))
     cfg_half = dict(cfg, multiple_reply_style=["文言文"], multiple_probability=0.5)
