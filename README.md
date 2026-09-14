@@ -87,7 +87,7 @@ docker logs <astrbot容器> | grep maisoul
 ## 开发
 
 ```bash
-# 单元测试（227 用例，在 AstrBot 容器内跑）
+# 单元测试（591 用例，在 AstrBot 容器内跑）
 python3 tests/test_core.py
 ```
 
