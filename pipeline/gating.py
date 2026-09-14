@@ -222,8 +222,11 @@ async def _process_chat(P, event: AstrMessageEvent, is_group: bool):
         event.stop_event()
         return
 
-    # 独立模式：麦麦流水线自管生成与发送
+    # 独立模式：麦麦流水线自管生成与发送。上一轮生成还在飞行时，新触发的
+    # 消息同样要拦截——不 stop_event 会被原生 LLM 阶段照常回复（@/唤醒消息
+    # 带 is_at_or_wake_command），与稍后完成的麦麦回复形成双回复（v6.28.0）
     if st.firing:
+        event.stop_event()
         return
     st.firing = True
     try:
