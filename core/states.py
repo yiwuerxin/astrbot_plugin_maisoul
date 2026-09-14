@@ -38,6 +38,9 @@ class GroupState:
     )  # 外部消息时间戳（30min 采样窗最多 360 条）
     last_ext_ts: float = 0.0
     firing: bool = False
+    forced_armed: bool = (
+        False  # 独立模式生成飞行中到达的强制触发（@）——一次性武装，生成结束补轮（对齐 _arm_forced_turn）
+    )
     defer_task: object = (
         None  # 空窗补偿到点重查任务（对齐 runtime._defer_message_turn_check）
     )

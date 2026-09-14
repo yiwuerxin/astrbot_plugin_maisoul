@@ -3,7 +3,9 @@
 10 分钟滚动窗口统计自发消息数，映射为期望概率乘数 [0.2, 5.0] 分段线性：
 安静（0 条）→ ×5.0 鼓励开口；达标 → ×1.0 中性；超两倍 → ×0.2 压制刷屏。
 近 5 分钟已发过半数（超速）时只降不升——刚刚说太多话时即使整窗不超也
-不再加成。乘进 scoring 的频率倍率（叠加而非替换）。纯函数，可单测。
+不再加成。v6.28.0 起乘进 effective talk_value（对齐 MaiBot
+_talk_frequency_adjust 结构：阈值与倍率同吃一个乘数、倍率天然带 0.5
+下限），frequency 与 reply_necessity 两模式同享。纯函数，可单测。
 """
 
 from __future__ import annotations

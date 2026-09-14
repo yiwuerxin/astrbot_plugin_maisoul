@@ -346,6 +346,55 @@ def test_trigger():
     )
     check("提及必回复开: 强制触发", fired)
 
+    # v6.28.0：静默消费（对齐 turn_scheduler 静默开轮清积压）——talk_value≤0
+    # 期间积压清零，规则切回正频率瞬间不用隔夜积压立即触发
+    st_s = make_state([("u", "m1", False)], pending=3, intervals=[1, 2])
+    fired_s, detail_s, _ = trigger.should_trigger(
+        st_s,
+        dict(BASE_CFG, talk_value=0),
+        at_bot=False,
+        mentioned=False,
+        text="m1",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
+    check(
+        "静默消费: 不触发且积压清零",
+        not fired_s and st_s.pending_since_fire == 0,
+        f"fired={fired_s} pending={st_s.pending_since_fire}",
+    )
+
+    # v6.28.0：频率反馈乘进 effective 频率，frequency 模式同享——安静群
+    # 反馈 ×5.0 → 0.2 的阈值从 5 条收到 1 条，单消息即触发；关闭时不变
+    st_q = make_state([("u", "早上好", False)], pending=1, intervals=[1, 2])
+    fired_q, detail_q, _ = trigger.should_trigger(
+        st_q,
+        dict(BASE_CFG, talk_value=0.2, freq_feedback_enable=True),
+        at_bot=False,
+        mentioned=False,
+        text="早上好",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
+    check("频率反馈: frequency 模式生效（安静群阈值收窄）", fired_q, detail_q)
+    st_c = make_state([("u", "早上好", False)], pending=1, intervals=[1, 2])
+    fired_c, _, _ = trigger.should_trigger(
+        st_c,
+        dict(BASE_CFG, talk_value=0.2),
+        at_bot=False,
+        mentioned=False,
+        text="早上好",
+        aliases=[],
+        bot_name="麦麦",
+        platform="qq",
+        chat_id="g1",
+    )
+    check("频率反馈: 关闭时阈值不变（1/5 不触发）", not fired_c)
+
     # 必要性触发模式
     st = make_state(
         [("u", "麦麦，帮我看看这个", False)], pending=1, intervals=[1, 2, 3]
@@ -602,6 +651,70 @@ def test_scoring():
     check("频率0.1倍率0.55", abs(scoring.freq_factor(0.1) - 0.55) < 1e-9)
     check("压力: 4/4无闲置=50", scoring.pressure_score(4, 4, False) == 50)
     check("压力: 超阈值对数封顶", scoring.pressure_score(400, 4, False) == 100)
+
+    # v6.28.0：批次评分（对齐 turn_gates 对 pending_messages 整批评）
+    st_b = make_state([("u", "x", False)], pending=0)
+    r_b = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text="那句话",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+        batch_texts=["麦麦你觉得呢"],
+    )
+    check(
+        "批次: 批内提及拿 80 档", "提及" in r_b.detail and r_b.score >= 80, r_b.detail
+    )
+
+    _long45 = "这" * 45
+    r_l1 = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text=_long45,
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+    )
+    r_l3 = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text=_long45,
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+        batch_texts=[_long45, _long45],
+    )
+    check(
+        "批次: 长度按拼接全文计（3×45=135 加满 +5+10，单条 45 只 +5）",
+        r_l3.score - r_l1.score == 10,
+        f"{r_l3.score} vs {r_l1.score}",
+    )
+
+    r_sr = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text="哈哈",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+        batch_texts=["哈哈"],
+    )
+    check("批次: 全批短反应 −25", "短反应" in r_sr.detail, r_sr.detail)
+    r_sr2 = scoring.evaluate(
+        st_b,
+        at_bot=False,
+        text="哈哈",
+        aliases=["麦麦"],
+        bot_name="麦麦",
+        frequency=1.0,
+        batch_texts=["九个字的消息不算短反应哈"],
+    )
+    check(
+        "批次: 任一条 >8 字即非短反应批次",
+        "短反应" not in r_sr2.detail,
+        r_sr2.detail,
+    )
 
 
 def test_text_rules():
