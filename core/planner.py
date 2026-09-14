@@ -288,6 +288,35 @@ def bound_carry_contexts(contexts: list[dict], context_limit: int) -> None:
             del contexts[i]
 
 
+def repair_dangling_tool_calls(contexts: list[dict]) -> int:
+    """给缺回执的 tool_call 补占位 tool 轮（PR #41 评审补强），返回修复数。
+
+    planner 打断有 llm_in_flight 守卫（只落在 LLM await 点，assistant 轮
+    未入列），但插件卸载/热重载的 cancel_and_wait_all 无此守卫——cancel 可
+    落在工具执行中，此时快照尾部带着已入列的 assistant(tool_calls) 而回执
+    未入；同进程热重载后 StateManager 不清理，下轮请求会被严格网关以协议
+    错误拒收（正是 error 出口丢弃快照防的形态）。"""
+    answered = {
+        m.get("tool_call_id")
+        for m in contexts
+        if isinstance(m, dict) and m.get("role") == "tool"
+    }
+    repaired = 0
+    for m in contexts:
+        for tc in m.get("tool_calls") or []:
+            cid = tc.get("id")
+            if cid and cid not in answered:
+                contexts.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": cid,
+                        "content": "（被打断，未执行）",
+                    }
+                )
+                repaired += 1
+    return repaired
+
+
 def note_active_tool(pl: "PlannerState") -> None:
     """非 wait 工具执行后的连续等待计数清零（v6.28.0）。
 

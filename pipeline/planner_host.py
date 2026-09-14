@@ -928,7 +928,11 @@ async def _planner_cycle(
         if contexts is not None:
             # 打断快照（v6.28.0）：cancel 先于新循环 spawn 调度（call_soon
             # FIFO），本 handler 先于新循环首步执行——被打断循环已积累的
-            # 上下文（工具结果/分析）由新循环继承，不再随 cancel 丢弃
+            # 上下文（工具结果/分析）由新循环继承，不再随 cancel 丢弃。
+            # 悬空配对修复（PR #41 评审）：卸载/热重载的 cancel 无
+            # llm_in_flight 守卫，可能落在工具执行中——给缺回执的 tool_call
+            # 补占位轮，防热重载后的下一轮请求被严格网关拒收
+            planner.repair_dangling_tool_calls(contexts)
             pl.carry_contexts = list(contexts)
         if pl.cycle_gen == gen:
             # 打断=活跃循环（上游 planner_interrupted 非 idle 原因），退避复位

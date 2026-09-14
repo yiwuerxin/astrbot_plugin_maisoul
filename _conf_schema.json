@@ -65,6 +65,11 @@
     "type": "float",
     "default": 0
   },
+  "probability_scale_migrated": {
+    "description": "（内部迁移标记）multiple_probability 已从百分比量纲一次性迁移为 0~1 小数；勿手动修改。",
+    "type": "bool",
+    "default": false
+  },
   "group_chat_prompt": {
     "description": "群聊通用提示词，告诉麦麦群聊中该怎么说话。",
     "type": "string",

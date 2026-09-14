@@ -168,8 +168,11 @@ class MaiSoulPlugin(Star):
 
     def _migrate_probability_scale(self):
         """v6.28.0 前 multiple_probability 是 0~100 百分比整数；现对齐 MaiBot 的
-        0~1 小数量纲。旧值 >1 一律折算为小数（15 → 0.15），折算后 ≤1 不再动
-        （幂等）；非数值配置属错误，完整暴露并重置为 0。"""
+        0~1 小数量纲。一次性迁移（PR #41 评审修正）：未打标记时全部 >0 旧值
+        统一 /100——旧 0.5（=0.5%）→ 0.005 语义保真，">1 才折算"的旧方案会让
+        (0,1] 区间的旧值被新量纲消费侧静默放大百倍；打标落盘后不再动。打标后
+        新出现的 >1 值视为用户按旧量纲新填，折算并提示；非数值配置属错误，
+        完整暴露并重置为 0。"""
         try:
             val = float(self.config.get("multiple_probability", 0))
         except (TypeError, ValueError):
@@ -179,15 +182,29 @@ class MaiSoulPlugin(Star):
             )
             self.config["multiple_probability"] = 0
             return
+        if not self.config.get("probability_scale_migrated"):
+            self.config["probability_scale_migrated"] = True
+            if val > 0:
+                self.config["multiple_probability"] = val / 100.0
+            try:
+                self.config.save_config()
+                logger.info(
+                    "maisoul: multiple_probability 百分比量纲已一次性迁移"
+                    f"（{val} → {self.config['multiple_probability']}）"
+                )
+            except Exception:
+                logger.debug("maisoul: 概率迁移保存失败（内存已生效）", exc_info=True)
+            return
         if val > 1:
             self.config["multiple_probability"] = val / 100.0
             try:
                 self.config.save_config()
-                logger.info(
-                    f"maisoul: multiple_probability 百分比量纲已迁移 {val} → {val / 100.0}"
+                logger.warning(
+                    f"maisoul: multiple_probability={val} 超出 0~1 量纲，"
+                    f"已按百分比折算为 {val / 100.0}（新量纲直接填小数即可）"
                 )
             except Exception:
-                logger.debug("maisoul: 概率迁移保存失败（内存已生效）", exc_info=True)
+                logger.debug("maisoul: 概率折算保存失败（内存已生效）", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # 门控钩子：聊天消息评分（低优先级 = 在其他被动插件之后运行；群聊+私聊全接管）  #

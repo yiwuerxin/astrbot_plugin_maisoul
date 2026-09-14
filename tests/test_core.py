@@ -701,6 +701,54 @@ def test_scoring():
         != "",
     )
 
+    # PR #41 评审修复回归：正则黑名单（超时一次后同 pattern 秒回不再起线程）
+    _sanitize_mod._REGEX_TIMEOUT_BLACKLIST.clear()
+    asyncio.run(_sanitize_mod.safe_regex_any([r"(a+)+$"], "a" * 26 + "b", 0.5))
+    _t1 = _time_mod.time()
+    _r2 = asyncio.run(_sanitize_mod.safe_regex_any([r"(a+)+$"], "a" * 26 + "b", 0.5))
+    _fast = _time_mod.time() - _t1
+    check(
+        "正则黑名单: 肇事 pattern 二次调用即时跳过",
+        _r2 is False and _fast < 0.2,
+        f"r={_r2} elapsed={_fast:.2f}",
+    )
+    check(
+        "正则黑名单: 未拉黑 pattern 不受影响",
+        asyncio.run(_sanitize_mod.safe_regex_any([r"好"], "好吗", 0.5)),
+    )
+    _sanitize_mod._REGEX_TIMEOUT_BLACKLIST.clear()
+
+    # PR #41 评审修复回归：打断快照悬空 tool_call 补占位回执
+    from astrbot_plugin_maisoul.core import planner as _pl_mod
+
+    _dangling = [
+        {"role": "user", "content": "m"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "wait", "arguments": "{}"},
+                }
+            ],
+        },
+    ]
+    _n = _pl_mod.repair_dangling_tool_calls(_dangling)
+    check(
+        "悬空修复: 缺回执补占位 tool 轮",
+        _n == 1
+        and _dangling[-1]["role"] == "tool"
+        and _dangling[-1]["tool_call_id"] == "c1",
+        str(_dangling[-1]),
+    )
+    _ok_ctx = [
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c2", "content": "r"},
+    ]
+    check("悬空修复: 已配对不动", _pl_mod.repair_dangling_tool_calls(_ok_ctx) == 0)
+
     # v6.28.0（A10）：TASKS 三处同源护栏（坑 62——改一漏二完全隐形）
     import json as _json10
     import re as _re10

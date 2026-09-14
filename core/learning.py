@@ -866,7 +866,13 @@ def jargon_reference_block(
 
 
 def _keyword_reaction_matches(cfg, match_text: str) -> list[str]:
-    """关键词/正则规则的命中反应内核（keyword_reaction_block 的主体）。"""
+    """关键词/正则规则的命中反应内核（keyword_reaction_block 的主体）。
+
+    正则规则中已被 sanitize 正则黑名单拉黑的 pattern 跳过（PR #41 评审
+    补强：灾难回溯 pattern 超时一次后不再反复起线程）。"""
+    from . import sanitize as _sanitize_kw
+
+    _bl = _sanitize_kw.regex_blacklist()
     matched_reactions: list[str] = []
     for rule in cfg.get("keyword_rules") or []:
         if not isinstance(rule, dict):
@@ -886,7 +892,7 @@ def _keyword_reaction_matches(cfg, match_text: str) -> list[str]:
             continue
         for pattern in rule.get("regex") or []:
             pattern = str(pattern).strip()
-            if not pattern:
+            if not pattern or pattern in _bl:
                 continue
             try:
                 m = re.search(pattern, match_text)
@@ -927,15 +933,25 @@ async def keyword_reaction_block_safe(cfg, match_text: str) -> str:
     match_text = str(match_text or "").strip()
     if not match_text:
         return ""
+    from . import sanitize as _sanitize_safe
+
     try:
         matched = await asyncio.wait_for(
             asyncio.to_thread(_keyword_reaction_matches, cfg, match_text),
             0.5,
         )
     except asyncio.TimeoutError:
+        # 肇事正则拉黑（线程不可取消，防持续消息下线程堆积）；关键词部分
+        # 线性安全不受影响，但本批整体超时无法区分，保守整批跳过本轮
+        _sanitize_safe.blacklist_regexes(
+            p
+            for rule in (cfg.get("regex_rules") or [])
+            if isinstance(rule, dict)
+            for p in (rule.get("regex") or [])
+        )
         logger.error(
-            "maisoul: 正则反应规则执行超时（>0.5s），本轮按无命中处理——"
-            "请检查灾难回溯正则"
+            "maisoul: 正则反应规则执行超时（>0.5s），本轮按无命中处理并拉黑"
+            "正则规则 pattern（本进程内跳过，修复配置后重载生效）"
         )
         return ""
     if not matched:
